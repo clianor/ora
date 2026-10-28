@@ -112,7 +112,7 @@ export default {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '^(tmp|coverage|dist)/' },
+    exclude: { path: '^(tmp|coverage|dist|\\.claude)/' },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: 'tsconfig.json' },
     enhancedResolveOptions: {
