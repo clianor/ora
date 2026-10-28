@@ -9,6 +9,8 @@ export interface ToolContext {
 export interface ToolOutput {
   readonly status: ToolResultStatus;
   readonly text: string;
+  /** 잘리지 않은 전체 출력이다. 있으면 엔진이 스크럽한 뒤 artifact로 저장한다. */
+  readonly fullOutput?: string;
 }
 
 export interface Tool {
