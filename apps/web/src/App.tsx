@@ -38,23 +38,61 @@ function useShortcuts(state: RouteState) {
   }, [state.route, state.sessionId, state.isPaletteOpen]);
 }
 
+function NewScreen({ cwd }: { cwd?: string }) {
+  const store = useStore();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const context = store.getNewSessionContext(cwd);
+  return (
+    <>
+      {isSidebarOpen && <Sidebar data={store.sidebar} selectedCwd={context.path} />}
+      <main className="flex min-w-0 flex-1 flex-col">
+        <Header
+          title="새 세션"
+          repoLabel={context.path}
+          onToggleSidebar={() => {
+            setIsSidebarOpen(!isSidebarOpen);
+          }}
+        />
+        {store.infoError && (
+          <p
+            role="alert"
+            className="mx-5 rounded-md bg-danger-subtle px-3 py-2 text-xs leading-[18px] text-danger"
+          >
+            {store.infoError}
+          </p>
+        )}
+        <NewSessionWelcome context={context} cwd={cwd} />
+      </main>
+    </>
+  );
+}
+
+function Notice({ title, detail }: { title: string; detail: string }) {
+  const store = useStore();
+  return (
+    <>
+      <Sidebar data={store.sidebar} />
+      <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1">
+        <h1 className="text-sm leading-5 font-semibold text-foreground">{title}</h1>
+        <p role="status" className="text-xs leading-4 text-foreground-subtle">
+          {detail}
+        </p>
+      </main>
+    </>
+  );
+}
+
 function SessionScreen({ sessionId }: { sessionId: string | undefined }) {
   const store = useStore();
-  const view = store.getSession(sessionId ?? store.defaultSessionId ?? '');
+  if (store.status === 'loading') return <Notice title="세션을 불러오는 중입니다" detail="" />;
+  if (store.status === 'error') {
+    return <Notice title="서버에 연결하지 못했습니다" detail={store.errorMessage ?? ''} />;
+  }
+  const id = sessionId ?? store.defaultSessionId;
+  if (id === undefined) return <NewScreen />;
+  const view = store.getSession(id);
   if (!view) {
-    return (
-      <>
-        <Sidebar data={store.sidebar} />
-        <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1">
-          <h1 className="text-sm leading-5 font-semibold text-foreground">
-            세션을 찾지 못했습니다
-          </h1>
-          <p className="text-xs leading-4 text-foreground-subtle">
-            사이드바에서 다른 세션을 고릅니다.
-          </p>
-        </main>
-      </>
-    );
+    return <Notice title="세션을 찾지 못했습니다" detail="사이드바에서 다른 세션을 고릅니다." />;
   }
   return <Workbench sidebar={store.sidebar} view={view} />;
 }
@@ -62,9 +100,6 @@ function SessionScreen({ sessionId }: { sessionId: string | undefined }) {
 function Screen({ state }: { state: RouteState }) {
   const store = useStore();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const toggle = () => {
-    setIsSidebarOpen(!isSidebarOpen);
-  };
   switch (state.route) {
     case 'session':
       return <SessionScreen sessionId={state.sessionId} />;
@@ -78,21 +113,18 @@ function Screen({ state }: { state: RouteState }) {
         </>
       );
     case 'new':
-      return (
-        <>
-          {isSidebarOpen && <Sidebar data={store.sidebar} selectedWorktree="ora/main" />}
-          <main className="flex min-w-0 flex-1 flex-col">
-            <Header title="새 세션" repoLabel="ora · main" onToggleSidebar={toggle} />
-            <NewSessionWelcome context={store.newSession} />
-          </main>
-        </>
-      );
+      return <NewScreen cwd={state.cwd} />;
     case 'empty':
+      if (store.empty.repos.length === 0) return <NewScreen />;
       return (
         <>
           {isSidebarOpen && <Sidebar data={{ ...store.sidebar, repos: [] }} />}
           <main className="flex min-w-0 flex-1 flex-col">
-            <Header onToggleSidebar={toggle} />
+            <Header
+              onToggleSidebar={() => {
+                setIsSidebarOpen(!isSidebarOpen);
+              }}
+            />
             <EmptyWelcome empty={store.empty} />
           </main>
         </>

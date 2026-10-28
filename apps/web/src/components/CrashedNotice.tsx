@@ -32,8 +32,10 @@ export function CrashedNotice({
         <span className="ml-auto text-xs leading-4 text-foreground-subtle">{stoppedAt}</span>
       </div>
       <p className="text-[13px] leading-5 text-foreground-muted">
-        실행 중이던 도구 호출 {abortedCalls}개를 aborted로 기록했습니다. 작업 폴더의 변경은 그대로
-        있습니다.
+        {abortedCalls > 0
+          ? `실행 중이던 도구 호출 ${abortedCalls}개를 aborted로 기록했습니다. `
+          : ''}
+        작업 폴더의 변경은 그대로 있습니다.
       </p>
       {resumeTodo && (
         <div className="flex flex-col gap-1 rounded-md bg-background px-3 py-2.5">

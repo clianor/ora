@@ -1,8 +1,11 @@
+import { buildThread } from './events.ts';
 import type {
   Actor,
   EventOf,
   OraEvent,
   OraEventType,
+  PendingApproval,
+  PendingQuestion,
   SessionRecord,
   SessionStatus,
   Stage,
@@ -11,6 +14,7 @@ import type {
 import type {
   OraActions,
   OraStore,
+  OraStoreSource,
   RepoNode,
   SessionNode,
   SessionView,
@@ -189,110 +193,154 @@ const mathTodos: Todo[] = [
   },
 ];
 
-const sessionView: SessionView = {
-  record: createRecord(mathId, 'add 함수 버그 수정', 'awaiting_approval', 'math-demo'),
-  events: mathEvents,
-  todos: mathTodos,
-  repoLabel: 'math-demo · main',
-  diff: { add: 1, del: 1 },
-  statusLine: ['스텝 12/50', '기본 모델 사용 중', '격리 harness'],
-  approval: {
-    callId: 'c3',
-    risk: '위험도 보통',
-    explanation: 't1의 검증 명령입니다. 엔진이 실행하고, 종료 코드와 출력을 증거로 남깁니다.',
+const designChips = { model: '기본 모델', effort: 'medium', permission: '승인 생략' };
+
+type ViewBase = Omit<
+  SessionView,
+  'thread' | 'approvals' | 'questions' | 'isStopping' | 'error' | 'steerFailure'
+>;
+
+/** 기다리는 요청(승인, 질문)을 정하고 이벤트에서 채팅 메시지를 만들어 화면 데이터를 완성합니다. */
+function finishView(
+  base: ViewBase,
+  waiting: { approvals?: PendingApproval[]; questions?: PendingQuestion[] } = {},
+): SessionView {
+  const approvals = waiting.approvals ?? [];
+  const questions = waiting.questions ?? [];
+  const waitingCallIds = new Set([
+    ...approvals.map((item) => item.request.callId),
+    ...questions.map((item) => item.request.callId),
+  ]);
+  return {
+    ...base,
+    chips: designChips,
+    thread: buildThread(base.events, waitingCallIds),
+    approvals,
+    questions,
+    isStopping: false,
+    error: null,
+    steerFailure: null,
+  };
+}
+
+const sessionView: SessionView = finishView(
+  {
+    record: createRecord(mathId, 'add 함수 버그 수정', 'awaiting_approval', 'math-demo'),
+    events: mathEvents,
+    todos: mathTodos,
+    repoLabel: 'math-demo · main',
+    diff: { add: 1, del: 1 },
+    statusLine: ['스텝 12/50', '기본 모델 사용 중', '격리 harness'],
   },
-};
+  {
+    approvals: [
+      {
+        requestId: 'req-approval-1',
+        request: {
+          callId: 'c3',
+          tool: 'bash',
+          tier: 'exec',
+          reason: 't1의 검증 명령입니다. 엔진이 실행하고, 종료 코드와 출력을 증거로 남깁니다.',
+          detail: {
+            kind: 'shell',
+            command: 'node check.js',
+            cwd: '~/projects/math-demo',
+            risk: 'medium',
+          },
+          todo: { id: 't1', content: 'math.js의 add를 덧셈으로 고친다' },
+        },
+      },
+    ],
+  },
+);
 
 const askId = 's-20261028-n0t3s1';
 const makeAsk = createEventFactory(askId);
-const questionView: SessionView = {
-  record: createRecord(askId, '검색 도구 타임아웃 조사', 'awaiting_user', 'notes'),
-  events: [
-    sessionStart(makeAsk),
-    ...createStageEvents(makeAsk, 'understand', stageOrder),
-    makeAsk('message', '09:02', 'user', {
-      role: 'user',
-      content: [
-        { type: 'text', text: '검색 도구가 가끔 타임아웃으로 끝나요. 원인을 찾아 주세요.' },
-      ],
-    }),
-    makeAsk('tool_call', '09:03', 'model', {
-      callId: 'q1',
-      tool: 'read',
-      args: { path: 'src/search.ts' },
-      tier: 'read',
-    }),
-    makeAsk('tool_result', '09:03', 'tool', {
-      callId: 'q1',
-      status: 'ok',
-      summary: '88줄',
-      durationMs: 9,
-    }),
-    makeAsk('tool_call', '09:04', 'model', {
-      callId: 'q2',
-      tool: 'search',
-      args: { pattern: 'timeout' },
-      tier: 'read',
-    }),
-    makeAsk('tool_result', '09:04', 'tool', {
-      callId: 'q2',
-      status: 'ok',
-      summary: '5건',
-      durationMs: 41,
-    }),
-    makeAsk('message', '09:05', 'model', {
-      role: 'assistant',
-      content: [
-        {
-          type: 'text',
-          text: '검색 도구 호출이 기대보다 오래 걸려 실패하는 원인을 찾는 작업으로 이해했습니다. 시작하기 전에 두 가지를 정해야 합니다.',
-        },
-      ],
-    }),
-    makeAsk('tool_call', '09:06', 'model', {
-      callId: 'q3',
-      tool: 'ask_user',
-      args: {
-        questions: [
+const questionView: SessionView = finishView(
+  {
+    record: createRecord(askId, '검색 도구 타임아웃 조사', 'awaiting_user', 'notes'),
+    events: [
+      sessionStart(makeAsk),
+      ...createStageEvents(makeAsk, 'understand', stageOrder),
+      makeAsk('message', '09:02', 'user', {
+        role: 'user',
+        content: [
+          { type: 'text', text: '검색 도구가 가끔 타임아웃으로 끝나요. 원인을 찾아 주세요.' },
+        ],
+      }),
+      makeAsk('tool_call', '09:03', 'model', {
+        callId: 'q1',
+        tool: 'read',
+        args: { path: 'src/search.ts' },
+        tier: 'read',
+      }),
+      makeAsk('tool_result', '09:03', 'tool', {
+        callId: 'q1',
+        status: 'ok',
+        summary: '88줄',
+        durationMs: 9,
+      }),
+      makeAsk('tool_call', '09:04', 'model', {
+        callId: 'q2',
+        tool: 'search',
+        args: { pattern: 'timeout' },
+        tier: 'read',
+      }),
+      makeAsk('tool_result', '09:04', 'tool', {
+        callId: 'q2',
+        status: 'ok',
+        summary: '5건',
+        durationMs: 41,
+      }),
+      makeAsk('message', '09:05', 'model', {
+        role: 'assistant',
+        content: [
           {
-            header: '타임아웃 기준',
-            question: '몇 초 넘게 걸리면 타임아웃으로 볼까요?',
-            multiSelect: false,
-            options: [
-              { label: '30초', description: '현재 설정값입니다' },
-              { label: '60초', description: '느린 네트워크를 감안합니다' },
-              { label: '120초', description: '대용량 검색까지 포함합니다' },
-            ],
-          },
-          {
-            header: '조사 범위',
-            question: '어디까지 조사할까요?',
-            multiSelect: true,
-            options: [
-              { label: '검색 도구 코드', description: 'src/search.ts와 호출하는 쪽을 읽습니다' },
-              { label: 'MCP 서버 설정', description: '서버별 타임아웃과 재시도 값을 확인합니다' },
-              {
-                label: '네트워크 기록',
-                description: '느린 요청이 실제로 있었는지 로그로 확인합니다',
-              },
-            ],
+            type: 'text',
+            text: '검색 도구 호출이 기대보다 오래 걸려 실패하는 원인을 찾는 작업으로 이해했습니다. 시작하기 전에 두 가지를 정해야 합니다.',
           },
         ],
+      }),
+      makeAsk('tool_call', '09:06', 'model', {
+        callId: 'q3',
+        tool: 'ask_user',
+        args: {},
+      }),
+    ],
+    todos: [],
+    repoLabel: 'notes · main',
+    diff: null,
+    statusLine: ['스텝 3/50', '기본 모델 사용 중', '격리 harness'],
+    placeholder: '질문에 답하거나, 다른 내용을 적어 보냅니다',
+    initialSearch: { query: '타임아웃' },
+    questionDraft: { current: 1, picks: [[0], [0, 1]] },
+  },
+  {
+    questions: [
+      {
+        requestId: 'req-question-1',
+        request: {
+          callId: 'q3',
+          questions: [
+            {
+              question: '몇 초 넘게 걸리면 타임아웃으로 볼까요?',
+              options: ['30초', '60초', '120초'],
+            },
+            {
+              question: '어디까지 조사할까요?',
+              options: ['검색 도구 코드', 'MCP 서버 설정', '네트워크 기록'],
+              multiSelect: true,
+            },
+          ],
+        },
       },
-    }),
-  ],
-  todos: [],
-  repoLabel: 'notes · main',
-  diff: null,
-  statusLine: ['스텝 3/50', '기본 모델 사용 중', '격리 harness'],
-  placeholder: '질문에 답하거나, 다른 내용을 적어 보냅니다',
-  initialSearch: { query: '타임아웃' },
-  questionDraft: { current: 1, picks: [[0], [0, 1]] },
-};
+    ],
+  },
+);
 
 const crashId = 's-20261028-r3adme';
 const makeCrash = createEventFactory(crashId);
-const crashedView: SessionView = {
+const crashedView: SessionView = finishView({
   record: createRecord(crashId, 'README 설치 절차 갱신', 'crashed', 'math-demo'),
   events: [
     sessionStart(makeCrash),
@@ -384,7 +432,7 @@ const crashedView: SessionView = {
   diff: { add: 12, del: 3 },
   statusLine: ['스텝 9/50', '기본 모델', '격리 harness'],
   placeholder: '재개할 때 함께 보낼 조향 메시지를 적습니다',
-};
+});
 
 function createSession(
   record: SessionRecord,
@@ -408,7 +456,7 @@ const repos: RepoNode[] = [
   {
     name: 'ora',
     worktrees: [
-      createWorktree('main', 4, 0),
+      { ...createWorktree('main', 4, 0), cwd: '~/Desktop/ora' },
       createWorktree('feat/engine-slice2', 1930, 350, [
         createSession(
           createRecord('s-20261027-0ra001', '엔진 슬라이스 2 구현', 'completed', 'ora'),
@@ -492,14 +540,14 @@ const devAliases = new Map<string, string>([
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
 function createPlainView(record: SessionRecord): SessionView {
-  return {
+  return finishView({
     record,
     events: [],
     todos: [],
     repoLabel: record.repo ?? '',
     diff: null,
     statusLine: [],
-  };
+  });
 }
 
 const plainViews = new Map<string, SessionView>(
@@ -510,24 +558,36 @@ const plainViews = new Map<string, SessionView>(
 );
 
 const fixtureActions: OraActions = {
+  createSession: () => Promise.resolve(sessionView.record.id),
   sendMessage: () => Promise.resolve(),
   cancelRun: () => Promise.resolve(),
   decideApproval: () => Promise.resolve(),
   answerQuestions: () => Promise.resolve(),
   resumeSession: () => Promise.resolve(),
+  dismissError: () => undefined,
 };
 
-/** 엔진 연결 전 고정 예시 데이터로 화면을 확인하는 저장소입니다. 엔진 요청은 받아도 아무 일도 하지 않습니다. */
-export function createFixtureStore(): OraStore {
-  return {
-    sidebar: { repos, deviceName: 'MacBook-Pro' },
-    newSession: { path: '~/Desktop/ora', branch: 'main', add: 4, del: 0 },
-    empty: { repos: ['math-demo', 'ora', 'notes'], branches: ['main'] },
-    defaultSessionId: sessionView.record.id,
-    getSession: (sessionId) => {
-      const id = devAliases.get(sessionId) ?? sessionId;
-      return detailedViews.get(id) ?? plainViews.get(id);
-    },
-    actions: fixtureActions,
-  };
+const fixtureStore: OraStore = {
+  status: 'ready',
+  sidebar: { repos, deviceName: 'MacBook-Pro' },
+  getNewSessionContext: () => ({
+    path: '~/Desktop/ora',
+    branch: 'main',
+    add: 4,
+    del: 0,
+    chips: designChips,
+  }),
+  empty: { repos: ['math-demo', 'ora', 'notes'], branches: ['main'], chips: designChips },
+  defaultSessionId: sessionView.record.id,
+  getSession: (sessionId) => {
+    const id = devAliases.get(sessionId) ?? sessionId;
+    return detailedViews.get(id) ?? plainViews.get(id);
+  },
+  watchSession: () => () => undefined,
+  actions: fixtureActions,
+};
+
+/** 엔진 연결 없이 고정 예시 데이터로 화면을 확인하는 저장소입니다. 엔진 요청은 받아도 아무 일도 하지 않습니다. */
+export function createFixtureStore(): OraStoreSource {
+  return { subscribe: () => () => undefined, getSnapshot: () => fixtureStore };
 }

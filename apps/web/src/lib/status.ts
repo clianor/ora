@@ -1,4 +1,4 @@
-import type { SessionStatus } from '@ora/protocol';
+import type { PermissionMode, SessionStatus } from '@ora/protocol';
 
 /** 세션 상태를 화면에 적는 글자입니다. 상태 점의 색과 함께 글자로도 상태를 알립니다. */
 export const statusLabel: Record<SessionStatus, string> = {
@@ -15,4 +15,11 @@ export const statusLabel: Record<SessionStatus, string> = {
   conflicted: '충돌',
   merged: '병합됨',
   archived: '보관됨',
+};
+
+/** 권한 모드를 입력창 칩에 적는 글자입니다(SPEC 5.1절). */
+export const permissionLabel: Record<PermissionMode, string> = {
+  'always-ask': '항상 묻기',
+  write: '쓰기 허용',
+  'bypass-permissions': '승인 생략',
 };

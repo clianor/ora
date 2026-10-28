@@ -102,7 +102,7 @@ function SessionRow({
   const dot = dotColor[node.record.status];
   return (
     <a
-      href={hashFor('session', node.record.id)}
+      href={hashFor('session', { sessionId: node.record.id })}
       aria-current={isSelected ? 'page' : undefined}
       style={{ paddingLeft: 42 + stackIndent * depth }}
       className={cn(
@@ -135,22 +135,22 @@ function WorktreeTree({
   entry,
   repo,
   depth,
-  selectedWorktree,
+  selectedCwd,
   selectedSessionId,
 }: {
   entry: WorktreeEntry;
   repo: string;
   depth: number;
-  selectedWorktree: string | undefined;
+  selectedCwd: string | undefined;
   selectedSessionId: string | undefined;
 }) {
   const { node } = entry;
-  const isSelected = selectedWorktree === `${repo}/${node.name}`;
+  const isSelected = selectedCwd !== undefined && selectedCwd === node.cwd;
   const Icon = depth > 0 ? CornerDownRight : GitBranch;
   return (
     <>
       <a
-        href="#/new"
+        href={hashFor('new', { cwd: node.cwd })}
         aria-current={isSelected ? 'page' : undefined}
         style={{ paddingLeft: 20 + stackIndent * depth }}
         className={cn(
@@ -173,7 +173,9 @@ function WorktreeTree({
         >
           {node.name}
         </span>
-        <DiffStat add={node.add} del={node.del} />
+        {node.add !== undefined && node.del !== undefined && (
+          <DiffStat add={node.add} del={node.del} />
+        )}
         {isSelected && <Plus aria-hidden className="size-3.5 text-foreground-muted" />}
       </a>
       {entry.sessions.map((session) => (
@@ -190,7 +192,7 @@ function WorktreeTree({
           entry={child}
           repo={repo}
           depth={depth + 1}
-          selectedWorktree={selectedWorktree}
+          selectedCwd={selectedCwd}
           selectedSessionId={selectedSessionId}
         />
       ))}
@@ -201,12 +203,12 @@ function WorktreeTree({
 function RepoGroup({
   repo,
   worktrees,
-  selectedWorktree,
+  selectedCwd,
   selectedSessionId,
 }: {
   repo: RepoNode;
   worktrees: WorktreeEntry[];
-  selectedWorktree: string | undefined;
+  selectedCwd: string | undefined;
   selectedSessionId: string | undefined;
 }) {
   return (
@@ -223,7 +225,7 @@ function RepoGroup({
           entry={entry}
           repo={repo.name}
           depth={0}
-          selectedWorktree={selectedWorktree}
+          selectedCwd={selectedCwd}
           selectedSessionId={selectedSessionId}
         />
       ))}
@@ -233,14 +235,14 @@ function RepoGroup({
 
 interface SidebarProps {
   data: SidebarData;
-  /** `저장소/브랜치` 형태로 고른 워크트리입니다. */
-  selectedWorktree?: string;
+  /** 새 세션 화면이 가리키는 작업 폴더입니다. 이 폴더의 워크트리 행을 고른 상태로 그립니다. */
+  selectedCwd?: string;
   selectedSessionId?: string;
   initialQuery?: string;
 }
 
 /** 저장소, 워크트리, 세션 3단 사이드바입니다(SPEC 8.2절). */
-export function Sidebar({ data, selectedWorktree, selectedSessionId, initialQuery }: SidebarProps) {
+export function Sidebar({ data, selectedCwd, selectedSessionId, initialQuery }: SidebarProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(initialQuery !== undefined);
   const [query, setQuery] = useState(initialQuery ?? '');
   const [filter, setFilter] = useState<Filter>('전체');
@@ -355,7 +357,7 @@ export function Sidebar({ data, selectedWorktree, selectedSessionId, initialQuer
               key={group.repo.name}
               repo={group.repo}
               worktrees={group.worktrees}
-              selectedWorktree={selectedWorktree}
+              selectedCwd={selectedCwd}
               selectedSessionId={selectedSessionId}
             />
           ))}

@@ -6,6 +6,8 @@ export interface RouteState {
   route: Route;
   /** `#/session/<세션 ID>`의 세션 ID입니다. 없으면 저장소가 정한 기본 세션을 엽니다. */
   sessionId?: string;
+  /** `#/new?cwd=<경로>`의 작업 폴더입니다. 없으면 서버 기본 폴더입니다. */
+  cwd?: string;
   isPaletteOpen: boolean;
   paletteQuery: string;
 }
@@ -24,22 +26,30 @@ function parseHash(hash: string): RouteState {
   if (first === 'palette') return { route: 'session', isPaletteOpen: true, paletteQuery };
   const isPaletteOpen = params.get('palette') === '1';
   if (fixedRoutes.includes(first)) {
-    return { route: first as Route, isPaletteOpen, paletteQuery };
+    return {
+      route: first as Route,
+      cwd: params.get('cwd') ?? undefined,
+      isPaletteOpen,
+      paletteQuery,
+    };
   }
   const sessionId = first === 'session' || first === '' ? second : first;
   return { route: 'session', sessionId, isPaletteOpen, paletteQuery };
 }
 
-export function hashFor(route: Route, sessionId?: string): string {
-  return route === 'session' && sessionId ? `#/session/${sessionId}` : `#/${route}`;
+export function hashFor(route: Route, options: { sessionId?: string; cwd?: string } = {}): string {
+  if (route === 'session' && options.sessionId) return `#/session/${options.sessionId}`;
+  if (route === 'new' && options.cwd) return `#/new?cwd=${encodeURIComponent(options.cwd)}`;
+  return `#/${route}`;
 }
 
 export function navigate(
   route: Route,
-  options: { sessionId?: string; isPaletteOpen?: boolean } = {},
+  options: { sessionId?: string; cwd?: string; isPaletteOpen?: boolean } = {},
 ): void {
-  const suffix = options.isPaletteOpen ? '?palette=1' : '';
-  window.location.hash = `${hashFor(route, options.sessionId)}${suffix}`;
+  const base = hashFor(route, options);
+  const joiner = base.includes('?') ? '&' : '?';
+  window.location.hash = options.isPaletteOpen ? `${base}${joiner}palette=1` : base;
 }
 
 function subscribe(listener: () => void): () => void {
