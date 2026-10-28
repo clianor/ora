@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { permissionModeSchema } from '@ora/protocol';
+import { isolationSchema, permissionModeSchema } from '@ora/protocol';
 import {
   CancelledBeforeStartError,
   UsageError,
@@ -16,10 +16,10 @@ import type { LaunchRequest, SessionResult } from '@ora/host';
 const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../../apps/web/dist', import.meta.url));
 
 const USAGE = `사용법:
-  ora run "<작업>" [--model-script <경로>] [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--json]
-  ora resume <세션 ID> [--model-script <경로>] [--steer "<조향 메시지>"] [--config <경로>] [--json]
+  ora run "<작업>" [--model-script <경로>] [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--isolation <none|harness|clean-home>] [--json]
+  ora resume <세션 ID> [--model-script <경로>] [--steer "<조향 메시지>"] [--config <경로>] [--isolation <none|harness|clean-home>] [--json]
   ora sessions [--config <경로>] [--json]
-  ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>]`;
+  ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>] [--isolation <none|harness|clean-home>]`;
 
 const EXIT_CODES = { passed: 0, failed: 1, usage: 2, cancelled: 130 } as const;
 
@@ -94,6 +94,7 @@ async function main(): Promise<number> {
       options: {
         config: { type: 'string' },
         permission: { type: 'string' },
+        isolation: { type: 'string' },
         json: { type: 'boolean', default: false },
         'model-script': { type: 'string' },
         'record-model-input': { type: 'string' },
@@ -112,9 +113,15 @@ async function main(): Promise<number> {
     process.stderr.write(`${message}\n${USAGE}\n`);
     return EXIT_CODES.usage;
   };
+  const isolation = isolationSchema.safeParse(values.isolation);
+  if (values.isolation !== undefined && !isolation.success) {
+    return usageError(`--isolation 값이 올바르지 않습니다: ${values.isolation}`);
+  }
+  const isolationArgs = isolation.success ? { isolation: isolation.data } : {};
   const common = {
     cwd: process.cwd(),
     ...(values.config === undefined ? {} : { configPath: values.config }),
+    ...isolationArgs,
   };
 
   try {
@@ -146,6 +153,7 @@ async function main(): Promise<number> {
           ? {}
           : { modelScriptPath: values['model-script'] }),
         ...(values.config === undefined ? {} : { configPath: values.config }),
+        ...isolationArgs,
         ...(hasWeb ? { webDir } : {}),
         ...(port === undefined ? {} : { port }),
       });

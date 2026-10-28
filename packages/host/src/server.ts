@@ -19,6 +19,7 @@ import {
 import type {
   ApprovalRequest,
   InfoResponse,
+  Isolation,
   OraEvent,
   PendingApproval,
   PendingQuestion,
@@ -57,6 +58,8 @@ export interface LocalServerOptions {
   readonly cwd: string;
   /** 없으면 설정의 실제 모델을 쓴다. */
   readonly modelScriptPath?: string;
+  /** `--isolation` 플래그 값이다. 새 세션은 설정 기본값보다 이 값을 앞세운다. */
+  readonly isolation?: Isolation;
   /** 정적 웹 결과물 디렉터리다. 없으면 API만 제공한다. */
   readonly webDir?: string;
   /** 생략하면 운영체제가 빈 포트를 고른다. */
@@ -175,6 +178,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
   const modelArgs =
     options.modelScriptPath === undefined ? {} : { modelScriptPath: options.modelScriptPath };
   const configArgs = options.configPath === undefined ? {} : { configPath: options.configPath };
+  const isolationArgs = options.isolation === undefined ? {} : { isolation: options.isolation };
 
   const live = new Map<string, LiveSession>();
   const subscribers = new Map<string, Set<Subscriber>>();
@@ -248,6 +252,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     sessionId: id,
     cwd: options.cwd,
     ...modelArgs,
+    ...isolationArgs,
     ...configArgs,
     ...(steer === undefined ? {} : { steer }),
   });
@@ -410,7 +415,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         cwd: options.cwd,
         ...(branch === undefined ? {} : { branch }),
         permissionMode: config.permissions.mode,
-        isolation: config.isolation,
+        isolation: options.isolation ?? config.isolation,
         maxSteps: config.limits.maxSteps,
       };
       reply(res, 200, info);
@@ -432,6 +437,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
           cwd: body.cwd ?? options.cwd,
           ...modelArgs,
           ...configArgs,
+          ...isolationArgs,
           ...(body.permissionMode === undefined ? {} : { permissionMode: body.permissionMode }),
         });
         reply(res, 201, { sessionId });

@@ -34,6 +34,8 @@ const claudeProviderSchema = z.strictObject({
   model: z.string().min(1).optional(),
   effort: z.enum(['low', 'medium', 'high']).optional(),
   cacheTtl: z.enum(['5m', '1h']).default('1h'),
+  /** 구독 경로의 구현이다. `sdk`는 Claude Agent SDK, `cli`는 `claude` CLI 직접 실행이다. */
+  via: z.enum(['sdk', 'cli']).default('sdk'),
 });
 
 const configSchema = z.object({
@@ -43,8 +45,9 @@ const configSchema = z.object({
     .object({
       sessions: z.string().nullable().default(null),
       memory: z.string().nullable().default(null),
+      isolationRoot: z.string().nullable().default(null),
     })
-    .default({ sessions: null, memory: null }),
+    .default({ sessions: null, memory: null, isolationRoot: null }),
   permissions: z
     .object({
       mode: permissionModeSchema.default('bypass-permissions'),

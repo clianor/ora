@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   endReasonSchema,
+  isolationSchema,
   permissionModeSchema,
   sessionIdSchema,
   sessionStatusSchema,
@@ -21,6 +22,8 @@ const launchFields = {
   modelScriptPath: z.string().min(1).optional(),
   modelInputLogPath: z.string().min(1).optional(),
   configPath: z.string().min(1).optional(),
+  /** 격리 옵션을 지정한다 (SPEC 5.6절). 새 세션은 설정 기본값보다 앞서고, 재개는 세션 기록이 앞선다. */
+  isolation: isolationSchema.optional(),
   /** true면 승인과 `ask_user`를 호스트로 올려 답을 기다린다. false면 `ora run`처럼 응답할 사람이 없는 headless 실행이다. */
   interactive: z.boolean().optional(),
 };

@@ -65,5 +65,7 @@ export async function loadScriptedModel(
 
 export { createAnthropicModel } from './anthropic.ts';
 export type { AnthropicOptions } from './anthropic.ts';
-export { claudeResumeStateSchema, createClaudeCliModel } from './claude-cli.ts';
-export type { ClaudeCliOptions, ClaudeResumeState } from './claude-cli.ts';
+export { createClaudeCliModel } from './claude-cli.ts';
+export { createClaudeSdkModel } from './claude-sdk.ts';
+export { ClaudeLimitError, claudeResumeStateSchema } from './claude-shared.ts';
+export type { ClaudeProviderOptions, ClaudeResumeState } from './claude-shared.ts';

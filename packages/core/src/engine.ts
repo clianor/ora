@@ -24,6 +24,7 @@ import {
   verifyRunSchema,
 } from './control-tools.ts';
 import { assessRisk, decidePermission } from './permission.ts';
+import { findHarnessCliCall } from './harness-cli.ts';
 import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
@@ -172,6 +173,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
 
   const promptFiles = await workspace.readPromptFiles();
   const instructionFiles = await workspace.readInstructionFiles();
+  const harnessFiles =
+    settings.isolation === 'clean-home' ? await workspace.findHarnessFiles() : [];
   const recall = await memory.recall({
     query: input.task,
     tokenBudget: settings.recallTokenBudget,
@@ -223,6 +226,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       payload: {
         configSummary: input.configSummary,
         isolation: settings.isolation,
+        ...(harnessFiles.length === 0 ? {} : { harnessFilesFound: [...harnessFiles] }),
         permissionMode: settings.permissionMode,
         instructionFiles: instructionFiles.map((file) => ({
           path: file.path,
@@ -308,6 +312,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const verifyTodoId = typeof call.input.todoId === 'string' ? call.input.todoId : '';
     const verifyTodo = call.tool === 'verify.run' ? todos.get(verifyTodoId) : undefined;
     const command = call.tool === 'shell' ? call.input.command : verifyTodo?.verify?.command;
+    // 차단 대상이면 권한 모드와 기억된 승인을 무시하고 매번 사용자에게 묻는다.
+    const blockedCli =
+      harnessFiles.length > 0 && typeof command === 'string'
+        ? findHarnessCliCall(command)
+        : undefined;
     const record = (
       decision: 'auto' | 'approved' | 'denied',
       extra: { scope?: ApprovalScope; editedCommand?: string; warning?: string } = {},
@@ -324,7 +333,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         },
       });
 
-    if (verdict === 'auto') {
+    if (verdict === 'auto' && blockedCli === undefined) {
       await record('auto');
       return {};
     }
@@ -341,18 +350,21 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         ? { tool: call.tool, command, cwd }
         : { tool: call.tool, args: rest };
     const key = ruleKey(rule);
-    if (sessionRules.some((entry) => ruleKey(entry) === key)) {
+    if (blockedCli === undefined && sessionRules.some((entry) => ruleKey(entry) === key)) {
       await record('approved', { scope: 'session' });
       return {};
     }
-    if (await deps.alwaysApprovals?.has(rule)) {
+    if (blockedCli === undefined && (await deps.alwaysApprovals?.has(rule))) {
       await record('approved', { scope: 'always' });
       return {};
     }
     if (deps.approval === undefined) {
       await record('denied');
       return {
-        denied: `권한 거부: ${settings.permissionMode} 모드에서 ${tier} 티어 호출은 승인이 필요하지만, headless 실행은 승인을 받을 수 없습니다. 다른 방법을 찾습니다.`,
+        denied:
+          blockedCli === undefined
+            ? `권한 거부: ${settings.permissionMode} 모드에서 ${tier} 티어 호출은 승인이 필요하지만, headless 실행은 승인을 받을 수 없습니다. 다른 방법을 찾습니다.`
+            : `격리 차단: clean-home에서 하네스 파일이 있는 폴더라 하네스 CLI(${blockedCli})를 실행하지 않았습니다. headless 실행은 승인을 받을 수 없습니다.`,
       };
     }
 
@@ -373,7 +385,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       callId: call.callId,
       tool: call.tool,
       tier,
-      reason: intent,
+      reason:
+        blockedCli === undefined
+          ? intent
+          : `clean-home 격리: 하네스 파일이 있는 폴더에서 하네스 CLI(${blockedCli})를 실행합니다. ${intent}`,
       detail,
       ...(linked === undefined ? {} : { todo: { id: linked.id, content: linked.content } }),
     };
@@ -753,7 +768,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             : { resumePointTodoId: plan.resumePointTodoId }),
         },
       });
-      await saveSession({ status: 'running', endReason: undefined });
+      await saveSession({
+        status: 'running',
+        endReason: undefined,
+        isolation: settings.isolation,
+      });
       // 하드 킬 뒤에는 검증 증거가 남은 todo 뒤의 작업을 믿지 않고, 진행 중이던 todo를 다시 시도 대상으로 돌린다.
       if (plan.hardKilled) await interruptActiveTodos();
       await saveTodos();

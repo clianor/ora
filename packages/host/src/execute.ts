@@ -7,6 +7,7 @@ import {
   claudeResumeStateSchema,
   createAnthropicModel,
   createClaudeCliModel,
+  createClaudeSdkModel,
   loadScriptedModel,
 } from '@ora/adapters';
 import type { ClaudeResumeState } from '@ora/adapters';
@@ -26,6 +27,7 @@ import type {
 import { createFileMemory } from '@ora/memory';
 import type {
   ApprovalDecision,
+  Isolation,
   LaunchCommand,
   OraEvent,
   PermissionsFile,
@@ -43,6 +45,8 @@ import {
   selectProvider,
 } from './config.ts';
 import type { Config } from './config.ts';
+import { createChildEnv, resolveIsolationRoot } from './isolation/child-env.ts';
+import { findHarnessFiles, listSearchDirs } from './isolation/harness-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
 
@@ -84,13 +88,9 @@ function createWorkspace(
         })),
       );
     },
+    findHarnessFiles: () => Promise.resolve(findHarnessFiles(cwd, gitRoot)),
     async readInstructionFiles(): Promise<InstructionFile[]> {
-      const dirs: string[] = [];
-      for (let dir = cwd; ; dir = dirname(dir)) {
-        dirs.unshift(dir);
-        if (dir === gitRoot || dirname(dir) === dir) break;
-      }
-      const searched = gitRoot === undefined ? [cwd] : dirs;
+      const searched = listSearchDirs(cwd, gitRoot);
       const seen = new Set<string>();
       const files: InstructionFile[] = [];
       for (const dir of searched) {
@@ -189,6 +189,7 @@ async function createModel(
   config: Config,
   env: NodeJS.ProcessEnv,
   claudeResume: ClaudeResumeState | undefined,
+  isolation: Isolation,
 ): Promise<ModelPort> {
   if (command.modelScriptPath !== undefined) {
     try {
@@ -200,7 +201,8 @@ async function createModel(
   const { claude, anthropic } = config.providers;
   const selected = selectProvider(config);
   if (selected === 'claude' && claude.model !== undefined) {
-    return createClaudeCliModel({
+    const createClaudeModel = claude.via === 'cli' ? createClaudeCliModel : createClaudeSdkModel;
+    return createClaudeModel({
       model: claude.model,
       cacheTtl: claude.cacheTtl,
       commands: claude.command,
@@ -208,6 +210,7 @@ async function createModel(
       cwd: command.cwd,
       ...(claude.effort === undefined ? {} : { effort: claude.effort }),
       ...(claudeResume === undefined ? {} : { resumeFrom: claudeResume }),
+      persistSession: isolation !== 'clean-home',
     });
   }
   if (anthropic.model === undefined) {
@@ -382,7 +385,14 @@ export async function executeSession(
         .find((parsed) => parsed.success)?.data;
     }
   }
-  const model = await createModel(command, config, hooks.env, claudeResume);
+  const isolation = command.isolation ?? resume?.session.isolation ?? config.isolation;
+  if (resume !== undefined && isolation !== resume.session.isolation) {
+    process.stderr.write(
+      `--isolation ${isolation}이 세션 기록의 ${resume.session.isolation}을 대체합니다. 새 값을 session.json에 기록합니다.\n`,
+    );
+  }
+  // clean-home에서는 Claude Code 세션을 남기지 않고 기록 재주입으로만 재개한다.
+  const model = await createModel(command, config, hooks.env, claudeResume, isolation);
 
   const storage = await createSessionStorage(sessionDir);
   // 워커가 죽으면 호스트가 이 파일의 셸 그룹을 종료한다. 셸은 워커와 다른 프로세스 그룹이라 워커 그룹 종료로는 닿지 않는다.
@@ -391,6 +401,11 @@ export async function executeSession(
     writeFileSync(join(sessionDir, SHELL_PIDS_FILE), [...shellPids].join('\n'));
   };
   const runner = createCommandRunner({
+    env: createChildEnv({
+      isolation,
+      parentEnv: hooks.env,
+      isolationRoot: resolveIsolationRoot(config.paths.isolationRoot, oraHome),
+    }),
     onSpawn: (pid) => {
       shellPids.add(pid);
       writeShellPids();
@@ -447,7 +462,7 @@ export async function executeSession(
           (command.type === 'createSession' ? command.permissionMode : undefined) ??
           config.permissions.mode,
         toolPolicies: config.permissions.tools,
-        isolation: resume?.session.isolation ?? config.isolation,
+        isolation,
         engineVersion: ENGINE_VERSION,
         maxSteps: config.limits.maxSteps,
         maxRepairsPerTodo: config.limits.maxRepairsPerTodo,

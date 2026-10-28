@@ -1,4 +1,5 @@
 export * from './engine.ts';
+export * from './harness-cli.ts';
 export * from './permission.ts';
 export * from './ports/approval.ts';
 export * from './ports/command-runner.ts';

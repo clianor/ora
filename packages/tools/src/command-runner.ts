@@ -21,6 +21,8 @@ function createCapture(): { push(chunk: Buffer): void; text(): string } {
 export interface CommandRunnerHooks {
   /** 셸을 띄운 직후에 부른다. 셸은 자기 프로세스 그룹의 리더라서 PID로 그룹 전체를 종료할 수 있다. */
   readonly onSpawn?: (pid: number) => void;
+  /** 자식 프로세스에 넘길 환경이다. 없으면 부모 환경을 쓴다. 비밀 패턴 키는 어느 쪽이든 뺀다. */
+  readonly env?: NodeJS.ProcessEnv;
   readonly onClose?: (pid: number) => void;
 }
 
@@ -31,7 +33,7 @@ export function createCommandRunner(hooks: CommandRunnerHooks = {}): CommandRunn
       const { promise, resolve, reject } = Promise.withResolvers<CommandResult>();
       const started = Date.now();
       const env = Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => !isSecretEnvKey(key)),
+        Object.entries(hooks.env ?? process.env).filter(([key]) => !isSecretEnvKey(key)),
       );
       const child = spawn('sh', ['-c', request.command], {
         cwd: request.cwd,

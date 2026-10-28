@@ -221,7 +221,7 @@ export function launchSession(options: LaunchOptions): SessionHandle {
         permissionMode:
           (request.type === 'createSession' ? request.permissionMode : undefined) ??
           config.permissions.mode,
-        isolation: config.isolation,
+        isolation: request.isolation ?? config.isolation,
       },
     };
 

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { ModelRequest, ModelStreamEvent } from '@ora/core';
 import { expect, test, vi } from 'vitest';
-import { ClaudeLimitError, createClaudeCliModel } from './claude-cli.ts';
+import { createClaudeCliModel } from './claude-cli.ts';
+import { ClaudeLimitError } from './claude-shared.ts';
 
 // 가짜 `claude`다. stream-json을 흉내 내고, 도구 호출은 MCP 서버에 실제로 POST한다.
 const FAKE_SOURCE = `
@@ -15,7 +16,7 @@ const flag = (name) => { const i = args.indexOf(name); return i === -1 ? undefin
 const log = (record) => appendFileSync(process.env.FAKE_LOG, JSON.stringify(record) + '\\n');
 log({ kind: 'start', pid: process.pid, mode, resume: flag('--resume'), session: flag('--session-id'),
   ttl: process.env.CLAUDE_CODE_PROMPT_CACHE_TTL, apiKey: process.env.ANTHROPIC_API_KEY ?? null,
-  cwd: process.cwd(), mds: process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS, system: flag('--system-prompt'), tools: flag('--tools'), strict: args.includes('--strict-mcp-config') });
+  cwd: process.cwd(), leak: process.env.ORA_TEST_LEAK ?? null, noPersist: args.includes('--no-session-persistence'), mds: process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS, system: flag('--system-prompt'), tools: flag('--tools'), strict: args.includes('--strict-mcp-config') });
 console.log('Launching fake account');
 if (mode === 'resume-strict' && flag('--resume') !== undefined) process.exit(1);
 const mcp = JSON.parse(readFileSync(flag('--mcp-config'), 'utf8')).mcpServers.ora;
@@ -74,17 +75,24 @@ interface LogRecord {
   [key: string]: unknown;
 }
 
-function newModel(modes: string[], resumeSession?: string) {
+function newModel(modes: string[], resumeSession?: string, persistSession = true) {
   const logPath = join(dir, `${crypto.randomUUID()}.jsonl`);
   writeFileSync(logPath, '');
-  const commands = modes.map((mode) => [process.execPath, fakePath, mode]);
+  const commands = modes.map((mode) => [
+    'env',
+    `FAKE_LOG=${logPath}`,
+    process.execPath,
+    fakePath,
+    mode,
+  ]);
   const model = createClaudeCliModel({
     model: 'claude-haiku-5-5',
     effort: 'low',
     cacheTtl: '1h',
     commands,
-    env: { ...process.env, FAKE_LOG: logPath, ANTHROPIC_API_KEY: 'sk-ant-api03-secret' },
+    env: { ...process.env, ANTHROPIC_API_KEY: 'sk-ant-api03-secret', ORA_TEST_LEAK: 'x' },
     cwd: workFolder,
+    persistSession,
     ...(resumeSession === undefined
       ? {}
       : {
@@ -185,7 +193,7 @@ test('병렬 tool_use를 callId로 풀고 안내를 마지막 결과에 덧붙�
     strict: true,
   });
   expect(String(starts[0]?.cwd).endsWith(basename(workFolder))).toBe(true);
-  expect(starts[0]).toMatchObject({ mds: '1' });
+  expect(starts[0]).toMatchObject({ mds: '1', leak: null, noPersist: false });
 });
 
 // 응답하지 않는 자식 프로세스는 e2e가 만들 수 없다.
@@ -282,6 +290,12 @@ test('--resume으로 이어 가고, 실패하면 기록을 다시 넣는 방식�
   expect(strictRecords.find((record) => record.kind === 'input')?.text).toContain(
     '<conversation_history>',
   );
+
+  const clean = newModel(['ok'], 'sess-1', false);
+  await collect(clean.model.stream({ system: 's', messages, tools }, signal()));
+  const cleanStart = clean.readLog().find((record) => record.kind === 'start');
+  expect(cleanStart?.resume).toBeUndefined();
+  expect(cleanStart?.noPersist).toBe(true);
 });
 
 // 실제 한도를 일으킬 수 없다.
