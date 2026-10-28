@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -6,15 +6,23 @@ import { fileURLToPath } from 'node:url';
 import { loadScriptedModel } from '@ora/adapters';
 import { parseTranscript, planResume, runSession, scrubValue } from '@ora/core';
 import type {
+  ApprovalPort,
   Clock,
   InstructionFile,
   PromptFile,
+  QuestionPort,
   ResumeInput,
   RunOutcome,
   WorkspacePort,
 } from '@ora/core';
 import { createFileMemory } from '@ora/memory';
-import type { LaunchCommand, OraEvent } from '@ora/protocol';
+import type {
+  ApprovalDecision,
+  LaunchCommand,
+  OraEvent,
+  QuestionAnswer,
+  WorkerMessage,
+} from '@ora/protocol';
 import { createSessionStorage, readSessionRecord, readTranscriptText } from '@ora/store';
 import { createBuiltinTools, createCommandRunner } from '@ora/tools';
 import { ENGINE_VERSION, UsageError, loadConfig, resolveSessionsDir } from './config.ts';
@@ -101,6 +109,63 @@ function createWorkspace(
   };
 }
 
+/** 승인 요청과 질문을 호스트로 올리는 IPC 포트다. 응답은 호스트가 보낸 `resolveApproval`·`answerQuestion` 명령으로 온다. */
+export function createIpcPorts(send: (message: WorkerMessage) => void) {
+  const pendingApprovals = new Map<string, (decision: ApprovalDecision) => void>();
+  const pendingQuestions = new Map<string, (answers: QuestionAnswer[]) => void>();
+  const approval: ApprovalPort = {
+    request: (request, signal) =>
+      new Promise((resolve) => {
+        if (signal.aborted) {
+          resolve({ outcome: 'denied' });
+          return;
+        }
+        const requestId = randomUUID();
+        const settle = (decision: ApprovalDecision) => {
+          pendingApprovals.delete(requestId);
+          resolve(decision);
+        };
+        pendingApprovals.set(requestId, settle);
+        signal.addEventListener('abort', () => {
+          if (!pendingApprovals.has(requestId)) return;
+          settle({ outcome: 'denied' });
+          send({ type: 'request_withdrawn', requestId });
+        });
+        send({ type: 'approval_request', requestId, request });
+      }),
+  };
+  const questions: QuestionPort = {
+    ask: (request, signal) =>
+      new Promise((resolve, reject) => {
+        if (signal.aborted) {
+          reject(new Error('질문하기 전에 이미 중단했습니다.'));
+          return;
+        }
+        const requestId = randomUUID();
+        pendingQuestions.set(requestId, (answers) => {
+          pendingQuestions.delete(requestId);
+          resolve(answers);
+        });
+        signal.addEventListener('abort', () => {
+          if (!pendingQuestions.delete(requestId)) return;
+          reject(new Error('질문에 답하기 전에 중단했습니다.'));
+          send({ type: 'request_withdrawn', requestId });
+        });
+        send({ type: 'question_request', requestId, request });
+      }),
+  };
+  return {
+    approval,
+    questions,
+    resolveApproval: (requestId: string, decision: ApprovalDecision) => {
+      pendingApprovals.get(requestId)?.(decision);
+    },
+    answerQuestion: (requestId: string, answers: QuestionAnswer[]) => {
+      pendingQuestions.get(requestId)?.(answers);
+    },
+  };
+}
+
 const systemClock: Clock = { now: () => new Date() };
 
 export interface ExecuteHooks {
@@ -108,6 +173,8 @@ export interface ExecuteHooks {
   readonly signal: AbortSignal;
   readonly softStop: AbortSignal;
   readonly onEvent: (event: OraEvent) => void;
+  readonly approval?: ApprovalPort;
+  readonly questions?: QuestionPort;
 }
 
 /** 워커 프로세스 안에서 세션 하나를 끝까지 실행한다. 재개는 호스트가 transcript를 봉인한 뒤에 부른다. */
@@ -184,6 +251,8 @@ export async function executeSession(
         clock: systemClock,
       }),
       clock: systemClock,
+      ...(hooks.approval === undefined ? {} : { approval: hooks.approval }),
+      ...(hooks.questions === undefined ? {} : { questions: hooks.questions }),
     },
     {
       sessionId: command.sessionId,

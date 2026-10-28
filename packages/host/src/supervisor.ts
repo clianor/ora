@@ -8,9 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { formatKst } from '@ora/core';
 import { workerMessageSchema } from '@ora/protocol';
 import type {
+  ApprovalDecision,
+  ApprovalRequest,
   EndReason,
   LaunchCommand,
   OraEvent,
+  QuestionAnswer,
+  QuestionRequest,
   SessionRecord,
   SessionStatus,
   Todo,
@@ -49,6 +53,11 @@ export interface LaunchOptions {
   readonly request: LaunchRequest;
   readonly env: NodeJS.ProcessEnv;
   readonly onEvent?: (event: OraEvent) => void;
+  /** 워커가 승인을 요청하면 부른다. `request.interactive`가 true인 세션에서만 온다. */
+  readonly onApprovalRequest?: (requestId: string, request: ApprovalRequest) => void;
+  readonly onQuestionRequest?: (requestId: string, request: QuestionRequest) => void;
+  /** 워커가 응답 없이 신호가 취소돼 거둔 승인·질문이다. */
+  readonly onRequestWithdrawn?: (requestId: string) => void;
   /** 동시 세션 상한에 걸려 대기열에 들어갈 때 한 번 부른다. */
   readonly onQueued?: () => void;
 }
@@ -64,6 +73,10 @@ export interface SessionResult {
 
 export interface SessionHandle {
   cancel(mode: 'soft' | 'hard'): void;
+  resolveApproval(requestId: string, decision: ApprovalDecision): void;
+  answerQuestion(requestId: string, answers: QuestionAnswer[]): void;
+  /** 세션 ID가 정해지면 풀린다. 재개 요청이 시작 전에 실패하면 거부로 끝난다. */
+  readonly sessionId: Promise<string>;
   readonly result: Promise<SessionResult>;
 }
 
@@ -178,6 +191,8 @@ function createSessionId(): string {
  */
 export function launchSession(options: LaunchOptions): SessionHandle {
   const queueAbort = new AbortController();
+  const idReady = Promise.withResolvers<string>();
+  idReady.promise.catch(() => undefined);
   let hardRequested = false;
   let earlyCancel: 'soft' | 'hard' | undefined;
 
@@ -191,12 +206,14 @@ export function launchSession(options: LaunchOptions): SessionHandle {
     if (worker.connected) worker.send({ type: 'cancel', mode } satisfies WorkerCommand);
   };
   let cancelWorker: ((mode: 'soft' | 'hard') => void) | undefined;
+  let sendToWorker: ((command: WorkerCommand) => void) | undefined;
 
   const run = async (): Promise<SessionResult> => {
     const oraHome = resolveOraHome(options.env);
     const config = await loadConfig(options.request.configPath, oraHome);
     const { request } = options;
     const sessionId = request.type === 'resumeSession' ? request.sessionId : createSessionId();
+    if (request.type === 'createSession') idReady.resolve(sessionId);
     const sessionDir = join(resolveSessionsDir(config, oraHome), sessionId);
     const recovery = {
       sessionId,
@@ -218,6 +235,7 @@ export function launchSession(options: LaunchOptions): SessionHandle {
           throw new UsageError(`세션이 이미 실행 중입니다: ${sessionId}`);
         }
         releases.push(lock);
+        idReady.resolve(sessionId);
       }
       releases.push(
         await acquireSlot(
@@ -264,8 +282,13 @@ export function launchSession(options: LaunchOptions): SessionHandle {
         env: options.env,
         stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
       });
+      // 이미 끝난 워커에 명령을 쓰면 EPIPE가 나므로 오류로 호스트를 죽이지 않는다. 종료 상태는 exit 이벤트로 판정한다.
+      worker.on('error', () => undefined);
       cancelWorker = (mode) => {
         sendCancel(worker, mode, sessionDir);
+      };
+      sendToWorker = (message) => {
+        if (worker.connected) worker.send(message);
       };
       await mkdir(sessionDir, { recursive: true });
       await writeFile(pidPath, String(worker.pid));
@@ -286,7 +309,12 @@ export function launchSession(options: LaunchOptions): SessionHandle {
         const message = parsed.data;
         if (message.type === 'event') options.onEvent?.(message.event);
         else if (message.type === 'result') state.outcome = message;
-        else state.usageError = message.message;
+        else if (message.type === 'usage_error') state.usageError = message.message;
+        else if (message.type === 'approval_request') {
+          options.onApprovalRequest?.(message.requestId, message.request);
+        } else if (message.type === 'question_request') {
+          options.onQuestionRequest?.(message.requestId, message.request);
+        } else options.onRequestWithdrawn?.(message.requestId);
       });
       const exited = new Promise<string>((resolve) => {
         worker.once('exit', (code, signal) => {
@@ -332,7 +360,7 @@ export function launchSession(options: LaunchOptions): SessionHandle {
     }
   };
 
-  return {
+  const handle: SessionHandle = {
     cancel(mode) {
       if (cancelWorker === undefined) {
         earlyCancel = mode === 'hard' || earlyCancel === 'hard' ? 'hard' : 'soft';
@@ -341,8 +369,19 @@ export function launchSession(options: LaunchOptions): SessionHandle {
       }
       cancelWorker(mode);
     },
-    result: run(),
+    resolveApproval(requestId, decision) {
+      sendToWorker?.({ type: 'resolveApproval', requestId, decision });
+    },
+    answerQuestion(requestId, answers) {
+      sendToWorker?.({ type: 'answerQuestion', requestId, answers });
+    },
+    sessionId: idReady.promise,
+    result: run().catch((error: unknown) => {
+      idReady.reject(error);
+      throw error;
+    }),
   };
+  return handle;
 }
 
 /** 세션 기록 목록이다. 최근에 만든 세션이 앞에 온다. */

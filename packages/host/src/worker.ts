@@ -1,7 +1,7 @@
 import { workerCommandSchema } from '@ora/protocol';
 import type { LaunchCommand, WorkerMessage } from '@ora/protocol';
 import { UsageError } from './config.ts';
-import { executeSession } from './execute.ts';
+import { createIpcPorts, executeSession } from './execute.ts';
 
 // 세션 워커 진입점이다. 호스트가 `fork`로 띄우고 IPC로 명령을 받는다 (SPEC 2.2.1절).
 const hard = new AbortController();
@@ -11,6 +11,8 @@ function send(message: WorkerMessage, then: () => void = () => undefined): void 
   process.send?.(message, then);
 }
 
+const ports = createIpcPorts(send);
+
 function start(command: LaunchCommand): void {
   executeSession(command, {
     env: process.env,
@@ -19,6 +21,9 @@ function start(command: LaunchCommand): void {
     onEvent: (event) => {
       send({ type: 'event', event });
     },
+    ...(command.interactive === true
+      ? { approval: ports.approval, questions: ports.questions }
+      : {}),
   })
     .then(
       (outcome) => {
@@ -38,18 +43,30 @@ function start(command: LaunchCommand): void {
 
 process.on('message', (raw) => {
   const command = workerCommandSchema.parse(raw);
-  if (command.type !== 'cancel') {
-    start(command);
-  } else if (command.mode === 'soft') {
-    soft.abort();
-  } else {
-    // abort가 도구의 셸 프로세스 그룹을 먼저 끊고, 이어서 워커 그룹을 종료한다.
-    hard.abort();
-    try {
-      process.kill(-process.pid, 'SIGKILL');
-    } catch {
-      process.kill(process.pid, 'SIGKILL');
-    }
+  switch (command.type) {
+    case 'createSession':
+    case 'resumeSession':
+      start(command);
+      break;
+    case 'resolveApproval':
+      ports.resolveApproval(command.requestId, command.decision);
+      break;
+    case 'answerQuestion':
+      ports.answerQuestion(command.requestId, command.answers);
+      break;
+    case 'cancel':
+      if (command.mode === 'soft') {
+        soft.abort();
+      } else {
+        // abort가 도구의 셸 프로세스 그룹을 먼저 끊고, 이어서 워커 그룹을 종료한다.
+        hard.abort();
+        try {
+          process.kill(-process.pid, 'SIGKILL');
+        } catch {
+          process.kill(process.pid, 'SIGKILL');
+        }
+      }
+      break;
   }
 });
 

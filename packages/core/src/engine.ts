@@ -1,4 +1,6 @@
 import type {
+  ApprovalRequest,
+  ApprovalScope,
   ContentBlock,
   EndReason,
   Evidence,
@@ -20,8 +22,9 @@ import {
   todoUpdateSchema,
   verifyRunSchema,
 } from './control-tools.ts';
-import { decidePermission } from './permission.ts';
+import { assessRisk, decidePermission } from './permission.ts';
 import type { ToolPolicy } from './permission.ts';
+import type { ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
 import type { MemoryPort } from './ports/memory.ts';
 import type { ModelMessage, ModelPort, ModelStreamEvent } from './ports/model.ts';
@@ -60,6 +63,10 @@ export interface EngineDeps {
   readonly workspace: WorkspacePort;
   readonly memory: MemoryPort;
   readonly clock: Clock;
+  /** 없으면 승인이 필요한 호출을 headless 거부로 처리한다. */
+  readonly approval?: ApprovalPort;
+  /** 없으면 `ask_user`를 headless 오류로 돌려준다. */
+  readonly questions?: QuestionPort;
 }
 
 export interface RunInput {
@@ -242,16 +249,29 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     }
   };
 
+  // 승인이나 질문에 답을 기다리는 동안의 상태다. 답 없이 중단하면 이 값이 `cancel` 이벤트의 직전 상태가 된다.
+  let waiting: SessionStatus | undefined;
+
   /** 하드 킬 신호가 있으면 `crashed`, 소프트 스톱이면 진행 중이던 todo를 `interrupted`로 남기고 `interrupted`로 끝낸다. */
   const finishCancelled = async (): Promise<RunOutcome> => {
     const mode = signal.aborted ? 'hard' : 'soft';
-    await emit('engine', { type: 'cancel', payload: { mode, previousStatus: 'running' } });
+    await emit('engine', {
+      type: 'cancel',
+      payload: { mode, previousStatus: waiting ?? 'running' },
+    });
     if (mode === 'hard') return finish('crashed', 'user_cancel', '사용자가 강제 종료했습니다.');
     await interruptActiveTodos();
     return finish('interrupted', 'user_cancel', '사용자가 중단했습니다.');
   };
 
-  const authorize = async (call: ToolCall, tier: ToolTier): Promise<string | undefined> => {
+  const approvedKeys = new Set<string>();
+  type Authorization = { readonly denied: string } | { readonly editedCommand?: string };
+
+  const authorize = async (
+    call: ToolCall,
+    tier: ToolTier,
+    intent: string,
+  ): Promise<Authorization> => {
     const policy = settings.toolPolicies[call.tool];
     const verdict = decidePermission({
       mode: settings.permissionMode,
@@ -261,19 +281,98 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const verifyTodoId = typeof call.input.todoId === 'string' ? call.input.todoId : '';
     const verifyTodo = call.tool === 'verify.run' ? todos.get(verifyTodoId) : undefined;
     const command = call.tool === 'shell' ? call.input.command : verifyTodo?.verify?.command;
-    await emit('engine', {
-      type: 'permission',
-      payload: {
-        callId: call.callId,
-        mode: settings.permissionMode,
-        ...(policy === undefined ? {} : { policy }),
-        decision: verdict === 'auto' ? 'auto' : 'denied',
-        ...(typeof command === 'string' ? { originalCommand: command } : {}),
-      },
+    const record = (
+      decision: 'auto' | 'approved' | 'denied',
+      extra: { scope?: ApprovalScope; editedCommand?: string } = {},
+    ) =>
+      emit('engine', {
+        type: 'permission',
+        payload: {
+          callId: call.callId,
+          mode: settings.permissionMode,
+          ...(policy === undefined ? {} : { policy }),
+          decision,
+          ...(typeof command === 'string' ? { originalCommand: command } : {}),
+          ...extra,
+        },
+      });
+
+    if (verdict === 'auto') {
+      await record('auto');
+      return {};
+    }
+    if (verdict === 'deny') {
+      await record('denied');
+      return { denied: `권한 거부: 도구 ${call.tool}의 정책이 deny입니다.` };
+    }
+    if (deps.approval === undefined) {
+      await record('denied');
+      return {
+        denied: `권한 거부: ${settings.permissionMode} 모드에서 ${tier} 티어 호출은 승인이 필요하지만, headless 실행은 승인을 받을 수 없습니다. 다른 방법을 찾습니다.`,
+      };
+    }
+
+    const rest = Object.fromEntries(
+      Object.entries(call.input).filter(([name]) => name !== 'intent'),
+    );
+    const key = JSON.stringify([call.tool, rest]);
+    if (approvedKeys.has(key)) {
+      await record('approved', { scope: 'session' });
+      return {};
+    }
+
+    const cwd = typeof call.input.cwd === 'string' ? call.input.cwd : input.cwd;
+    let detail: ApprovalRequest['detail'];
+    if (typeof command === 'string') {
+      detail = { kind: 'shell', command, cwd, risk: assessRisk(command) };
+    } else if (call.tool === 'file_write') {
+      detail = {
+        kind: 'file',
+        path: String(call.input.path),
+        content: String(call.input.content),
+      };
+    } else {
+      detail = { kind: 'arguments', args: rest };
+    }
+    const linked = verifyTodo ?? [...todos.values()].find((todo) => todo.status === 'attempted');
+    const request: ApprovalRequest = {
+      callId: call.callId,
+      tool: call.tool,
+      tier,
+      reason: intent,
+      detail,
+      ...(linked === undefined ? {} : { todo: { id: linked.id, content: linked.content } }),
+    };
+    // SPEC 4.1.1절: 이벤트를 먼저 쓰고 그다음 session.json을 바꾼다.
+    await emit('engine', { type: 'approval_request', payload: request });
+    await saveSession({ status: 'awaiting_approval' });
+    waiting = 'awaiting_approval';
+    const decision = await deps.approval.request(request, AbortSignal.any([signal, softStop]));
+    // 중단 때문에 거부로 끝났으면 `running`으로 돌리지 않고 `cancel` 이벤트가 직전 상태를 기록하게 한다.
+    const keepWaiting = (signal.aborted || softStop.aborted) && decision.outcome === 'denied';
+    const restoreRunning = async () => {
+      if (keepWaiting) return;
+      waiting = undefined;
+      await saveSession({ status: 'running' });
+    };
+
+    if (decision.outcome === 'denied') {
+      await record('denied');
+      await restoreRunning();
+      const steer = decision.steer === undefined ? '' : ` 사용자 지시: ${decision.steer}`;
+      return { denied: `사용자가 ${call.tool} 호출을 거부했습니다.${steer}` };
+    }
+    if (decision.scope !== 'once') approvedKeys.add(key);
+    const edited =
+      call.tool === 'shell' && decision.editedCommand !== command
+        ? decision.editedCommand
+        : undefined;
+    await record('approved', {
+      scope: decision.scope,
+      ...(edited === undefined ? {} : { editedCommand: edited }),
     });
-    if (verdict === 'auto') return undefined;
-    if (verdict === 'deny') return `권한 거부: 도구 ${call.tool}의 정책이 deny입니다.`;
-    return `권한 거부: ${settings.permissionMode} 모드에서 ${tier} 티어 호출은 승인이 필요하지만, headless 실행은 승인을 받을 수 없습니다. 다른 방법을 찾습니다.`;
+    await restoreRunning();
+    return edited === undefined ? {} : { editedCommand: edited };
   };
 
   const updateTodos = async (data: z.infer<typeof todoUpdateSchema>): Promise<ToolOutput> => {
@@ -434,10 +533,38 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       default: {
         const parsed = askUserSchema.safeParse(args);
         if (!parsed.success) return invalid(parsed.error);
-        return {
-          status: 'error',
-          text: 'headless 실행이라 사용자에게 물을 수 없습니다. 가정을 적고 진행합니다.',
-        };
+        if (deps.questions === undefined) {
+          return {
+            status: 'error',
+            text: 'headless 실행이라 사용자에게 물을 수 없습니다. 가정을 적고 진행합니다.',
+          };
+        }
+        const request = { callId: call.callId, questions: parsed.data.questions };
+        await emit('engine', { type: 'question', payload: request });
+        await saveSession({ status: 'awaiting_user' });
+        waiting = 'awaiting_user';
+        let answers;
+        try {
+          answers = await deps.questions.ask(request, AbortSignal.any([signal, softStop]));
+        } catch (error) {
+          if (!(signal.aborted || softStop.aborted)) {
+            waiting = undefined;
+            await saveSession({ status: 'running' });
+          }
+          throw error;
+        }
+        await emit('user', { type: 'answer', payload: { callId: call.callId, answers } });
+        waiting = undefined;
+        await saveSession({ status: 'running' });
+        const lines = parsed.data.questions.map((entry, index) => {
+          const answer = answers[index];
+          const parts = [
+            ...(answer?.choices ?? []),
+            ...(answer?.text === undefined ? [] : [answer.text]),
+          ];
+          return `Q${index + 1}. ${entry.question}\n답: ${parts.join(', ')}`;
+        });
+        return { status: 'ok', text: lines.join('\n') };
       }
     }
   };
@@ -496,15 +623,20 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         text: 'intent가 비어 있어 실행하지 않았습니다. 이 호출이 필요한 이유를 한 문장으로 intent에 적어 다시 호출합니다.',
       });
     }
+    let editedCommand: string | undefined;
     if (tier !== undefined) {
-      const denied = await authorize(call, tier);
-      if (denied !== undefined) return conclude({ status: 'error', text: denied });
+      const auth = await authorize(call, tier, intent);
+      if ('denied' in auth) return conclude({ status: 'error', text: auth.denied });
+      editedCommand = auth.editedCommand;
     }
     try {
       const output =
         control || tool === undefined
           ? await runControl(call, args)
-          : await tool.run(args, { cwd: input.cwd, signal });
+          : await tool.run(
+              editedCommand === undefined ? args : { ...args, command: editedCommand },
+              { cwd: input.cwd, signal },
+            );
       return await conclude(signal.aborted ? { ...output, status: 'aborted' } : output);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

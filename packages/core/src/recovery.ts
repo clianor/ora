@@ -176,6 +176,9 @@ const BATCH_EVENT_TYPES: readonly OraEvent['type'][] = [
   'tool_call',
   'tool_result',
   'permission',
+  'approval_request',
+  'question',
+  'answer',
   'todo_update',
   'verification',
 ];

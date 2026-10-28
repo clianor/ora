@@ -1,13 +1,25 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { permissionModeSchema } from '@ora/protocol';
-import { CancelledBeforeStartError, UsageError, launchSession, listSessions } from '@ora/host';
+import {
+  CancelledBeforeStartError,
+  UsageError,
+  launchSession,
+  listSessions,
+  startLocalServer,
+} from '@ora/host';
 import type { LaunchRequest, SessionResult } from '@ora/host';
+
+const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../../apps/web/dist', import.meta.url));
 
 const USAGE = `사용법:
   ora run "<작업>" --model-script <경로> [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--json]
   ora resume <세션 ID> --model-script <경로> [--steer "<조향 메시지>"] [--config <경로>] [--json]
-  ora sessions [--config <경로>] [--json]`;
+  ora sessions [--config <경로>] [--json]
+  ora serve --model-script <경로> [--web-dir <경로>] [--port <번호>] [--config <경로>]`;
 
 const EXIT_CODES = { passed: 0, failed: 1, usage: 2, cancelled: 130 } as const;
 
@@ -86,6 +98,8 @@ async function main(): Promise<number> {
         'model-script': { type: 'string' },
         'record-model-input': { type: 'string' },
         steer: { type: 'string' },
+        'web-dir': { type: 'string' },
+        port: { type: 'string' },
       },
     });
   } catch (error) {
@@ -114,6 +128,41 @@ async function main(): Promise<number> {
             : `${session.id}\t${session.status}\t${session.updatedAt}\t${session.title}\n`,
         );
       }
+      return EXIT_CODES.passed;
+    }
+
+    if (command === 'serve') {
+      if (argument !== undefined) return usageError('serve는 인자를 받지 않습니다.');
+      if (values['model-script'] === undefined) {
+        return usageError('실제 모델 어댑터는 아직 없어서 --model-script가 필요합니다.');
+      }
+      const port = values.port === undefined ? undefined : Number(values.port);
+      if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port <= 65535)) {
+        return usageError(`--port 값이 올바르지 않습니다: ${values.port}`);
+      }
+      const webDir = resolve(values['web-dir'] ?? DEFAULT_WEB_DIR);
+      const hasWeb = existsSync(webDir);
+      const server = await startLocalServer({
+        env: process.env,
+        cwd: process.cwd(),
+        modelScriptPath: values['model-script'],
+        ...(values.config === undefined ? {} : { configPath: values.config }),
+        ...(hasWeb ? { webDir } : {}),
+        ...(port === undefined ? {} : { port }),
+      });
+      process.stdout.write(`${server.startUrl}\n`);
+      if (!hasWeb) {
+        process.stderr.write(`웹 결과물 디렉터리가 없어 API만 제공합니다: ${webDir}\n`);
+      }
+      const closed = Promise.withResolvers<undefined>();
+      const onStop = () => {
+        server.close().then(() => {
+          closed.resolve(undefined);
+        }, closed.reject);
+      };
+      process.once('SIGINT', onStop);
+      process.once('SIGTERM', onStop);
+      await closed.promise;
       return EXIT_CODES.passed;
     }
 

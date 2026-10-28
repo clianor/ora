@@ -31,8 +31,16 @@ export const todoUpdateSchema = z.object({
 
 export const verifyRunSchema = z.object({ todoId: z.string().min(1) });
 export const askUserSchema = z.object({
-  question: z.string().min(1),
-  options: z.array(z.string()).min(2).max(5).optional(),
+  questions: z
+    .array(
+      z.object({
+        question: z.string().min(1),
+        options: z.array(z.string().min(1)).min(2).max(5),
+        multiSelect: z.boolean().optional(),
+      }),
+    )
+    .min(1)
+    .max(4),
 });
 export const stageAdvanceSchema = z.object({
   to: stageSchema,
@@ -53,7 +61,11 @@ const CONTROL_TOOLS = {
     description: '선언한 검증 명령을 엔진이 실행하고 증거를 기록한다.',
     schema: verifyRunSchema,
   },
-  ask_user: { description: '사용자에게 질문한다.', schema: askUserSchema },
+  ask_user: {
+    description:
+      '사용자에게 질문 1~4개를 묻고 답을 받을 때까지 기다린다. 질문마다 선택지 2~5개를 주고, 사용자는 직접 입력으로도 답할 수 있다.',
+    schema: askUserSchema,
+  },
   'stage.advance': {
     description: '다음 단계로 넘어간다. 건너뛰는 단계가 있으면 skipReason이 필요하다.',
     schema: stageAdvanceSchema,

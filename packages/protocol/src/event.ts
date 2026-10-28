@@ -12,6 +12,11 @@ import {
   toolResultStatusSchema,
   toolTierSchema,
 } from './common.ts';
+import {
+  approvalRequestSchema,
+  questionAnswerSchema,
+  questionRequestSchema,
+} from './interaction.ts';
 import { evidenceSchema, todoSchema, todoStatusSchema } from './todo.ts';
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -135,6 +140,15 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       originalCommand: z.string().optional(),
       editedCommand: z.string().optional(),
     }),
+  ),
+  // 승인 응답을 기다리기 시작할 때 `session.json`을 `awaiting_approval`로 바꾸기 전에 쓴다. 대기 중인 요청은 이 이벤트로 다시 만든다.
+  defineEvent('approval_request', approvalRequestSchema),
+  // `ask_user`의 답을 기다리기 시작할 때 `session.json`을 `awaiting_user`로 바꾸기 전에 쓴다.
+  defineEvent('question', questionRequestSchema),
+  // 사용자가 `ask_user`에 답했다는 기록이다. 상태를 `running`으로 되돌리기 전에 쓴다.
+  defineEvent(
+    'answer',
+    z.strictObject({ callId: z.string().min(1), answers: z.array(questionAnswerSchema) }),
   ),
   // 변경 주체는 envelope의 actor다. rejected가 있으면 to는 요청된 상태이고 todo는 거부 전 스냅샷이다.
   defineEvent(
