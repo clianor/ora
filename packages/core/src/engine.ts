@@ -613,7 +613,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             ...(answer?.choices ?? []),
             ...(answer?.text === undefined ? [] : [answer.text]),
           ];
-          return `Q${index + 1}. ${entry.question}\n답: ${parts.join(', ')}`;
+          const title = entry.header === undefined ? '' : `[${entry.header}] `;
+          return `Q${index + 1}. ${title}${entry.question}\n답: ${parts.join(', ')}`;
         });
         return { status: 'ok', text: lines.join('\n') };
       }

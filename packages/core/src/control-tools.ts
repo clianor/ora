@@ -1,4 +1,4 @@
-import { stageSchema, todoStatusSchema } from '@ora/protocol';
+import { questionSchema, stageSchema, todoStatusSchema } from '@ora/protocol';
 import { z } from 'zod';
 import type { ToolSpec } from './ports/model.ts';
 import type { Tool } from './ports/tool.ts';
@@ -31,16 +31,7 @@ export const todoUpdateSchema = z.object({
 
 export const verifyRunSchema = z.object({ todoId: z.string().min(1) });
 export const askUserSchema = z.object({
-  questions: z
-    .array(
-      z.object({
-        question: z.string().min(1),
-        options: z.array(z.string().min(1)).min(2).max(5),
-        multiSelect: z.boolean().optional(),
-      }),
-    )
-    .min(1)
-    .max(4),
+  questions: z.array(questionSchema).min(1).max(4),
 });
 export const stageAdvanceSchema = z.object({
   to: stageSchema,
@@ -63,7 +54,7 @@ const CONTROL_TOOLS = {
   },
   ask_user: {
     description:
-      '사용자에게 질문 1~4개를 묻고 답을 받을 때까지 기다린다. 질문마다 선택지 2~5개를 주고, 사용자는 직접 입력으로도 답할 수 있다.',
+      '사용자에게 질문 1~4개를 묻고 답을 받을 때까지 기다린다. 질문마다 12자 이하의 짧은 제목(header)을 붙이고 선택지 2~5개를 주며, 사용자는 직접 입력으로도 답할 수 있다.',
     schema: askUserSchema,
   },
   'stage.advance': {

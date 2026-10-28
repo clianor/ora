@@ -41,6 +41,8 @@ export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 
 /** `ask_user`의 질문 하나다. 자유 입력은 선택지와 별개로 언제나 받을 수 있다 (SPEC 2.5.1절). */
 export const questionSchema = z.object({
+  /** 질문을 한눈에 구분하는 짧은 제목이다. */
+  header: z.string().min(1).max(12).optional(),
   question: z.string().min(1),
   options: z.array(z.string().min(1)).min(2).max(5),
   multiSelect: z.boolean().optional(),

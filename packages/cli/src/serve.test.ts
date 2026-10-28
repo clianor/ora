@@ -433,7 +433,7 @@ test(
     const running = await startServer([
       respond(
         use('u1', 'ask_user', {
-          questions: [{ question: '어느 방식으로 하나요?', options: ['가', '나'] }],
+          questions: [{ header: '방식', question: '어느 방식으로 하나요?', options: ['가', '나'] }],
         }),
       ),
       finalText,
@@ -473,7 +473,16 @@ test(
         (event) => event.type === 'tool_result' && event.payload.callId === 'u1',
       );
       expect(result).toMatchObject({
-        payload: { status: 'ok', summary: expect.stringContaining('답: 나') as string },
+        payload: {
+          status: 'ok',
+          summary: expect.stringContaining('Q1. [방식] 어느 방식으로 하나요?') as string,
+        },
+      });
+      expect(
+        readEvents(running, sessionId).find((event) => event.type === 'question'),
+      ).toMatchObject({ payload: { questions: [{ header: '방식' }] } });
+      expect(result).toMatchObject({
+        payload: { summary: expect.stringContaining('답: 나') as string },
       });
       expect((await detail(running, sessionId)).session.status).not.toBe('awaiting_user');
       const kinds = readEvents(running, sessionId).flatMap((event) =>
