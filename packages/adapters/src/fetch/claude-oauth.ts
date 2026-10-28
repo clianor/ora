@@ -10,7 +10,8 @@ import { z } from 'zod';
 import type { OAuthTokens, ProviderDef } from './wire.ts';
 
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
+// 설치된 Claude Code 2.1.312가 쓰는 claude.ai 로그인 주소(CLAUDE_AI_AUTHORIZE_URL)다.
+const AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize';
 const SCOPE =
   'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload';
 const MANUAL_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback';
@@ -19,13 +20,13 @@ const LOGIN_TIMEOUT_MS = 5 * 60_000;
 const ERROR_BODY_MAX_CHARS = 300;
 
 /**
- * 토큰 주소 후보가 둘 있다. `api.anthropic.com`을 먼저 쓴다. 추론 호출과 같은 호스트이고 omp가 쓰는 값이다.
- * 네트워크 오류나 5xx, 404이면 `platform.claude.com`(pi-mono가 쓰는 값)으로 한 번 더 보낸다.
+ * 토큰 주소 후보가 둘 있다. 설치된 Claude Code 2.1.312가 쓰는 `platform.claude.com`(TOKEN_URL)을 먼저 쓴다.
+ * 네트워크 오류나 5xx, 404이면 `api.anthropic.com`(omp가 쓰는 값)으로 한 번 더 보낸다.
  * 400과 401은 인증 거부이므로 다른 호스트로 재시도하지 않는다.
  */
 const CLAUDE_TOKEN_URLS = [
-  'https://api.anthropic.com/v1/oauth/token',
   'https://platform.claude.com/v1/oauth/token',
+  'https://api.anthropic.com/v1/oauth/token',
 ] as const;
 
 const tokenResponseSchema = z.object({
@@ -194,7 +195,7 @@ function parseManualInput(input: string, localRedirectUri: string, state: string
  */
 export async function loginClaude(io: ClaudeLoginIo): Promise<OAuthTokens> {
   const { verifier, challenge } = createPkce();
-  const state = randomBytes(16).toString('base64url');
+  const state = randomBytes(32).toString('base64url');
   const callback = Promise.withResolvers<CallbackResult>();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');

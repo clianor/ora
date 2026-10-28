@@ -63,7 +63,7 @@ test('XXHash64는 공개 시험 값과 같고, PKCE 로그인은 콜백 코드�
   const authorize = new URL(lines[1] ?? '');
   const redirect = authorize.searchParams.get('redirect_uri') ?? '';
   const state = authorize.searchParams.get('state') ?? '';
-  expect(authorize.origin + authorize.pathname).toBe('https://claude.ai/oauth/authorize');
+  expect(authorize.origin + authorize.pathname).toBe('https://claude.com/cai/oauth/authorize');
   expect(authorize.searchParams.get('code_challenge_method')).toBe('S256');
   await fetch(`${redirect.replace('localhost', '127.0.0.1')}?code=CODE&state=${state}`);
 
@@ -76,7 +76,7 @@ test('XXHash64는 공개 시험 값과 같고, PKCE 로그인은 콜백 코드�
     email: 'me@example.com',
   });
   expect(exchanged).toHaveLength(1);
-  expect(exchanged[0]?.url).toBe('https://api.anthropic.com/v1/oauth/token');
+  expect(exchanged[0]?.url).toBe('https://platform.claude.com/v1/oauth/token');
   expect(exchanged[0]?.body).toMatchObject({
     grant_type: 'authorization_code',
     code: 'CODE',
