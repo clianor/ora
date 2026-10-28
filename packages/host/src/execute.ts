@@ -3,7 +3,13 @@ import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createAnthropicModel, loadScriptedModel } from '@ora/adapters';
+import {
+  claudeResumeStateSchema,
+  createAnthropicModel,
+  createClaudeCliModel,
+  loadScriptedModel,
+} from '@ora/adapters';
+import type { ClaudeResumeState } from '@ora/adapters';
 import { parseTranscript, planResume, ruleKey, runSession, scrubValue } from '@ora/core';
 import type {
   AlwaysApprovalPort,
@@ -29,7 +35,13 @@ import type {
 import { permissionsFileSchema } from '@ora/protocol';
 import { createSessionStorage, readSessionRecord, readTranscriptText } from '@ora/store';
 import { createBuiltinTools, createCommandRunner } from '@ora/tools';
-import { ENGINE_VERSION, UsageError, loadConfig, resolveSessionsDir } from './config.ts';
+import {
+  ENGINE_VERSION,
+  UsageError,
+  loadConfig,
+  resolveSessionsDir,
+  selectProvider,
+} from './config.ts';
 import type { Config } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
@@ -171,11 +183,12 @@ export function createIpcPorts(send: (message: WorkerMessage) => void) {
   };
 }
 
-/** `--model-script`가 있으면 가짜 모델을, 없으면 설정의 Anthropic 모델을 만든다. */
+/** `--model-script`가 있으면 가짜 모델을, 없으면 설정이 고른 프로바이더의 모델을 만든다. */
 async function createModel(
   command: LaunchCommand,
   config: Config,
   env: NodeJS.ProcessEnv,
+  claudeResume: ClaudeResumeState | undefined,
 ): Promise<ModelPort> {
   if (command.modelScriptPath !== undefined) {
     try {
@@ -184,22 +197,33 @@ async function createModel(
       throw new UsageError(`가짜 모델 스크립트를 읽을 수 없습니다: ${String(error)}`);
     }
   }
-  const provider = config.providers.anthropic;
-  if (provider.model === undefined) {
+  const { claude, anthropic } = config.providers;
+  const selected = selectProvider(config);
+  if (selected === 'claude' && claude.model !== undefined) {
+    return createClaudeCliModel({
+      model: claude.model,
+      cacheTtl: claude.cacheTtl,
+      commands: claude.command,
+      env,
+      ...(claude.effort === undefined ? {} : { effort: claude.effort }),
+      ...(claudeResume === undefined ? {} : { resumeFrom: claudeResume }),
+    });
+  }
+  if (anthropic.model === undefined) {
     throw new UsageError(
-      '설정 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
+      '설정 providers.claude.model이나 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
     );
   }
-  const names = provider.credentialEnv;
+  const names = anthropic.credentialEnv;
   if (!names.some((name) => (env[name] ?? '') !== '')) {
     throw new UsageError(`API 키 환경변수가 비어 있습니다: ${names.join(', ')}`);
   }
   return createAnthropicModel({
-    model: provider.model,
-    maxTokens: provider.maxTokens,
+    model: anthropic.model,
+    maxTokens: anthropic.maxTokens,
     getApiKey: () => names.map((name) => env[name] ?? '').find((value) => value !== '') ?? '',
-    ...(provider.effort === undefined ? {} : { effort: provider.effort }),
-    ...(provider.baseUrl === undefined ? {} : { baseUrl: provider.baseUrl }),
+    ...(anthropic.effort === undefined ? {} : { effort: anthropic.effort }),
+    ...(anthropic.baseUrl === undefined ? {} : { baseUrl: anthropic.baseUrl }),
   });
 }
 
@@ -327,23 +351,37 @@ export async function executeSession(
   const sessionDir = join(resolveSessionsDir(config, oraHome), command.sessionId);
   const memoryDir = config.paths.memory ?? join(oraHome, 'memory');
 
-  const model = await createModel(command, config, hooks.env);
   if (!(await stat(command.cwd)).isDirectory())
     throw new UsageError('작업 폴더가 디렉터리가 아닙니다.');
 
   let resume: ResumeInput | undefined;
+  let claudeResume: ClaudeResumeState | undefined;
   if (command.type === 'resumeSession') {
     const text = await readTranscriptText(sessionDir);
     const session = await readSessionRecord(sessionDir);
     if (text === undefined || session === undefined) {
       throw new UsageError(`세션 기록을 읽을 수 없습니다: ${command.sessionId}`);
     }
+    const events = parseTranscript(text).events;
+    const plan = planResume(events);
     resume = {
-      plan: planResume(parseTranscript(text).events),
+      plan,
       session,
       ...(command.steer === undefined ? {} : { steer: command.steer }),
     };
+    // 하드 킬 뒤에는 Claude 세션이 기록과 어긋났을 수 있어서 `--resume`을 쓰지 않고 기록을 다시 넣는다.
+    if (!plan.hardKilled) {
+      claudeResume = events
+        .toReversed()
+        .flatMap((event) =>
+          event.type === 'message'
+            ? [claudeResumeStateSchema.safeParse(event.payload.providerMetadata)]
+            : [],
+        )
+        .find((parsed) => parsed.success)?.data;
+    }
   }
+  const model = await createModel(command, config, hooks.env, claudeResume);
 
   const storage = await createSessionStorage(sessionDir);
   // 워커가 죽으면 호스트가 이 파일의 셸 그룹을 종료한다. 셸은 워커와 다른 프로세스 그룹이라 워커 그룹 종료로는 닿지 않는다.

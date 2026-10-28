@@ -1,7 +1,6 @@
 import { scrubText } from '@ora/core';
-import type { ModelPort, ModelRequest, ModelStreamEvent, ModelUsage, StopReason } from '@ora/core';
-import type { ContentBlock } from '@ora/protocol';
-import { z } from 'zod';
+import type { ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
+import { createFrameAssembler, toApiName } from './anthropic-frames.ts';
 import {
   ANTHROPIC_API_VERSION,
   ANTHROPIC_DEFAULT_BASE_URL,
@@ -29,55 +28,6 @@ export interface AnthropicOptions {
 }
 
 const ERROR_BODY_MAX_CHARS = 500;
-
-const usageSchema = z
-  .object({
-    input_tokens: z.number().optional(),
-    output_tokens: z.number().optional(),
-    cache_creation_input_tokens: z.number().nullish(),
-    cache_read_input_tokens: z.number().nullish(),
-  })
-  .partial();
-
-const frameSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('message_start'), message: z.object({ usage: usageSchema }) }),
-  z.object({
-    type: z.literal('content_block_start'),
-    index: z.number(),
-    content_block: z.discriminatedUnion('type', [
-      z.object({ type: z.literal('text') }),
-      z.object({ type: z.literal('thinking') }),
-      z.object({ type: z.literal('redacted_thinking') }),
-      z.object({ type: z.literal('tool_use'), id: z.string(), name: z.string() }),
-    ]),
-  }),
-  z.object({
-    type: z.literal('content_block_delta'),
-    index: z.number(),
-    delta: z.discriminatedUnion('type', [
-      z.object({ type: z.literal('text_delta'), text: z.string() }),
-      z.object({ type: z.literal('thinking_delta'), thinking: z.string() }),
-      z.object({ type: z.literal('signature_delta'), signature: z.string() }),
-      z.object({ type: z.literal('input_json_delta'), partial_json: z.string() }),
-    ]),
-  }),
-  z.object({ type: z.literal('content_block_stop'), index: z.number() }),
-  z.object({
-    type: z.literal('message_delta'),
-    delta: z.object({ stop_reason: z.string().nullish() }),
-    usage: usageSchema.optional(),
-  }),
-  z.object({ type: z.literal('message_stop') }),
-  z.object({ type: z.literal('ping') }),
-  z.object({
-    type: z.literal('error'),
-    error: z.object({ type: z.string(), message: z.string() }),
-  }),
-]);
-type Frame = z.infer<typeof frameSchema>;
-
-/** Anthropic 도구 이름은 영문·숫자·`_`·`-`만 허용해서 `todo.update` 같은 이름의 `.`을 바꿔 보낸다. */
-const toApiName = (name: string): string => name.replaceAll('.', '__');
 
 /** 마지막 메시지의 마지막 블록에 캐시 표시를 붙인다. thinking 블록은 표시를 받지 못하므로 건너뛴다. */
 function toApiMessages(request: ModelRequest) {
@@ -168,15 +118,6 @@ async function* readSse(body: ReadableStream<Uint8Array>): AsyncGenerator<string
   }
 }
 
-interface PartialBlock {
-  type: 'text' | 'thinking' | 'tool_use' | 'redacted_thinking';
-  text: string;
-  signature?: string;
-  callId?: string;
-  tool?: string;
-  json: string;
-}
-
 /**
  * Anthropic Messages API 어댑터다. 사용자 본인의 API 키(`x-api-key`)로 호출하고 사용량 과금을 따른다.
  * 키는 `getApiKey`로만 받고, 오류 메시지에는 키 값을 가려서 넣는다.
@@ -259,115 +200,23 @@ export function createAnthropicModel(options: AnthropicOptions): ModelPort {
       const response = await post(request, signal);
       if (response.body === null) throw new Error('Anthropic 응답에 본문이 없습니다.');
       const byApiName = new Map(request.tools.map((tool) => [toApiName(tool.name), tool.name]));
-      const blocks = new Map<number, PartialBlock>();
-      const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-      let stopReason: string | null | undefined;
-      let done = false;
-
-      const addUsage = (value: z.infer<typeof usageSchema> | undefined) => {
-        if (value === undefined) return;
-        usage.input = value.input_tokens ?? usage.input;
-        usage.output = value.output_tokens ?? usage.output;
-        usage.cacheRead = value.cache_read_input_tokens ?? usage.cacheRead;
-        usage.cacheWrite = value.cache_creation_input_tokens ?? usage.cacheWrite;
-      };
-
+      const assembler = createFrameAssembler(
+        (name) => byApiName.get(name) ?? name.replaceAll('__', '.'),
+      );
       for await (const data of readSse(response.body)) {
-        const parsed = frameSchema.safeParse(JSON.parse(data));
-        if (!parsed.success) continue;
-        const frame: Frame = parsed.data;
-        switch (frame.type) {
-          case 'message_start':
-            addUsage(frame.message.usage);
-            break;
-          case 'content_block_start': {
-            const block = frame.content_block;
-            blocks.set(frame.index, {
-              type: block.type,
-              text: '',
-              json: '',
-              ...(block.type === 'tool_use' ? { callId: block.id, tool: block.name } : {}),
-            });
-            break;
-          }
-          case 'content_block_delta': {
-            const block = blocks.get(frame.index);
-            if (block === undefined) break;
-            const { delta } = frame;
-            if (delta.type === 'text_delta') {
-              block.text += delta.text;
-              yield { type: 'text_delta', text: delta.text };
-            } else if (delta.type === 'thinking_delta') {
-              block.text += delta.thinking;
-              yield { type: 'thinking_delta', text: delta.thinking };
-            } else if (delta.type === 'signature_delta') {
-              block.signature = (block.signature ?? '') + delta.signature;
-            } else {
-              block.json += delta.partial_json;
-            }
-            break;
-          }
-          case 'message_delta':
-            stopReason = frame.delta.stop_reason ?? stopReason;
-            addUsage(frame.usage);
-            break;
-          case 'message_stop':
-            done = true;
-            break;
-          case 'error':
-            throw new Error(
-              redact(
-                `Anthropic 스트림 오류 ${frame.error.type}: ${frame.error.message}`,
-                options.getApiKey(),
-              ),
-            );
-          default:
-            break;
+        yield* assembler.push(JSON.parse(data));
+        const failure = assembler.getError();
+        if (failure !== undefined) {
+          throw new Error(
+            redact(
+              `Anthropic 스트림 오류 ${failure.type}: ${failure.message}`,
+              options.getApiKey(),
+            ),
+          );
         }
       }
-      if (!done) throw new Error('Anthropic 스트림이 message_stop 없이 끝났습니다.');
-
-      const content: ContentBlock[] = [...blocks.entries()]
-        .sort(([a], [b]) => a - b)
-        .flatMap(([, block]): ContentBlock[] => {
-          if (block.type === 'text') return [{ type: 'text', text: block.text }];
-          if (block.type === 'thinking') {
-            return [
-              {
-                type: 'thinking',
-                text: block.text,
-                ...(block.signature === undefined ? {} : { signature: block.signature }),
-              },
-            ];
-          }
-          if (block.type === 'redacted_thinking') return [];
-          const input: unknown = block.json === '' ? {} : JSON.parse(block.json);
-          return [
-            {
-              type: 'tool_use',
-              callId: block.callId ?? '',
-              tool: byApiName.get(block.tool ?? '') ?? (block.tool ?? '').replaceAll('__', '.'),
-              input: z.record(z.string(), z.unknown()).parse(input),
-            },
-          ];
-        });
-      const modelUsage: ModelUsage = {
-        inputTokens: usage.input + usage.cacheRead + usage.cacheWrite,
-        outputTokens: usage.output,
-        cachedInputTokens: usage.cacheRead,
-      };
-      const reasons: Record<string, StopReason> = {
-        end_turn: 'end_turn',
-        tool_use: 'tool_use',
-        max_tokens: 'max_tokens',
-      };
-      yield {
-        type: 'completed',
-        content,
-        stopReason: reasons[stopReason ?? ''] ?? 'end_turn',
-        usage: modelUsage,
-        nativeToolCalls: true,
-      };
+      if (!assembler.isDone()) throw new Error('Anthropic 스트림이 message_stop 없이 끝났습니다.');
+      yield assembler.finish();
     },
   };
 }

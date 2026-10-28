@@ -171,7 +171,12 @@ test('도구 호출 왕복: 요청 헤더·시스템 첫 블록·도구 이름 �
       { type: 'tool_use', callId: 'toolu_1', tool: 'todo.update', input: { a: 1 } },
     ],
     stopReason: 'tool_use',
-    usage: { inputTokens: 16, outputTokens: 7, cachedInputTokens: 4 },
+    usage: {
+      uncachedInputTokens: 10,
+      cacheReadInputTokens: 4,
+      cacheCreationInputTokens: 2,
+      outputTokens: 7,
+    },
     nativeToolCalls: true,
   });
 

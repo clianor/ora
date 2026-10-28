@@ -24,6 +24,18 @@ const anthropicProviderSchema = z.strictObject({
   effort: z.enum(['low', 'medium', 'high']).optional(),
 });
 
+/** 사용자의 `claude` CLI를 실행하는 프로바이더다. 로그인은 Claude Code가 갖고 있어서 비밀 값이 없다. */
+const claudeProviderSchema = z.strictObject({
+  /** 실행 명령의 목록이다. 한도 오류가 나면 다음 명령으로 넘어가고, 하나뿐이면 오류로 끝낸다. */
+  command: z
+    .array(z.array(z.string().min(1)).min(1))
+    .min(1)
+    .default([['claude']]),
+  model: z.string().min(1).optional(),
+  effort: z.enum(['low', 'medium', 'high']).optional(),
+  cacheTtl: z.enum(['5m', '1h']).default('1h'),
+});
+
 const configSchema = z.object({
   schemaVersion: z.literal(1).default(1),
   projectId: z.string().nullable().default(null),
@@ -40,8 +52,14 @@ const configSchema = z.object({
     })
     .default({ mode: 'bypass-permissions', tools: {} }),
   providers: z
-    .object({ anthropic: anthropicProviderSchema.default(anthropicProviderSchema.parse({})) })
-    .default({ anthropic: anthropicProviderSchema.parse({}) }),
+    .object({
+      anthropic: anthropicProviderSchema.default(anthropicProviderSchema.parse({})),
+      claude: claudeProviderSchema.default(claudeProviderSchema.parse({})),
+    })
+    .default({
+      anthropic: anthropicProviderSchema.parse({}),
+      claude: claudeProviderSchema.parse({}),
+    }),
   isolation: isolationSchema.default('harness'),
   limits: z
     .object({
@@ -87,4 +105,16 @@ export async function loadConfig(configPath: string | undefined, oraHome: string
 }
 export function resolveSessionsDir(config: Config, oraHome: string): string {
   return config.paths.sessions ?? join(oraHome, 'sessions');
+}
+
+/** 모델 이름이 있는 프로바이더를 고른다. 둘 다 있으면 어느 쪽을 쓸지 알 수 없으므로 오류다. */
+export function selectProvider(config: Config): 'claude' | 'anthropic' | undefined {
+  const { claude, anthropic } = config.providers;
+  if (claude.model !== undefined && anthropic.model !== undefined) {
+    throw new UsageError(
+      '설정 providers.claude.model과 providers.anthropic.model이 모두 있습니다. 하나만 설정합니다.',
+    );
+  }
+  if (claude.model !== undefined) return 'claude';
+  return anthropic.model === undefined ? undefined : 'anthropic';
 }

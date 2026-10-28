@@ -102,9 +102,10 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       chainPosition: z.number().int().nonnegative(),
       nativeToolCalls: z.boolean(),
       usage: z.strictObject({
-        inputTokens: z.number().int().nonnegative(),
+        uncachedInputTokens: z.number().int().nonnegative(),
+        cacheReadInputTokens: z.number().int().nonnegative(),
+        cacheCreationInputTokens: z.number().int().nonnegative(),
         outputTokens: z.number().int().nonnegative(),
-        cachedInputTokens: z.number().int().nonnegative().optional(),
       }),
       durationMs: z.number().int().nonnegative(),
     }),

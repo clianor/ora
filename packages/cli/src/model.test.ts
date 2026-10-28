@@ -101,6 +101,57 @@ test('--model-script 없이 설정의 모델로 세션을 돌리고, 토큰은 �
   }
 }, 60_000);
 
+// 설정의 `providers.claude.command`를 따라 `ora run`이 가짜 claude 프로세스로 세션을 끝까지 돌린다.
+test('providers.claude 설정으로 세션을 돌리면 기록에 claude-cli 사용량이 남고 API 키 환경변수는 자식에게 넘어가지 않는다', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'ora-claude-e2e-'));
+  mkdirSync(join(home, 'work'));
+  const fake = join(home, 'fake-claude.mjs');
+  writeFileSync(
+    fake,
+    `import { createInterface } from 'node:readline';
+const emit = (event) => console.log(JSON.stringify({ type: 'stream_event', event }));
+for await (const line of createInterface({ input: process.stdin })) {
+  void line;
+  emit({ type: 'message_start', message: { usage: { input_tokens: 3, cache_read_input_tokens: 5, cache_creation_input_tokens: 7 } } });
+  emit({ type: 'content_block_start', index: 0, content_block: { type: 'text' } });
+  emit({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'key=' + String(process.env.ANTHROPIC_API_KEY) } });
+  emit({ type: 'content_block_stop', index: 0 });
+  emit({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } });
+  emit({ type: 'message_stop' });
+  console.log(JSON.stringify({ type: 'result', is_error: false }));
+}
+`,
+  );
+  const config = join(home, 'config.json');
+  writeFileSync(
+    config,
+    JSON.stringify({
+      schemaVersion: 1,
+      limits: { maxSteps: 2 },
+      providers: {
+        claude: { model: 'claude-haiku-5-5', effort: 'low', command: [[process.execPath, fake]] },
+      },
+    }),
+  );
+  const result = await runOra(
+    ['run', '작업', '--config', config],
+    { ANTHROPIC_API_KEY: TOKEN },
+    home,
+  );
+
+  const files = filesUnder(join(home, 'sessions'));
+  const transcript = readFileSync(
+    files.find((path) => path.endsWith('transcript.jsonl')) ?? '',
+    'utf8',
+  );
+  expect(transcript).toContain('"adapter":"claude-cli"');
+  expect(transcript).toContain('"cacheReadInputTokens":5');
+  expect(transcript).toContain('"cacheCreationInputTokens":7');
+  expect(transcript).toContain('key=undefined');
+  for (const path of files) expect(readFileSync(path, 'utf8')).not.toContain(TOKEN);
+  expect(result.output).not.toContain(TOKEN);
+}, 60_000);
+
 test('모델 이름이나 토큰이 없으면 세션을 시작하지 않고 사용법 오류(종료 코드 2)로 멈춘다', async () => {
   const home = mkdtempSync(join(tmpdir(), 'ora-model-'));
   const noModel = join(home, 'no-model.json');

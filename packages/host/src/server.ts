@@ -27,7 +27,7 @@ import type {
 } from '@ora/protocol';
 import { readSessionRecord, readTodos, readTranscriptText } from '@ora/store';
 import { z } from 'zod';
-import { UsageError, loadConfig, resolveSessionsDir } from './config.ts';
+import { UsageError, loadConfig, resolveSessionsDir, selectProvider } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { launchSession, listSessions } from './supervisor.ts';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
@@ -164,9 +164,9 @@ function parseBody<T extends z.ZodType>(schema: T, raw: unknown): z.infer<T> {
 export async function startLocalServer(options: LocalServerOptions): Promise<LocalServer> {
   const oraHome = resolveOraHome(options.env);
   const config = await loadConfig(options.configPath, oraHome);
-  if (options.modelScriptPath === undefined && config.providers.anthropic.model === undefined) {
+  if (options.modelScriptPath === undefined && selectProvider(config) === undefined) {
     throw new UsageError(
-      '설정 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
+      '설정 providers.claude.model이나 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
     );
   }
   const sessionsDir = resolveSessionsDir(config, oraHome);

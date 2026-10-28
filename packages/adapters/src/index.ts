@@ -9,7 +9,9 @@ const scriptSchema = z.object({
       content: z.array(contentBlockSchema),
       usage: z
         .object({
-          inputTokens: z.number().int().nonnegative(),
+          uncachedInputTokens: z.number().int().nonnegative(),
+          cacheReadInputTokens: z.number().int().nonnegative(),
+          cacheCreationInputTokens: z.number().int().nonnegative(),
           outputTokens: z.number().int().nonnegative(),
         })
         .optional(),
@@ -49,7 +51,12 @@ export async function loadScriptedModel(
         type: 'completed',
         content: response.content,
         stopReason: hasToolUse ? 'tool_use' : 'end_turn',
-        usage: response.usage ?? { inputTokens: 0, outputTokens: 0 },
+        usage: response.usage ?? {
+          uncachedInputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          outputTokens: 0,
+        },
         nativeToolCalls: true,
       };
     },
@@ -58,3 +65,5 @@ export async function loadScriptedModel(
 
 export { createAnthropicModel } from './anthropic.ts';
 export type { AnthropicOptions } from './anthropic.ts';
+export { claudeResumeStateSchema, createClaudeCliModel } from './claude-cli.ts';
+export type { ClaudeCliOptions, ClaudeResumeState } from './claude-cli.ts';
