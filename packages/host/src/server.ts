@@ -169,7 +169,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
   const config = await loadConfig(options.configPath, oraHome);
   if (options.modelScriptPath === undefined && selectProvider(config) === undefined) {
     throw new UsageError(
-      '설정 providers.claude.model이나 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
+      '설정 providers.claude.model, providers.codex.model, providers.grok.model 중 하나가 필요합니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
     );
   }
   const sessionsDir = resolveSessionsDir(config, oraHome);

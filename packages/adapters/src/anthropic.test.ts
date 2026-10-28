@@ -1,9 +1,10 @@
 import { createServer } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { ModelRequest, ModelStreamEvent } from '@ora/core';
+import type { ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import { afterEach, expect, test } from 'vitest';
-import { createAnthropicModel } from './anthropic.ts';
+import { streamAnthropicMessages } from './anthropic.ts';
+import type { CatalogModel } from './fetch/catalog.ts';
 
 const TOKEN = `sk-ant-api03-${'a'.repeat(32)}`;
 
@@ -107,18 +108,34 @@ async function collect(stream: AsyncIterable<ModelStreamEvent>): Promise<ModelSt
   return events;
 }
 
-function modelFor(baseUrl: string, delays: number[] = []) {
-  return createAnthropicModel({
-    model: 'test-model',
-    maxTokens: 100,
+function modelFor(baseUrl: string, delays: number[] = []): ModelPort {
+  const model: CatalogModel = {
+    id: 'test-model',
+    provider: 'claude',
+    wire: 'anthropic-messages',
     baseUrl,
-    effort: 'low',
-    getApiKey: () => TOKEN,
-    sleep: (ms) => {
-      delays.push(ms);
-      return Promise.resolve();
-    },
-  });
+    contextWindow: 200_000,
+    maxOutputTokens: 100,
+    cacheTtl: '1h',
+  };
+  return {
+    model: model.id,
+    adapter: 'anthropic',
+    stream: (request, signal) =>
+      streamAnthropicMessages({
+        model,
+        credential: { kind: 'apiKey', token: TOKEN },
+        request,
+        signal,
+        options: {
+          effort: 'low',
+          sleep: (ms) => {
+            delays.push(ms);
+            return Promise.resolve();
+          },
+        },
+      }),
+  };
 }
 
 // 실제 API를 부르지 않고 로컬 서버로 응답을 흉내 낸다. 외부 입출력 경계라 e2e로 만들 수 없는 분기를 확인한다.

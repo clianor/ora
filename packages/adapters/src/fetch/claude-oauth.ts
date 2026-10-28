@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { scrubText } from '@ora/core';
 import { z } from 'zod';
-import type { OAuthTokens, ProviderDef } from './wire.ts';
+import type { OAuthTokens, ProviderDef, WireCredential } from './wire.ts';
 
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 // 설치된 Claude Code 2.1.312가 쓰는 claude.ai 로그인 주소(CLAUDE_AI_AUTHORIZE_URL)다.
@@ -147,10 +147,40 @@ function refreshClaudeToken(
   );
 }
 
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const usageWindowSchema = z.object({ utilization: z.number().nullable().optional() }).nullish();
+const usageSchema = z.object({ five_hour: usageWindowSchema, seven_day: usageWindowSchema });
+
+/** 5시간 창과 7일 창 가운데 더 빡빡한 쪽의 남은 비율(%)이다. 구독 OAuth 토큰만 조회할 수 있다. */
+async function readClaudeRemainingPct(
+  credential: WireCredential,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal,
+): Promise<number | undefined> {
+  if (credential.kind !== 'oauth') return undefined;
+  const response = await fetchImpl(USAGE_URL, {
+    headers: {
+      authorization: `Bearer ${credential.token}`,
+      'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+      'anthropic-version': '2023-06-01',
+      accept: 'application/json',
+    },
+    signal,
+  });
+  if (!response.ok) throw new Error(`사용량 조회 실패: HTTP ${String(response.status)}`);
+  const usage = usageSchema.parse(await response.json());
+  const used = [usage.five_hour?.utilization, usage.seven_day?.utilization].filter(
+    (value): value is number => typeof value === 'number',
+  );
+  if (used.length === 0) return undefined;
+  return Math.min(100, Math.max(0, 100 - Math.max(...used)));
+}
+
 export const CLAUDE_PROVIDER: ProviderDef = {
   id: 'claude',
   wire: 'anthropic-messages',
   refresh: (refreshToken, fetchImpl, now) => refreshClaudeToken(refreshToken, fetchImpl, now),
+  readRemainingPct: readClaudeRemainingPct,
 };
 
 export interface ClaudeLoginIo {

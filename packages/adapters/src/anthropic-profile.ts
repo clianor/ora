@@ -1,6 +1,5 @@
 /** Anthropic Messages API 요청 상수다. 인증은 API 키(`x-api-key`)와 구독 OAuth(Bearer)를 모두 쓴다. */
 
-export const ANTHROPIC_DEFAULT_BASE_URL = 'https://api.anthropic.com';
 export const ANTHROPIC_MESSAGES_PATH = '/v1/messages';
 export const ANTHROPIC_API_VERSION = '2023-06-01';
 

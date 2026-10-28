@@ -326,6 +326,30 @@ test(
 );
 
 test(
+  '도구 진전 없이 답만 이어 가면 5스텝 뒤 no_progress로 멈추고 막힌 todo를 남긴다',
+  async () => {
+    const project = createProject();
+    const result = await runCli(
+      project,
+      [
+        respond(use('n1', 'todo.update', { todos: [{ id: 't1', content: '막힌 작업' }] })),
+        ...Array.from({ length: 8 }, () => finalReport),
+      ],
+      [],
+      { permissions: { mode: 'bypass-permissions' } },
+    );
+    expect(result.code).toBe(1);
+
+    const { session, events } = readSession(project);
+    expect(session).toMatchObject({ status: 'stopped', endReason: 'no_progress' });
+    expect(events.filter((event) => event.type === 'model_request')).toHaveLength(6);
+    const end = events.find((event) => event.type === 'session_end');
+    expect(end?.payload.summary).toContain('t1');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
   '비밀 값은 transcript·artifact·todos.json·모델 입력·CLI 출력에서 마스킹하고 artifact는 덮어쓰지 않는다',
   async () => {
     const secret = ['sk', 'abcdefghijklmnopqrstuvwx1234'].join('-');

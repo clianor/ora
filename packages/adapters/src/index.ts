@@ -63,8 +63,6 @@ export async function loadScriptedModel(
   };
 }
 
-export { createAnthropicModel } from './anthropic.ts';
-export type { AnthropicOptions } from './anthropic.ts';
 export { createClaudeCliModel } from './claude-cli.ts';
 export { createClaudeSdkModel } from './claude-sdk.ts';
 export { ClaudeLimitError, claudeResumeStateSchema } from './claude-shared.ts';
@@ -81,4 +79,6 @@ export { loginGrok } from './fetch/grok.ts';
 export type { GrokLoginIo } from './fetch/grok.ts';
 export { createFetchModel } from './fetch/model.ts';
 export { getProvider } from './fetch/providers.ts';
+export { accountPolicySchema } from './fetch/select.ts';
+export type { AccountPolicy } from './fetch/select.ts';
 export { UsageLimitError } from './fetch/wire.ts';

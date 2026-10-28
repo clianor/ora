@@ -52,6 +52,15 @@ export interface ProviderDef {
   readonly wire: WireFormat;
   /** refresh token이 회전하는 프로바이더는 새 refresh token을 돌려줘야 한다. */
   refresh(refreshToken: string, fetchImpl?: typeof fetch, now?: () => number): Promise<OAuthTokens>;
+  /**
+   * 계정의 남은 사용량(0~100 %)을 읽는다. 읽을 수 없으면 `undefined`를 돌려주거나 예외를 던진다.
+   * 조회 방법을 확인하지 못한 프로바이더는 구현하지 않으며, 그 계정은 측정하지 못한 계정으로 다룬다.
+   */
+  readRemainingPct?(
+    credential: WireCredential,
+    fetchImpl: typeof fetch,
+    signal: AbortSignal,
+  ): Promise<number | undefined>;
 }
 
 /** 사용량 한도에 걸린 응답이다. 같은 계정으로 다시 보내지 않고 다음 계정으로 바꾼다. */

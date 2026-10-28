@@ -779,21 +779,17 @@ test(
   'file_write는 permissions.json과 세션 기록을 쓰지 못하고, auth.json은 읽지도 쓰지도 못한다(링크 폴더 안의 새 파일과 대소문자만 다른 이름 포함)',
   async () => {
     const running = await startServer((home) => [
-      respond(use('p1', 'file_write', { path: join(home, 'permissions.json'), content: '{}' })),
-      respond(use('p2', 'file_write', { path: 'link/permissions.json', content: '{}' })),
       respond(
+        use('p1', 'file_write', { path: join(home, 'permissions.json'), content: '{}' }),
+        use('p2', 'file_write', { path: 'link/permissions.json', content: '{}' }),
         use('p3', 'file_write', {
           path: join(home, 'sessions', 's-20260101-aaaaaa', 'session.json'),
           content: '{}',
         }),
+        ...(process.platform === 'darwin'
+          ? [use('p4', 'file_write', { path: join(home, 'Permissions.json'), content: '{}' })]
+          : []),
       ),
-      ...(process.platform === 'darwin'
-        ? [
-            respond(
-              use('p4', 'file_write', { path: join(home, 'Permissions.json'), content: '{}' }),
-            ),
-          ]
-        : []),
       respond(use('p5', 'file_read', { path: join(home, 'auth.json') })),
       respond(use('p6', 'file_write', { path: join(home, 'auth.json'), content: '{}' })),
       finalText,

@@ -11,6 +11,7 @@ import type {
   SessionStatus,
   Stage,
   Todo,
+  TodoStatus,
   ToolTier,
 } from '@ora/protocol';
 import { z } from 'zod';
@@ -52,6 +53,7 @@ export interface EngineSettings {
   readonly engineVersion: string;
   readonly maxSteps: number;
   readonly maxRepairsPerTodo: number;
+  readonly noProgressSteps: number;
   readonly shellTimeoutMs: number;
   readonly recallTokenBudget: number;
 }
@@ -157,6 +159,15 @@ function joinCwd(sessionCwd: string, requested: unknown): string {
   if (typeof requested !== 'string' || requested === '') return sessionCwd;
   return requested.startsWith('/') ? requested : `${sessionCwd.replace(/\/$/, '')}/${requested}`;
 }
+
+const STATUS_RANK: Record<TodoStatus, number> = {
+  pending: 0,
+  interrupted: 0,
+  failed: 1,
+  attempted: 1,
+  claimed_verified: 2,
+  verified: 3,
+};
 
 export async function runSession(deps: EngineDeps, input: RunInput): Promise<RunOutcome> {
   const { model, runner, store, workspace, memory, clock } = deps;
@@ -791,8 +802,54 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         },
       ]);
     }
+    // 진전은 todo 상태 전진, 수리 시도 증가, 새 todo 추가, 새 검증 증거, 오류 없이 끝난 도구 호출 중 하나다.
+    const snapshotProgress = () =>
+      new Map(
+        [...todos.values()].map((todo) => [
+          todo.id,
+          { rank: STATUS_RANK[todo.status], attempts: todo.attempts, ranAt: todo.evidence?.ranAt },
+        ]),
+      );
+    let progressMark = snapshotProgress();
+    let stagnantSteps = 0;
+    let toolSucceeded = false;
     for (;;) {
       if (signal.aborted || softStop.aborted) return await finishCancelled();
+      if (step > 0) {
+        const current = snapshotProgress();
+        const advanced = [...current].some(([id, after]) => {
+          const before = progressMark.get(id);
+          return (
+            before === undefined ||
+            after.rank > before.rank ||
+            after.attempts > before.attempts ||
+            after.ranAt !== before.ranAt
+          );
+        });
+        progressMark = current;
+        stagnantSteps = advanced || toolSucceeded ? 0 : stagnantSteps + 1;
+        if (stagnantSteps >= settings.noProgressSteps) {
+          const stuck = [...todos.values()].filter((todo) => todo.status !== 'verified');
+          const stuckText =
+            stuck.length === 0
+              ? '막힌 todo가 없습니다.'
+              : `막힌 todo: ${stuck
+                  .map(
+                    (todo) =>
+                      `${todo.id}(${todo.status}, 시도 ${todo.attempts}회${
+                        todo.evidence === undefined
+                          ? ''
+                          : `, 마지막 증거 exit ${todo.evidence.exitCode}: ${todo.evidence.summary}`
+                      })`,
+                  )
+                  .join('; ')}`;
+          return await finish(
+            'stopped',
+            'no_progress',
+            `연속 ${settings.noProgressSteps}스텝 동안 진전이 없습니다. ${stuckText}`,
+          );
+        }
+      }
       if (step >= settings.maxSteps) {
         return await finish(
           'stopped',
@@ -802,6 +859,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       }
       step += 1;
       stepId = `step-${step}`;
+      toolSucceeded = false;
 
       const started = clock.now().getTime();
       let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
@@ -836,6 +894,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             : { providerMetadata: completed.providerMetadata }),
         },
       });
+      const accountPin = model.accountPin?.();
+      if (
+        accountPin !== undefined &&
+        JSON.stringify(accountPin) !== JSON.stringify(session.accountPin)
+      ) {
+        await saveSession({ accountPin });
+      }
 
       const calls: ToolCall[] = content.flatMap((block) =>
         block.type === 'tool_use'
@@ -895,6 +960,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       }
       await flushReads();
       await invalidateStaleEvidence();
+      toolSucceeded = [...results.values()].some((result) => !result.isError);
 
       const observations: ContentBlock[] = calls.map((call) => {
         const result = results.get(call.callId);

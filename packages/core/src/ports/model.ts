@@ -1,4 +1,4 @@
-import type { ContentBlock, EventOf } from '@ora/protocol';
+import type { ContentBlock, EventOf, SessionRecord } from '@ora/protocol';
 
 export interface ToolSpec {
   readonly name: string;
@@ -38,4 +38,6 @@ export interface ModelPort {
   readonly model: string;
   readonly adapter: string;
   stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelStreamEvent>;
+  /** 마지막 요청을 보낸 계정이다. 엔진이 `session.json`에 적어 재개한 세션이 같은 계정을 이어 쓰게 한다. */
+  accountPin?(): SessionRecord['accountPin'];
 }

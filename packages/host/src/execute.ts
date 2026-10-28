@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import {
   claudeResumeStateSchema,
   createAccountStore,
-  createAnthropicModel,
   createCatalog,
   createClaudeCliModel,
   createClaudeSdkModel,
@@ -35,6 +34,7 @@ import type {
   OraEvent,
   PermissionsFile,
   QuestionAnswer,
+  SessionRecord,
   WorkerMessage,
 } from '@ora/protocol';
 import { permissionsFileSchema } from '@ora/protocol';
@@ -194,6 +194,7 @@ async function createModel(
   claudeResume: ClaudeResumeState | undefined,
   isolation: Isolation,
   oraHome: string,
+  pin: SessionRecord['accountPin'],
 ): Promise<ModelPort> {
   if (command.modelScriptPath !== undefined) {
     try {
@@ -202,7 +203,7 @@ async function createModel(
       throw new UsageError(`가짜 모델 스크립트를 읽을 수 없습니다: ${String(error)}`);
     }
   }
-  const { claude, anthropic } = config.providers;
+  const { claude } = config.providers;
   const selected = selectProvider(config);
   if (selected === 'claude' && claude.model !== undefined && claude.via === 'fetch') {
     return createFetchProviderModel({
@@ -214,6 +215,7 @@ async function createModel(
       config,
       env,
       oraHome,
+      pin,
     });
   }
   if (selected === 'claude' && claude.model !== undefined) {
@@ -243,25 +245,13 @@ async function createModel(
       config,
       env,
       oraHome,
+      pin,
     });
   }
 
-  if (anthropic.model === undefined) {
-    throw new UsageError(
-      '설정 providers.claude.model이나 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
-    );
-  }
-  const names = anthropic.credentialEnv;
-  if (!names.some((name) => (env[name] ?? '') !== '')) {
-    throw new UsageError(`API 키 환경변수가 비어 있습니다: ${names.join(', ')}`);
-  }
-  return createAnthropicModel({
-    model: anthropic.model,
-    maxTokens: anthropic.maxTokens,
-    getApiKey: () => names.map((name) => env[name] ?? '').find((value) => value !== '') ?? '',
-    ...(anthropic.effort === undefined ? {} : { effort: anthropic.effort }),
-    ...(anthropic.baseUrl === undefined ? {} : { baseUrl: anthropic.baseUrl }),
-  });
+  throw new UsageError(
+    '설정 providers.claude.model, providers.codex.model, providers.grok.model 중 하나가 필요합니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
+  );
 }
 
 interface FetchProviderModelOptions {
@@ -279,6 +269,7 @@ interface FetchProviderModelOptions {
   readonly config: Config;
   readonly env: NodeJS.ProcessEnv;
   readonly oraHome: string;
+  readonly pin: SessionRecord['accountPin'];
 }
 
 /** 로그인한 계정으로 직접 호출하는 모델을 만든다. 계정이나 카탈로그 항목이 선택한 프로바이더와 맞지 않으면 세션을 시작하지 않는다. */
@@ -317,6 +308,9 @@ async function createFetchProviderModel(options: FetchProviderModelOptions): Pro
     catalog,
     store,
     ...(settings.account === undefined ? {} : { account: settings.account }),
+    policies: config.accountPolicies.filter((policy) => policy.provider === provider),
+    reservePct: config.retry.usageReservePct,
+    ...(options.pin === undefined ? {} : { pin: options.pin }),
     wireOptions: {
       maxTokens: Math.min(settings.maxTokens, catalog.maxOutputTokens),
       ...(settings.effort === undefined ? {} : { effort: settings.effort }),
@@ -486,7 +480,15 @@ export async function executeSession(
     );
   }
   // clean-home에서는 Claude Code 세션을 남기지 않고 기록 재주입으로만 재개한다.
-  const model = await createModel(command, config, hooks.env, claudeResume, isolation, oraHome);
+  const model = await createModel(
+    command,
+    config,
+    hooks.env,
+    claudeResume,
+    isolation,
+    oraHome,
+    resume?.session.accountPin,
+  );
 
   const storage = await createSessionStorage(sessionDir);
   // 워커가 죽으면 호스트가 이 파일의 셸 그룹을 종료한다. 셸은 워커와 다른 프로세스 그룹이라 워커 그룹 종료로는 닿지 않는다.
@@ -561,6 +563,7 @@ export async function executeSession(
         engineVersion: ENGINE_VERSION,
         maxSteps: config.limits.maxSteps,
         maxRepairsPerTodo: config.limits.maxRepairsPerTodo,
+        noProgressSteps: config.limits.noProgressSteps,
         shellTimeoutMs: config.tools.shellTimeoutMs,
         recallTokenBudget: config.recall.tokenBudget,
       },

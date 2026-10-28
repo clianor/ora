@@ -1,9 +1,8 @@
 import { defaultSleep, readSse } from './fetch/http.ts';
 import { scrubText } from '@ora/core';
-import type { ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
+import type { ModelRequest, ModelStreamEvent } from '@ora/core';
 import { createFrameAssembler, toApiName } from './anthropic-frames.ts';
 import {
-  ANTHROPIC_DEFAULT_BASE_URL,
   ANTHROPIC_API_VERSION,
   ANTHROPIC_MESSAGES_PATH,
   EXTENDED_CACHE_TTL_BETA,
@@ -28,21 +27,6 @@ import {
 import type { CatalogModel } from './fetch/catalog.ts';
 import { UsageLimitError, WireAuthError } from './fetch/wire.ts';
 import type { WireCredential, WireStream } from './fetch/wire.ts';
-
-export interface AnthropicOptions {
-  readonly model: string;
-  /** 요청마다 부른다. 키는 호출 시점에만 읽고 어디에도 저장하지 않는다. */
-  readonly getApiKey: () => string;
-  readonly maxTokens: number;
-  /** `output_config.effort`로 보낸다. 없으면 보내지 않는다. */
-  readonly effort?: 'low' | 'medium' | 'high';
-  readonly baseUrl?: string;
-  /** 테스트가 로컬 서버나 가짜 응답으로 바꿔 끼울 수 있다. */
-  readonly fetch?: typeof fetch;
-  /** 재시도 대기를 바꿔 끼운다. 호출자가 신호를 취소하면 예외를 던져야 한다. */
-  readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
-  readonly now?: () => number;
-}
 
 const ERROR_BODY_MAX_CHARS = 500;
 
@@ -267,33 +251,3 @@ export const streamAnthropicMessages: WireStream = async function* ({
   if (!assembler.isDone()) throw new Error('Anthropic 스트림이 message_stop 없이 끝났습니다.');
   yield assembler.finish();
 };
-
-/** 사용자 본인의 API 키(`x-api-key`)로 호출하는 어댑터다. 사용량 과금을 따른다. 키는 `getApiKey`로만 받는다. */
-export function createAnthropicModel(options: AnthropicOptions): ModelPort {
-  const model: CatalogModel = {
-    id: options.model,
-    provider: 'anthropic',
-    wire: 'anthropic-messages',
-    baseUrl: options.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL,
-    contextWindow: 200_000,
-    maxOutputTokens: options.maxTokens,
-    cacheTtl: '1h',
-  };
-  return {
-    model: options.model,
-    adapter: 'anthropic',
-    stream: (request, signal) =>
-      streamAnthropicMessages({
-        model,
-        credential: { kind: 'apiKey', token: options.getApiKey() },
-        request,
-        signal,
-        options: {
-          ...(options.effort === undefined ? {} : { effort: options.effort }),
-          ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-          ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
-          ...(options.now === undefined ? {} : { now: options.now }),
-        },
-      }),
-  };
-}

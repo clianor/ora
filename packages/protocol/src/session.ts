@@ -26,5 +26,13 @@ export const sessionRecordSchema = z.strictObject({
   engineVersion: z.string().min(1),
   /** "이 세션 동안" 승인한 규칙이다. 재개한 뒤에도 유지한다 (SPEC 5.1절). */
   approvals: z.array(approvalRuleSchema).optional(),
+  /** 세션이 고정한 모델 계정이다. 프롬프트 캐시와 서명된 reasoning을 지키려고 재개할 때 같은 계정을 이어 쓴다 (SPEC 2.8절). */
+  accountPin: z
+    .strictObject({
+      provider: z.string().min(1),
+      account: z.string().min(1),
+      lastUsedAt: timestampSchema,
+    })
+    .optional(),
 });
 export type SessionRecord = z.infer<typeof sessionRecordSchema>;

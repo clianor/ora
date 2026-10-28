@@ -96,7 +96,7 @@ export async function logoutAccount(
   return removed;
 }
 
-/** 토큰 값은 돌려주지 않는다. 이름, 종류, 순위, 만료 시각이나 환경변수 이름만 담는다. */
+/** 토큰 값은 돌려주지 않는다. 이름, 종류, 만료 시각이나 환경변수 이름만 담는다. */
 export async function listAccounts(env: NodeJS.ProcessEnv): Promise<string[]> {
   const store = openStore(env);
   const rows: string[] = [];
@@ -106,7 +106,7 @@ export async function listAccounts(env: NodeJS.ProcessEnv): Promise<string[]> {
         account.kind === 'oauth'
           ? `expires ${new Date(account.expiresAt).toISOString()}`
           : `env ${account.credentialEnv}`;
-      rows.push(`${provider}\t${account.rank}\t${account.name}\t${account.kind}\t${detail}`);
+      rows.push(`${provider}\t${account.name}\t${account.kind}\t${detail}`);
     }
   }
   return rows;

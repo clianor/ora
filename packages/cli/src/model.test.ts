@@ -43,7 +43,7 @@ function filesUnder(dir: string): string[] {
 }
 
 // `--model-script` 없이 설정의 실제 모델 경로를 조립하는 부분은 CLI를 실제로 띄워야 확인할 수 있다.
-test('--model-script 없이 설정의 모델로 세션을 돌리고, 토큰은 세션 파일과 CLI 출력 어디에도 남지 않는다', async () => {
+test('--model-script 없이 API 키 계정(ora login --api-key-env)으로 세션을 돌리고, 키는 세션 파일과 CLI 출력 어디에도 남지 않는다', async () => {
   const seen: string[] = [];
   const server = createServer((req, res) => {
     seen.push(String(req.headers['x-api-key']));
@@ -75,24 +75,31 @@ test('--model-script 없이 설정의 모델로 세션을 돌리고, 토큰은 �
       JSON.stringify({
         schemaVersion: 1,
         limits: { maxSteps: 2 },
-        providers: {
-          anthropic: {
-            model: 'test-model',
-            baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+        providers: { claude: { model: 'test-model' } },
+        models: [
+          {
+            id: 'test-model',
+            provider: 'claude',
+            wire: 'anthropic-messages',
+            baseUrl: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`,
+            contextWindow: 200000,
+            maxOutputTokens: 1000,
           },
-        },
+        ],
       }),
     );
-    const result = await runOra(
-      ['run', '작업', '--config', config],
-      { ANTHROPIC_API_KEY: TOKEN },
+    const login = await runOra(
+      ['login', 'claude', '--name', 'key', '--api-key-env', 'MY_ORA_KEY'],
+      {},
       home,
     );
+    expect(login.code).toBe(0);
+    const result = await runOra(['run', '작업', '--config', config], { MY_ORA_KEY: TOKEN }, home);
 
     expect(seen[0]).toBe(TOKEN);
     const files = filesUnder(join(home, 'sessions'));
     const transcript = files.find((path) => path.endsWith('transcript.jsonl')) ?? '';
-    expect(readFileSync(transcript, 'utf8')).toContain('"adapter":"anthropic"');
+    expect(readFileSync(transcript, 'utf8')).toContain('"adapter":"claude-fetch"');
     for (const path of files) expect(readFileSync(path, 'utf8')).not.toContain(TOKEN);
     expect(result.output).not.toContain(TOKEN);
   } finally {
@@ -265,11 +272,16 @@ test('providers.claude 기본값(fetch)은 auth.json의 계정으로 가짜 /v1/
     const files = filesUnder(join(home, 'sessions'));
     const transcript = files.find((path) => path.endsWith('transcript.jsonl')) ?? '';
     expect(readFileSync(transcript, 'utf8')).toContain('"adapter":"claude-fetch"');
+    // 세션이 고른 계정을 session.json에 고정 정보로 남겨 재개 때 이어 쓴다.
+    const sessionJson = JSON.parse(
+      readFileSync(files.find((path) => path.endsWith('session.json')) ?? '', 'utf8'),
+    ) as { accountPin?: { provider: string; account: string } };
+    expect(sessionJson.accountPin).toMatchObject({ provider: 'claude', account: 'main' });
     for (const path of files) expect(readFileSync(path, 'utf8')).not.toContain(access);
     expect(result.output).not.toContain(access);
 
     const accounts = await runOra(['accounts'], {}, home);
-    expect(accounts.output).toContain('claude\t0\tmain\toauth');
+    expect(accounts.output).toContain('claude\tmain\toauth');
     expect(accounts.output).not.toContain(access);
   } finally {
     server.closeAllConnections();
@@ -379,7 +391,7 @@ test('providers.codex는 auth.json의 계정으로 가짜 /codex/responses를 �
     expect(result.output).not.toContain(access);
 
     const accounts = await runOra(['accounts'], {}, home);
-    expect(accounts.output).toContain('codex\t0\tmain\toauth');
+    expect(accounts.output).toContain('codex\tmain\toauth');
   } finally {
     server.closeAllConnections();
     server.close();
@@ -403,30 +415,39 @@ test('둘 이상의 프로바이더에 모델이 있으면 세션을 시작하�
   expect(result.output).toContain('providers.grok.model');
 });
 
-test('모델 이름이나 토큰이 없으면 세션을 시작하지 않고 사용법 오류(종료 코드 2)로 멈춘다', async () => {
+test('모델 이름이나 계정이 없으면 세션을 시작하지 않고 사용법 오류(종료 코드 2)로 멈추며, 설정에 키 값을 적을 수 없다', async () => {
   const home = mkdtempSync(join(tmpdir(), 'ora-model-'));
   const noModel = join(home, 'no-model.json');
   writeFileSync(noModel, JSON.stringify({ schemaVersion: 1 }));
   const withModel = join(home, 'with-model.json');
   writeFileSync(
     withModel,
-    JSON.stringify({ schemaVersion: 1, providers: { anthropic: { model: 'test-model' } } }),
+    JSON.stringify({ schemaVersion: 1, providers: { claude: { model: 'test-model' } } }),
   );
 
   const missingModel = await runOra(['run', '작업', '--config', noModel], {}, home);
   expect(missingModel.code).toBe(2);
-  expect(missingModel.output).toContain('providers.anthropic.model');
+  expect(missingModel.output).toContain('providers.claude.model');
 
-  const missingToken = await runOra(['run', '작업', '--config', withModel], {}, home);
-  expect(missingToken.code).toBe(2);
-  expect(missingToken.output).toContain('ANTHROPIC_API_KEY');
+  const missingAccount = await runOra(['run', '작업', '--config', withModel], {}, home);
+  expect(missingAccount.code).toBe(2);
+  expect(missingAccount.output).toContain('ora login claude');
+
+  const removedAnthropic = join(home, 'removed.json');
+  writeFileSync(
+    removedAnthropic,
+    JSON.stringify({ schemaVersion: 1, providers: { anthropic: { model: 'm' } } }),
+  );
+  const removed = await runOra(['run', '작업', '--config', removedAnthropic], {}, home);
+  expect(removed.code).toBe(2);
+  expect(removed.output).toContain('anthropic');
 
   const valueInConfig = join(home, 'leak.json');
   writeFileSync(
     valueInConfig,
     JSON.stringify({
       schemaVersion: 1,
-      providers: { anthropic: { model: 'm', credentialEnv: [TOKEN] } },
+      providers: { claude: { model: 'm', credentialEnv: [TOKEN] } },
     }),
   );
   const rejected = await runOra(['run', '작업', '--config', valueInConfig], {}, home);

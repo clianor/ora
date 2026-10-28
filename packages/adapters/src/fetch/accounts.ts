@@ -10,11 +10,11 @@ const REFRESH_TIMEOUT_MS = 30_000;
 
 const envNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 
+// 예전 파일의 `rank`는 읽을 때 버린다. 순서는 계정을 저장한 차례이고, 우선순위는 설정 `accountPolicies`가 정한다.
 const accountSchema = z.discriminatedUnion('kind', [
-  z.strictObject({
+  z.object({
     kind: z.literal('oauth'),
     name: z.string().min(1),
-    rank: z.number().int().nonnegative(),
     accessToken: z.string().min(1),
     refreshToken: z.string().min(1),
     /** 만료 시각(epoch ms)이다. */
@@ -22,10 +22,9 @@ const accountSchema = z.discriminatedUnion('kind', [
     accountUuid: z.string().optional(),
     email: z.string().optional(),
   }),
-  z.strictObject({
+  z.object({
     kind: z.literal('apiKey'),
     name: z.string().min(1),
-    rank: z.number().int().nonnegative(),
     /** 키 값은 저장하지 않고 읽을 환경변수 이름만 저장한다 (SPEC 2.8절). */
     credentialEnv: envNameSchema,
   }),
@@ -39,9 +38,7 @@ const authFileSchema = z.strictObject({
 });
 type AuthFile = z.infer<typeof authFileSchema>;
 
-export type NewAccount =
-  | Omit<Extract<Account, { kind: 'oauth' }>, 'rank'>
-  | Omit<Extract<Account, { kind: 'apiKey' }>, 'rank'>;
+export type NewAccount = Account;
 
 export interface AccountStoreOptions {
   readonly path: string;
@@ -51,9 +48,9 @@ export interface AccountStoreOptions {
 }
 
 export interface AccountStore {
-  /** 순위가 낮은 숫자부터 돌려준다. */
+  /** 저장한 차례(로그인 차례)대로 돌려준다. */
   list(provider: string): Promise<Account[]>;
-  /** 같은 이름이 있으면 순위를 유지한 채 바꾸고, 없으면 맨 뒤 순위로 더한다. */
+  /** 같은 이름이 있으면 그 자리에서 바꾸고, 없으면 맨 뒤에 더한다. */
   save(provider: string, account: NewAccount): Promise<void>;
   remove(provider: string, name: string): Promise<boolean>;
   /** 만료가 가까운 OAuth 토큰은 갱신해 저장한 뒤 돌려준다. 같은 계정의 갱신은 한 번만 돈다. */
@@ -91,7 +88,6 @@ export function createAccountStore(options: AccountStoreOptions): AccountStore {
   };
   const write = (file: AuthFile) =>
     writeFileAtomic(options.path, `${JSON.stringify(file, null, 2)}\n`, 0o600);
-  const sorted = (accounts: readonly Account[]) => accounts.toSorted((a, b) => a.rank - b.rank);
 
   const mutate = <T>(change: (file: AuthFile) => T): Promise<T> =>
     withFileLock(lockPath, async () => {
@@ -144,18 +140,14 @@ export function createAccountStore(options: AccountStoreOptions): AccountStore {
 
   return {
     async list(provider) {
-      return sorted((await read()).providers[provider]?.accounts ?? []);
+      return (await read()).providers[provider]?.accounts ?? [];
     },
     save: (provider, account) =>
       mutate((file) => {
         const entry = (file.providers[provider] ??= { accounts: [] });
         const index = entry.accounts.findIndex((existing) => existing.name === account.name);
-        const rank =
-          entry.accounts[index]?.rank ??
-          entry.accounts.reduce((max, existing) => Math.max(max, existing.rank + 1), 0);
-        const next: Account = { ...account, rank };
-        if (index === -1) entry.accounts.push(next);
-        else entry.accounts[index] = next;
+        if (index === -1) entry.accounts.push(account);
+        else entry.accounts[index] = account;
       }),
     remove: (provider, name) =>
       mutate((file) => {

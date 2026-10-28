@@ -127,10 +127,7 @@ test('만료가 가까운 토큰은 동시 호출에도 한 번만 갱신하고,
   expect(saved).toContain(ROTATED);
   expect(saved).not.toContain(REFRESH);
   expect(saved).not.toContain('secret-value-that-must-not-be-saved');
-  expect((await store.list('claude')).map((account) => [account.name, account.rank])).toEqual([
-    ['main', 0],
-    ['key', 1],
-  ]);
+  expect((await store.list('claude')).map((account) => account.name)).toEqual(['main', 'key']);
 });
 
 interface Seen {
@@ -238,6 +235,8 @@ test('OAuth 요청은 Claude Code 식별 정보와 도구 이름 접두사를 �
     catalog,
     store,
     now: () => NOW,
+    // 실제 사용량 조회 서버로 나가지 않도록 막는다. 조회 실패는 계정 선택을 막지 않는다.
+    fetch: () => Promise.reject(new Error('offline')),
     wireOptions: { effort: 'low' },
   });
   const events: ModelStreamEvent[] = [];

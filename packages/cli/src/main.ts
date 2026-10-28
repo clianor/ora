@@ -24,7 +24,7 @@ const USAGE = `사용법:
   ora resume <세션 ID> [--model-script <경로>] [--steer "<조향 메시지>"] [--config <경로>] [--isolation <none|harness|clean-home>] [--json]
   ora sessions [--config <경로>] [--json]
   ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>] [--isolation <none|harness|clean-home>]
-  ora login <claude|codex|grok> [--name <계정 이름>] [--api-key-env <환경변수 이름>] [--device (codex 전용)]
+  ora login <claude|codex|grok> [--name <계정 이름>] [--api-key-env <환경변수 이름> (API 키 계정을 만든다. 키 값은 저장하지 않는다)] [--device (codex 전용)]
   ora logout <claude|codex|grok> [--name <계정 이름>]
   ora accounts`;
 
