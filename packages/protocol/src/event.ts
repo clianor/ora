@@ -162,6 +162,33 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       previousStatus: sessionStatusSchema,
     }),
   ),
+  // 하드 킬이나 전원 차단으로 깨진 마지막 줄을 버렸다는 기록이다. 파일은 고치지 않고 이 이벤트만 덧붙인다.
+  defineEvent(
+    'recovered',
+    z.strictObject({
+      droppedLines: z.number().int().positive(),
+      droppedBytes: z.number().int().nonnegative(),
+      afterSeq: z.number().int().nonnegative(),
+    }),
+  ),
+  // 재개할 때 모델 컨텍스트에서 뺀 seq 범위다. transcript 파일에는 그대로 남는다.
+  defineEvent(
+    'context_trim',
+    z.strictObject({
+      fromSeq: z.number().int().positive(),
+      toSeq: z.number().int().positive(),
+      reason: z.enum(['failed_batch', 'aborted_batch']),
+    }),
+  ),
+  defineEvent(
+    'resume',
+    z.strictObject({
+      fromStatus: sessionStatusSchema,
+      hardKilled: z.boolean(),
+      steered: z.boolean(),
+      resumePointTodoId: z.string().min(1).optional(),
+    }),
+  ),
   defineEvent(
     'session_end',
     z.strictObject({

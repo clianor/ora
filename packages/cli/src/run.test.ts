@@ -1,11 +1,14 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -108,6 +111,7 @@ function createProject(): Project {
 interface CliResult {
   readonly code: number;
   readonly stdout: string;
+  readonly stderr: string;
 }
 
 function runCli(
@@ -139,8 +143,8 @@ function runCli(
       ...extraArgs,
     ],
     { cwd: project.dir, env: { ...process.env, ORA_HOME: project.home } },
-    (error, stdout) => {
-      resolve({ code: typeof error?.code === 'number' ? error.code : 0, stdout });
+    (error, stdout, stderr) => {
+      resolve({ code: typeof error?.code === 'number' ? error.code : 0, stdout, stderr });
     },
   );
   return promise;
@@ -153,6 +157,7 @@ function readSession(project: Project) {
   const events: OraEvent[] = readFileSync(join(dir, 'transcript.jsonl'), 'utf8')
     .trim()
     .split('\n')
+    .filter((line) => !line.startsWith('{"seq":999,'))
     .map((line) => oraEventSchema.parse(JSON.parse(line)));
   return {
     dir,
@@ -395,6 +400,415 @@ test(
     });
     expect(findToolResult(events, 'q1')).toMatchObject({ status: 'error' });
     expect(findToolResult(events, 'q2')?.summary).toContain('알 수 없는 도구');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+interface RunningCli {
+  readonly child: ChildProcess;
+  readonly output: () => CliResult;
+  readonly done: Promise<CliResult>;
+}
+
+function startCli(project: Project, args: string[]): RunningCli {
+  const child = spawn(process.execPath, [CLI_PATH, ...args], {
+    cwd: project.dir,
+    env: { ...process.env, ORA_HOME: project.home },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8');
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8');
+  });
+  const { promise, resolve } = Promise.withResolvers<CliResult>();
+  child.on('close', (code) => {
+    resolve({ code: code ?? -1, stdout, stderr });
+  });
+  return { child, output: () => ({ code: -1, stdout, stderr }), done: promise };
+}
+
+function writeScript(project: Project, name: string, responses: { content: Block[] }[]): string[] {
+  const scriptPath = join(project.home, `${name}.json`);
+  writeFileSync(scriptPath, JSON.stringify({ responses }));
+  return [
+    '--model-script',
+    scriptPath,
+    '--record-model-input',
+    join(project.home, `${name}-input.jsonl`),
+  ];
+}
+
+function startRun(
+  project: Project,
+  name: string,
+  responses: { content: Block[] }[],
+  config?: object,
+): RunningCli {
+  const configArgs: string[] = [];
+  if (config !== undefined) {
+    const configPath = join(project.home, 'engine.config.json');
+    writeFileSync(configPath, JSON.stringify({ schemaVersion: 1, ...config }));
+    configArgs.push('--config', configPath);
+  }
+  return startCli(project, [
+    'run',
+    '파일을 고친다',
+    ...writeScript(project, name, responses),
+    '--permission',
+    'yolo',
+    ...configArgs,
+  ]);
+}
+
+function startResume(
+  project: Project,
+  sessionId: string,
+  name: string,
+  responses: { content: Block[] }[],
+  extraArgs: string[] = [],
+): RunningCli {
+  return startCli(project, [
+    'resume',
+    sessionId,
+    ...writeScript(project, name, responses),
+    ...extraArgs,
+  ]);
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('조건을 기다리다 시간이 지났습니다.');
+    await new Promise((done) => setTimeout(done, 50));
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sessionIdOf(project: Project): string {
+  const [id] = readdirSync(join(project.home, 'sessions'));
+  return id ?? '';
+}
+
+const attemptedResponse = respond(
+  use('a1', 'todo.update', { todos: [{ id: 't1', status: 'attempted' }] }),
+);
+
+/** 빠르게 끝나는 호출 b1과 오래 도는 호출 b2를 한 배치로 낸다. 중간에 끊으면 부분 성공 배치가 된다. */
+const partialBatch = respond(
+  use('b1', 'shell', { command: 'echo once >> side.txt' }),
+  use('b2', 'shell', {
+    command: 'echo $$ > pid.txt; echo started > started.txt; sleep 60',
+  }),
+);
+
+function startedFile(project: Project): string {
+  return join(project.dir, 'started.txt');
+}
+
+async function interruptTwice(running: RunningCli): Promise<CliResult> {
+  running.child.kill('SIGINT');
+  await waitFor(() => running.output().stderr.includes('소프트 스톱'));
+  running.child.kill('SIGINT');
+  return running.done;
+}
+
+/** 오래 도는 호출 중에 하드 킬로 끝낸 세션을 만든다. */
+async function createHardKilledSession(
+  project: Project,
+  batch: { content: Block[] },
+): Promise<void> {
+  const running = startRun(project, 'first', [...setupResponses, attemptedResponse, batch]);
+  await waitFor(() => existsSync(startedFile(project)));
+  expect((await interruptTwice(running)).code).toBe(130);
+}
+
+const resumeToVerified = [...repairResponses('f', 'a - b', 'a + b', true), ...closingResponses];
+
+/** 소프트 스톱으로 끝낸 세션을 만든다. */
+async function createSoftStoppedSession(project: Project): Promise<void> {
+  const running = startRun(project, 'first', [
+    ...setupResponses,
+    attemptedResponse,
+    respond(use('s1', 'shell', { command: 'echo started > started.txt; sleep 2' })),
+  ]);
+  await waitFor(() => existsSync(startedFile(project)));
+  running.child.kill('SIGINT');
+  expect((await running.done).code).toBe(130);
+}
+
+test(
+  '소프트 스톱은 진행 중인 도구 호출을 끝까지 기다린 뒤 세션과 todo를 interrupted로 남기고 종료 코드 130이다',
+  async () => {
+    const project = createProject();
+    const running = startRun(project, 'first', [
+      ...setupResponses,
+      attemptedResponse,
+      respond(
+        use('s1', 'shell', {
+          command: 'echo started > started.txt; sleep 2; echo finished > finished.txt',
+        }),
+      ),
+    ]);
+    await waitFor(() => existsSync(startedFile(project)));
+    running.child.kill('SIGINT');
+    const result = await running.done;
+    expect(result.code).toBe(130);
+
+    const { events, session, todos } = readSession(project);
+    expect(existsSync(join(project.dir, 'finished.txt'))).toBe(true);
+    expect(findToolResult(events, 's1')).toMatchObject({ status: 'ok' });
+    expect(session).toMatchObject({ status: 'interrupted', endReason: 'user_cancel' });
+    expect(todos[0]).toMatchObject({ id: 't1', status: 'interrupted' });
+    expect(events.find((event) => event.type === 'cancel')).toMatchObject({
+      payload: { mode: 'soft' },
+    });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '하드 킬은 셸 프로세스 그룹을 종료하고 세션을 crashed로, 진행 중이던 호출을 aborted로 남긴다',
+  async () => {
+    const project = createProject();
+    await createHardKilledSession(project, partialBatch);
+
+    const { dir, events, session } = readSession(project);
+    const shellPid = Number(readFileSync(join(project.dir, 'pid.txt'), 'utf8'));
+    await waitFor(() => !isAlive(shellPid));
+    expect(session).toMatchObject({ status: 'crashed', endReason: 'user_cancel' });
+    expect(findToolResult(events, 'b1')).toMatchObject({ status: 'ok' });
+    expect(findToolResult(events, 'b2')).toMatchObject({ status: 'aborted' });
+    expect(events.find((event) => event.type === 'cancel')).toMatchObject({
+      payload: { mode: 'hard' },
+    });
+    expect(existsSync(join(dir, 'worker.pid'))).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '하드 킬로 끝난 세션을 재개하면 부분 성공 배치를 다시 실행하지 않고 끝까지 돌아 verified가 된다',
+  async () => {
+    const project = createProject();
+    await createHardKilledSession(project, partialBatch);
+    const sessionId = sessionIdOf(project);
+
+    const resuming = startResume(project, sessionId, 'second', [
+      respond(use('r1', 'shell', { command: 'echo 1 > started2.txt; sleep 2' })),
+      ...resumeToVerified,
+    ]);
+    await waitFor(() => existsSync(join(project.dir, 'started2.txt')));
+    // 같은 세션을 동시에 재개하면 transcript에 같은 seq가 두 번 쓰이므로 둘째 재개는 거부한다.
+    const concurrent = await startResume(project, sessionId, 'third', resumeToVerified).done;
+    expect(concurrent.code).toBe(2);
+    expect(concurrent.stderr).toContain('이미 실행 중');
+    const resumed = await resuming.done;
+    expect(resumed.code).toBe(0);
+
+    const { dir, events, session, todos } = readSession(project);
+    expect(new Set(events.map((event) => event.seq)).size).toBe(events.length);
+    expect(existsSync(join(dir, 'session.lock'))).toBe(false);
+    expect(readFileSync(join(project.dir, 'side.txt'), 'utf8')).toBe('once\n');
+    expect(
+      events.filter((event) => event.type === 'tool_call' && event.payload.callId === 'b1'),
+    ).toHaveLength(1);
+    expect(events.some((event) => event.type === 'context_trim')).toBe(false);
+    expect(events.find((event) => event.type === 'resume')).toMatchObject({
+      payload: { fromStatus: 'crashed', hardKilled: true, steered: false },
+    });
+    expect(session).toMatchObject({ status: 'completed', endReason: 'passed' });
+    expect(todos[0]).toMatchObject({ status: 'verified' });
+
+    const firstRequest = readFileSync(join(project.home, 'second-input.jsonl'), 'utf8')
+      .trim()
+      .split('\n')[0];
+    const context = JSON.stringify(JSON.parse(firstRequest ?? '{}'));
+    expect(context).toContain('exit code: 0');
+    expect(context).toContain('워커가 종료되어 호출이 중단됐습니다.');
+
+    // session_end 직후 죽어 session.json이 running으로 남았다면, transcript의 completed가 이긴다.
+    const sessionPath = join(dir, 'session.json');
+    const record = JSON.parse(readFileSync(sessionPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(sessionPath, JSON.stringify({ ...record, status: 'running' }));
+    const again = await startResume(project, sessionId, 'fourth', resumeToVerified).done;
+    expect(again.code).toBe(2);
+    expect(again.stderr).toContain('completed');
+    expect(JSON.parse(readFileSync(sessionPath, 'utf8'))).toMatchObject({ status: 'completed' });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '전체가 중단된 마지막 배치는 재개할 때 모델 컨텍스트에서 빼고 context_trim으로 남긴다',
+  async () => {
+    const project = createProject();
+    await createHardKilledSession(
+      project,
+      respond(
+        use('b2', 'shell', { command: 'echo $$ > pid.txt; echo started > started.txt; sleep 60' }),
+      ),
+    );
+    const before = readFileSync(join(readSession(project).dir, 'transcript.jsonl'), 'utf8');
+
+    const resumed = await startResume(project, sessionIdOf(project), 'second', resumeToVerified, [
+      '--steer',
+      '파일만 고친다',
+    ]).done;
+    expect(resumed.code).toBe(0);
+
+    const { dir, events } = readSession(project);
+    expect(readFileSync(join(dir, 'transcript.jsonl'), 'utf8').startsWith(before)).toBe(true);
+    const trim = events.find((event) => event.type === 'context_trim');
+    expect(trim).toMatchObject({ payload: { reason: 'aborted_batch' } });
+    expect(events.find((event) => event.type === 'resume')).toMatchObject({
+      payload: { steered: true },
+    });
+    const firstRequest = readFileSync(join(project.home, 'second-input.jsonl'), 'utf8')
+      .trim()
+      .split('\n')[0];
+    expect(firstRequest).not.toContain('"callId":"b2"');
+    expect(firstRequest).toContain('사용자 지시: 파일만 고친다');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '마지막 줄이 깨진 세션을 재개하면 recovered 이벤트를 남기고 끝까지 돈다',
+  async () => {
+    const project = createProject();
+    await createSoftStoppedSession(project);
+    const transcriptPath = join(readSession(project).dir, 'transcript.jsonl');
+    appendFileSync(transcriptPath, '{"seq":999,"ts":"2026-10-28T10:00');
+
+    const resumed = await startResume(project, sessionIdOf(project), 'second', resumeToVerified)
+      .done;
+    expect(resumed.code).toBe(0);
+
+    const { events, session } = readSession(project);
+    expect(events.find((event) => event.type === 'recovered')).toMatchObject({
+      payload: { droppedLines: 1 },
+    });
+    expect(readFileSync(transcriptPath, 'utf8')).toContain('{"seq":999,"ts":"2026-10-28T10:00\n');
+    expect(session).toMatchObject({ status: 'completed' });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '워커 프로세스가 SIGKILL로 죽으면 호스트가 세션을 crashed로 기록하고 ora sessions가 보여 준다',
+  async () => {
+    const project = createProject();
+    const running = startRun(project, 'first', [
+      ...setupResponses,
+      attemptedResponse,
+      respond(
+        use('s1', 'shell', { command: 'echo $$ > pid.txt; echo started > started.txt; sleep 20' }),
+      ),
+    ]);
+    await waitFor(() => existsSync(startedFile(project)));
+    const workerPidPath = join(project.home, 'sessions', sessionIdOf(project), 'worker.pid');
+    process.kill(Number(readFileSync(workerPidPath, 'utf8')), 'SIGKILL');
+    const result = await running.done;
+    // 셸은 워커와 다른 프로세스 그룹이므로, 호스트가 워커 사망 뒤에 직접 종료해야 한다.
+    const shellPid = Number(readFileSync(join(project.dir, 'pid.txt'), 'utf8'));
+    await waitFor(() => !isAlive(shellPid));
+    expect(result.code).toBe(1);
+
+    const { events, session } = readSession(project);
+    expect(session).toMatchObject({ status: 'crashed', endReason: 'error' });
+    expect(findToolResult(events, 's1')).toMatchObject({ status: 'aborted' });
+    expect(events.some((event) => event.type === 'cancel')).toBe(false);
+    expect(events.at(-1)).toMatchObject({
+      type: 'session_end',
+      payload: { status: 'crashed', summary: expect.stringContaining('SIGKILL') as string },
+    });
+
+    const listed = await startCli(project, ['sessions', '--json']).done;
+    expect(JSON.parse(listed.stdout.trim())).toMatchObject({
+      id: sessionIdOf(project),
+      status: 'crashed',
+    });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '동시 세션 상한에 닿으면 새 세션은 앞선 세션이 끝날 때까지 시작하지 않고 기다린다',
+  async () => {
+    const project = createProject();
+    const config = { limits: { maxConcurrentSessions: 1 } };
+    const first = startRun(
+      project,
+      'first',
+      [
+        respond(use('s1', 'shell', { command: 'echo started > started.txt; sleep 2' })),
+        finalReport,
+      ],
+      config,
+    );
+    await waitFor(() => existsSync(startedFile(project)));
+    const second = startRun(project, 'second', [finalReport], config);
+    await waitFor(() => second.output().stderr.includes('대기합니다'));
+    expect(readdirSync(join(project.home, 'sessions'))).toHaveLength(1);
+
+    await Promise.all([first.done, second.done]);
+    expect(readdirSync(join(project.home, 'sessions'))).toHaveLength(2);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'archived 세션은 재개를 거부하고 종료 코드 2다',
+  async () => {
+    const project = createProject();
+    await createSoftStoppedSession(project);
+    const sessionPath = join(readSession(project).dir, 'session.json');
+    const record = JSON.parse(readFileSync(sessionPath, 'utf8')) as Record<string, unknown>;
+    writeFileSync(sessionPath, JSON.stringify({ ...record, status: 'archived' }));
+
+    const resumed = await startResume(project, sessionIdOf(project), 'second', resumeToVerified)
+      .done;
+    expect(resumed.code).toBe(2);
+    expect(resumed.stderr).toContain('archived');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '시작 기록을 남기기 전에 죽은 세션도 crashed로 기록해 ora sessions에 보이고 재개는 사유를 알려 준다',
+  async () => {
+    const project = createProject();
+    await createSoftStoppedSession(project);
+    const { dir } = readSession(project);
+    const sessionId = sessionIdOf(project);
+    const transcriptPath = join(dir, 'transcript.jsonl');
+    const firstLine = readFileSync(transcriptPath, 'utf8').split('\n')[0] ?? '';
+
+    for (const content of [`${firstLine}\n`, '']) {
+      writeFileSync(transcriptPath, content);
+      rmSync(join(dir, 'session.json'), { force: true });
+      const resumed = await startResume(project, sessionId, 'second', resumeToVerified).done;
+      expect(resumed.code).toBe(2);
+      expect(resumed.stderr).toContain('시작 기록이 없어 재개할 수 없습니다');
+      const listed = await startCli(project, ['sessions', '--json']).done;
+      expect(JSON.parse(listed.stdout.trim())).toMatchObject({
+        id: sessionId,
+        status: 'crashed',
+        endReason: 'error',
+      });
+    }
   },
   TEST_TIMEOUT_MS,
 );

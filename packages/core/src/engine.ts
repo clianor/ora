@@ -32,6 +32,8 @@ import type { TranscriptSink } from './ports/transcript-sink.ts';
 import type { WorkspacePort } from './ports/workspace.ts';
 import { assembleSystemPrompt, describeTodos } from './prompt.ts';
 import { createRecorder } from './recorder.ts';
+import { appendMessage } from './recovery.ts';
+import type { ResumePlan } from './recovery.ts';
 import { describeScrubHits, mergeScrubHits, scrubText, scrubValue } from './scrub.ts';
 import type { ScrubHits } from './scrub.ts';
 import { STAGES, checkStageExit, isBackwardAllowed } from './stages.ts';
@@ -67,7 +69,18 @@ export interface RunInput {
   readonly repo?: string;
   readonly settings: EngineSettings;
   readonly configSummary: Record<string, unknown>;
+  /** 하드 킬 신호다. 진행 중인 도구 호출과 모델 요청을 바로 끊는다. */
   readonly signal: AbortSignal;
+  /** 소프트 스톱 신호다. 진행 중인 도구 호출은 끝까지 기다리고, 아직 시작하지 않은 일은 하지 않는다. */
+  readonly softStop: AbortSignal;
+  readonly resume?: ResumeInput;
+}
+
+/** 멈춘 세션을 잇는 데 필요한 입력이다. 호스트가 transcript를 봉인한 뒤 `planResume`으로 만든다. */
+export interface ResumeInput {
+  readonly plan: ResumePlan;
+  readonly session: SessionRecord;
+  readonly steer?: string;
 }
 
 export interface RunOutcome {
@@ -114,15 +127,15 @@ function formatCommandOutput(result: {
 
 export async function runSession(deps: EngineDeps, input: RunInput): Promise<RunOutcome> {
   const { model, runner, store, workspace, memory, clock } = deps;
-  const { settings, signal } = input;
-  const recorder = createRecorder(input.sessionId, deps.sink, clock);
+  const { settings, signal, softStop, resume } = input;
+  const recorder = createRecorder(input.sessionId, deps.sink, clock, resume?.plan.lastSeq);
   const toolMap = new Map(deps.tools.map((tool) => [tool.name, tool]));
-  const todos = new Map<string, Todo>();
+  const todos = new Map<string, Todo>(resume?.plan.todos.map((todo) => [todo.id, todo] as const));
   const now = () => formatKst(clock.now());
   const emit: (typeof recorder)['emit'] = (actor, draft) => recorder.emit(actor, draft, stepId);
 
   let stepId = 'step-0';
-  let stage: Stage = 'understand';
+  let stage: Stage = resume?.plan.stage ?? 'understand';
   const getStage = (): Stage => stage;
 
   const promptFiles = await workspace.readPromptFiles();
@@ -150,7 +163,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   );
 
   const createdAt = now();
-  let session: SessionRecord = {
+  let session: SessionRecord = resume?.session ?? {
     schemaVersion: 1,
     id: input.sessionId,
     createdAt,
@@ -171,23 +184,28 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   };
   const saveTodos = () => store.saveTodos(scrubValue([...todos.values()]));
 
-  await emit('engine', {
-    type: 'session_start',
-    payload: {
-      configSummary: input.configSummary,
-      isolation: settings.isolation,
-      permissionMode: settings.permissionMode,
-      instructionFiles: instructionFiles.map((file) => ({ path: file.path, sha256: file.sha256 })),
-      promptHash,
-    },
-  });
-  await saveSession({});
-  await saveSession({ status: 'running' });
-  await emit('user', {
-    type: 'message',
-    payload: { role: 'user', content: [{ type: 'text', text: input.task }] },
-  });
-  await emit('engine', { type: 'stage', payload: { outcome: 'entered', stage } });
+  if (resume === undefined) {
+    await emit('engine', {
+      type: 'session_start',
+      payload: {
+        configSummary: input.configSummary,
+        isolation: settings.isolation,
+        permissionMode: settings.permissionMode,
+        instructionFiles: instructionFiles.map((file) => ({
+          path: file.path,
+          sha256: file.sha256,
+        })),
+        promptHash,
+      },
+    });
+    await saveSession({});
+    await saveSession({ status: 'running' });
+    await emit('user', {
+      type: 'message',
+      payload: { role: 'user', content: [{ type: 'text', text: input.task }] },
+    });
+    await emit('engine', { type: 'stage', payload: { outcome: 'entered', stage } });
+  }
 
   const enterStage = async (to: Stage) => {
     stage = to;
@@ -212,9 +230,25 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     return { status, endReason, summary: safeSummary, todos: [...todos.values()] };
   };
 
+  const interruptActiveTodos = async () => {
+    for (const todo of [...todos.values()]) {
+      if (todo.status !== 'attempted') continue;
+      const updated: Todo = { ...todo, status: 'interrupted', updatedAt: now() };
+      todos.set(updated.id, updated);
+      await emit('engine', {
+        type: 'todo_update',
+        payload: { todoId: updated.id, from: todo.status, to: 'interrupted', todo: updated },
+      });
+    }
+  };
+
+  /** 하드 킬 신호가 있으면 `crashed`, 소프트 스톱이면 진행 중이던 todo를 `interrupted`로 남기고 `interrupted`로 끝낸다. */
   const finishCancelled = async (): Promise<RunOutcome> => {
-    await emit('engine', { type: 'cancel', payload: { mode: 'soft', previousStatus: 'running' } });
-    return finish('interrupted', 'user_cancel', '사용자가 취소했습니다.');
+    const mode = signal.aborted ? 'hard' : 'soft';
+    await emit('engine', { type: 'cancel', payload: { mode, previousStatus: 'running' } });
+    if (mode === 'hard') return finish('crashed', 'user_cancel', '사용자가 강제 종료했습니다.');
+    await interruptActiveTodos();
+    return finish('interrupted', 'user_cancel', '사용자가 중단했습니다.');
   };
 
   const authorize = async (call: ToolCall, tier: ToolTier): Promise<string | undefined> => {
@@ -478,6 +512,21 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     }
   };
 
+  // 신호는 await 사이에 바뀐다. 속성을 직접 읽으면 TypeScript가 앞선 검사로 좁힌 값을 그대로 믿는다.
+  const isSoftStopped = () => softStop.aborted;
+  const skipCall = async (call: ToolCall): Promise<CallResult> => {
+    const text = '소프트 스톱으로 실행하지 않았습니다.';
+    await emit('model', {
+      type: 'tool_call',
+      payload: { callId: call.callId, tool: call.tool, args: call.input },
+    });
+    await emit('tool', {
+      type: 'tool_result',
+      payload: { callId: call.callId, status: 'aborted', summary: text, durationMs: 0 },
+    });
+    return { text, isError: true };
+  };
+
   const invalidateStaleEvidence = async () => {
     for (const todo of [...todos.values()]) {
       if (todo.status !== 'verified' || todo.evidence === undefined) continue;
@@ -492,20 +541,55 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     await saveTodos();
   };
 
-  const history: ModelMessage[] = [
-    { role: 'user', content: [{ type: 'text', text: scrubText(input.task).text }] },
-  ];
-  const pushUser = async (actor: 'tool' | 'engine', content: ContentBlock[]) => {
+  const history: ModelMessage[] = resume
+    ? [...resume.plan.history]
+    : [{ role: 'user', content: [{ type: 'text', text: scrubText(input.task).text }] }];
+  const pushUser = async (actor: 'user' | 'tool' | 'engine', content: ContentBlock[]) => {
     const safeContent = scrubValue(content);
-    history.push({ role: 'user', content: safeContent });
+    appendMessage(history, { role: 'user', content: safeContent });
     await emit(actor, { type: 'message', payload: { role: 'user', content: safeContent } });
   };
   const isTool = (name: string) => !isControlTool(name) && toolMap.get(name)?.tier === 'read';
 
   let step = 0;
   try {
+    if (resume !== undefined) {
+      const { plan } = resume;
+      if (plan.trim !== undefined) {
+        await emit('engine', { type: 'context_trim', payload: plan.trim });
+      }
+      await emit('engine', {
+        type: 'resume',
+        payload: {
+          fromStatus: plan.fromStatus,
+          hardKilled: plan.hardKilled,
+          steered: resume.steer !== undefined,
+          ...(plan.resumePointTodoId === undefined
+            ? {}
+            : { resumePointTodoId: plan.resumePointTodoId }),
+        },
+      });
+      await saveSession({ status: 'running', endReason: undefined });
+      // 하드 킬 뒤에는 검증 증거가 남은 todo 뒤의 작업을 믿지 않고, 진행 중이던 todo를 다시 시도 대상으로 돌린다.
+      if (plan.hardKilled) await interruptActiveTodos();
+      await saveTodos();
+      const notice = plan.hardKilled
+        ? `이전 실행이 강제로 끝났습니다. ${
+            plan.resumePointTodoId === undefined
+              ? '검증 증거가 남은 todo가 없습니다.'
+              : `마지막으로 검증된 todo는 ${plan.resumePointTodoId}입니다.`
+          } 그 뒤의 작업은 파일 상태를 확인한 뒤 이어 갑니다.`
+        : '사용자가 작업을 중단했습니다. 중단한 지점부터 이어 갑니다.';
+      await pushUser(resume.steer === undefined ? 'engine' : 'user', [
+        ...plan.repair,
+        {
+          type: 'text',
+          text: `${notice}${resume.steer === undefined ? '' : `\n사용자 지시: ${resume.steer}`}\n${describeTodos([...todos.values()])}\n현재 단계: ${stage}`,
+        },
+      ]);
+    }
     for (;;) {
-      if (signal.aborted) return await finishCancelled();
+      if (signal.aborted || softStop.aborted) return await finishCancelled();
       if (step >= settings.maxSteps) {
         return await finish(
           'stopped',
@@ -518,7 +602,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
 
       const started = clock.now().getTime();
       let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
-      for await (const event of model.stream({ system, messages: history, tools: specs }, signal)) {
+      const modelSignal = AbortSignal.any([signal, softStop]);
+      for await (const event of model.stream(
+        { system, messages: history, tools: specs },
+        modelSignal,
+      )) {
         if (event.type === 'completed') completed = event;
       }
       if (completed === undefined) throw new Error('모델 스트림이 completed 없이 끝났습니다.');
@@ -584,7 +672,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         const group = readGroup;
         readGroup = [];
         const done = await Promise.all(
-          group.map(async (call) => [call.callId, await executeCall(call)] as const),
+          group.map(
+            async (call) =>
+              [
+                call.callId,
+                isSoftStopped() ? await skipCall(call) : await executeCall(call),
+              ] as const,
+          ),
         );
         for (const [callId, result] of done) results.set(callId, result);
       };
@@ -594,7 +688,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           continue;
         }
         await flushReads();
-        results.set(call.callId, await executeCall(call));
+        results.set(call.callId, isSoftStopped() ? await skipCall(call) : await executeCall(call));
       }
       await flushReads();
       await invalidateStaleEvidence();
@@ -615,7 +709,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       await pushUser('tool', observations);
     }
   } catch (error) {
-    if (signal.aborted) return await finishCancelled();
+    if (signal.aborted || softStop.aborted) return await finishCancelled();
     return await finish('failed', 'error', error instanceof Error ? error.message : String(error));
   }
 }

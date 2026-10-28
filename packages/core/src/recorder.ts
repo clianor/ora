@@ -6,7 +6,7 @@ import { scrubValue } from './scrub.ts';
 import type { ScrubHits } from './scrub.ts';
 import { formatKst } from './time.ts';
 
-type EventDraft = OraEvent extends infer E
+export type EventDraft = OraEvent extends infer E
   ? E extends OraEvent
     ? Omit<E, 'seq' | 'ts' | 'sessionId' | 'actor' | 'stepId'>
     : never
@@ -18,9 +18,14 @@ export interface Recorder {
   scrubbedHits(): Readonly<ScrubHits>;
 }
 
-/** seq는 호출 순서대로 붙이고, 디스크 쓰기는 한 번에 하나씩 이어서 한다. 쓰기 전에 모든 문자열을 스크럽한다. */
-export function createRecorder(sessionId: string, sink: TranscriptSink, clock: Clock): Recorder {
-  let seq = 0;
+/** seq는 `lastSeq` 다음 번호부터 호출 순서대로 붙이고, 디스크 쓰기는 한 번에 하나씩 이어서 한다. 쓰기 전에 모든 문자열을 스크럽한다. */
+export function createRecorder(
+  sessionId: string,
+  sink: TranscriptSink,
+  clock: Clock,
+  lastSeq = 0,
+): Recorder {
+  let seq = lastSeq;
   let tail: Promise<void> = Promise.resolve();
   const hits: ScrubHits = {};
   return {

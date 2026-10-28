@@ -18,8 +18,14 @@ function createCapture(): { push(chunk: Buffer): void; text(): string } {
   };
 }
 
+export interface CommandRunnerHooks {
+  /** 셸을 띄운 직후에 부른다. 셸은 자기 프로세스 그룹의 리더라서 PID로 그룹 전체를 종료할 수 있다. */
+  readonly onSpawn?: (pid: number) => void;
+  readonly onClose?: (pid: number) => void;
+}
+
 /** `sh -c`로 명령을 실행한다. 시간 초과나 취소 때 프로세스 그룹 전체를 종료한다. */
-export function createCommandRunner(): CommandRunner {
+export function createCommandRunner(hooks: CommandRunnerHooks = {}): CommandRunner {
   return {
     run(request) {
       const { promise, resolve, reject } = Promise.withResolvers<CommandResult>();
@@ -33,6 +39,11 @@ export function createCommandRunner(): CommandRunner {
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      const pid = child.pid;
+      if (pid !== undefined) hooks.onSpawn?.(pid);
+      const closed = () => {
+        if (pid !== undefined) hooks.onClose?.(pid);
+      };
       const stdout = createCapture();
       const stderr = createCapture();
       let timedOut = false;
@@ -60,11 +71,13 @@ export function createCommandRunner(): CommandRunner {
       });
       child.on('error', (error) => {
         clearTimeout(timer);
+        closed();
         reject(error);
       });
       child.on('close', (code) => {
         clearTimeout(timer);
         request.signal.removeEventListener('abort', killGroup);
+        closed();
         resolve({
           ...(code === null || timedOut ? {} : { exitCode: code }),
           timedOut,

@@ -6,6 +6,7 @@ import type { CommandRunner, Tool } from '@ora/core';
 import { z } from 'zod';
 
 export { createCommandRunner } from './command-runner.ts';
+export type { CommandRunnerHooks } from './command-runner.ts';
 
 export interface BuiltinToolOptions {
   readonly runner: CommandRunner;
