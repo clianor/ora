@@ -61,16 +61,32 @@ function stat(c, add, del) {
   return T(c, 12, 16, 500, 'add', '+' + add, '', M) + T(c, 12, 16, 500, 'del', '−' + del, '', M);
 }
 
-function sessionRow(c, { title, meta = null, selected = false, dot = 'none' }) {
+// 스택에서 한 층 들어갈 때마다 왼쪽 여백을 14px씩 늘린다.
+const STACK_INDENT = 14;
+
+function sessionRow(c, { title, meta = null, selected = false, dot = 'none' }, depth) {
   const dotColor = STATUS_DOT[dot];
-  return `<Frame w="fill" h="hug" flex="col" gap={2} pl={42} pr={10} py={6} rounded={8} bg="${selected ? c.hover : c.sidebar}">
+  return `<Frame w="fill" h="hug" flex="col" gap={2} pl={${42 + STACK_INDENT * depth}} pr={10} py={6} rounded={8} bg="${selected ? c.hover : c.sidebar}">
 <Frame w="fill" h="hug" flex="row" items="center" gap={6}>${dotColor ? `<Ellipse w={6} h={6} bg="${c[dotColor]}" />` : ''}${T(c, 13, 18, selected ? 500 : 400, selected ? 'ink' : 'ink2', title, 'grow={1} maxLines={1} truncate')}</Frame>
 ${meta ? T(c, 12, 16, 400, 'ink3', meta) : ''}</Frame>`;
 }
 
-/** 워크트리 행. 워크트리를 고르면 그 워크트리의 새 세션 화면이 열린다. 변경 통계는 세션이 아니라 워크트리에 붙는다. */
-function worktreeRow(c, { name, add, del, selected = false }) {
-  return `<Frame w="fill" h={28} flex="row" items="center" gap={8} pl={20} pr={10} rounded={8} bg="${selected ? c.hover : c.sidebar}">${I(c, 'git-branch', selected ? 'ink' : 'ink3', 13)}${T(c, 13, 18, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'grow={1} maxLines={1} truncate', M)}${stat(c, add, del)}${selected ? I(c, 'plus', 'ink2', 14) : ''}</Frame>`;
+/**
+ * 워크트리 행. 워크트리를 고르면 그 워크트리의 새 세션 화면이 열린다. 변경 통계는 세션이 아니라 워크트리에 붙는다.
+ * depth는 스택에서 부모 워크트리 아래로 들어간 깊이다. 부모가 타깃 브랜치이면 0이고, 0보다 크면 꺾인 화살표로 부모를 가리킨다.
+ */
+function worktreeRow(c, { name, add, del, selected = false }, depth) {
+  const icon = depth > 0 ? 'corner-down-right' : 'git-branch';
+  return `<Frame w="fill" h={28} flex="row" items="center" gap={8} pl={${20 + STACK_INDENT * depth}} pr={10} rounded={8} bg="${selected ? c.hover : c.sidebar}">${I(c, icon, selected ? 'ink' : 'ink3', 13)}${T(c, 13, 18, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'grow={1} maxLines={1} truncate', M)}${stat(c, add, del)}${selected ? I(c, 'plus', 'ink2', 14) : ''}</Frame>`;
+}
+
+/** 워크트리와 그 위에 쌓은 자식 워크트리(stack)를 깊이 우선으로 펼친다. */
+function worktreeTree(c, wt, depth = 0) {
+  return (
+    worktreeRow(c, wt, depth) +
+    (wt.sessions ?? []).map((s) => sessionRow(c, s, depth)).join('') +
+    (wt.stack ?? []).map((child) => worktreeTree(c, child, depth + 1)).join('')
+  );
 }
 
 function searchBox(c, { query, filters, filter, summary }) {
@@ -90,7 +106,7 @@ export function sidebar(c, { groups = [], empty = false, search = null } = {}) {
     .map((x) => `<Ellipse w={12} h={12} bg="${x}" />`)
     .join('');
   const group = ({ repo, worktrees }) => `<Frame w="fill" h="hug" flex="col" gap={1}>
-<Frame w="fill" h={28} flex="row" items="center" gap={8} px={10}>${I(c, 'folder', 'ink3', 14)}${T(c, 13, 18, 500, 'ink2', repo)}</Frame>${worktrees.map((wt) => worktreeRow(c, wt) + (wt.sessions ?? []).map((s) => sessionRow(c, s)).join('')).join('')}</Frame>`;
+<Frame w="fill" h={28} flex="row" items="center" gap={8} px={10}>${I(c, 'folder', 'ink3', 14)}${T(c, 13, 18, 500, 'ink2', repo)}</Frame>${worktrees.map((wt) => worktreeTree(c, wt)).join('')}</Frame>`;
   const body = empty
     ? `<Frame w="fill" h="hug" flex="col" gap={4} px={10} pt={4}>${T(c, 13, 18, 500, 'ink2', '아직 세션이 없습니다')}${T(c, 12, 16, 400, 'ink3', '오른쪽 입력창에 첫 작업을 적으면 세션이 생깁니다.', 'w={220} textAutoResize="height"')}</Frame>`
     : groups.map(group).join('');

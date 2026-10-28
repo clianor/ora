@@ -49,6 +49,14 @@ const REPOS = [
         add: 12,
         del: 3,
         sessions: [{ title: 'README 설치 절차 갱신', meta: '검증 2/2, 완료', dot: 'ok' }],
+        stack: [
+          {
+            name: 'docs/readme-examples',
+            add: 5,
+            del: 1,
+            sessions: [{ title: 'README 예제 실행 확인', meta: '검증 1/2', dot: 'warn' }],
+          },
+        ],
       },
     ],
   },
@@ -67,18 +75,17 @@ const REPOS = [
 
 /** 사이드바 예시 데이터에 선택 상태를 입힌다. worktree는 'repo/이름', patch는 세션 제목별로 덮어쓸 값이다. */
 function repos({ worktree = null, session = null, patch = {} } = {}) {
-  return REPOS.map((g) => ({
-    ...g,
-    worktrees: g.worktrees.map((w) => ({
-      ...w,
-      selected: `${g.repo}/${w.name}` === worktree,
-      sessions: (w.sessions ?? []).map((s) => ({
-        ...s,
-        ...patch[s.title],
-        selected: s.title === session,
-      })),
+  const mark = (repo) => (w) => ({
+    ...w,
+    selected: `${repo}/${w.name}` === worktree,
+    sessions: (w.sessions ?? []).map((s) => ({
+      ...s,
+      ...patch[s.title],
+      selected: s.title === session,
     })),
-  }));
+    stack: (w.stack ?? []).map(mark(repo)),
+  });
+  return REPOS.map((g) => ({ ...g, worktrees: g.worktrees.map(mark(g.repo)) }));
 }
 const STATUS = [['스텝 12/50'], ['기본 모델 사용 중'], ['격리 harness']];
 
