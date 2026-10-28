@@ -217,7 +217,7 @@ components:
 
 **Creative North Star: "The Quiet Workbench"**
 
-Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 글이 주인공이고, 색은 상태를 알릴 때만 나타납니다. 이 방향은 Paseo, ChatGPT, Claude, Orca가 공유하는 문법을 따릅니다. 승인된 시안은 `design/previews/direction-D-dark.png`와 `direction-D-light.png`입니다.
+Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 글이 주인공이고, 색은 상태를 알릴 때만 나타납니다. 이 방향은 Paseo, ChatGPT, Claude, Orca가 공유하는 문법을 따릅니다. 승인된 시안은 `design/previews/session-dark.png`와 `theme-light.png`이고, 컴포넌트 상태는 `components-dark.png`에 있습니다. 시안 원본은 `design/src/`의 생성 코드입니다. OpenPencil 0.16은 저장한 `.fig`를 다시 열면 글자를 다른 글리프로 그리므로, 시안을 고칠 때는 생성 코드를 고쳐 다시 그립니다.
 
 영역은 테두리 대신 배경 밝기로 나눕니다. 응답 글에는 상자를 두르지 않고, 도구 호출은 한 줄로 줄입니다. 화면 구성은 왼쪽 사이드바(264px), 가운데 대화(본문 너비 720px), 오른쪽 todo·증거 패널(340px)입니다. 창은 1440 × 900 시안 기준이고 모서리 반경은 12px입니다.
 
@@ -346,7 +346,8 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 
 - 높이 28px, 간격 8px의 한 줄입니다. 왼쪽에서 아이콘 15px(`foreground-subtle`), 동사(Label, `foreground-muted`), 대상(Code, `foreground-muted`), 줄 수 통계 순서입니다.
 - 동사는 읽기, 수정입니다. 아이콘은 파일 읽기와 파일 수정이 다릅니다.
-- 호출 줄에는 배경과 테두리가 없습니다. 펼치는 동작은 SPEC 8.2절을 따르고, 펼친 모양은 시안에 없어 미정입니다.
+- 호출 줄에는 배경과 테두리가 없습니다. 맨 앞의 화살표 12px(`foreground-subtle`)이 펼침 상태를 알리고, 오른쪽 끝에 소요 시간(Code Stat 크기, `foreground-subtle`)과 결과 아이콘 14px을 놓습니다.
+- **펼친 상태:** 호출 줄 아래에 왼쪽 20px을 들여 상자를 놓습니다. 상자는 배경 `surface-sunken`, 반경 `md`, 좌우 16px, 위아래 12px, 간격 8px입니다. 안에 입력(JSON, Code 12/18), 출력 마지막 3줄, 종료 코드, "전체 출력 열기" 버튼(높이 24px, 배경 `surface-hover`)을 놓습니다.
 
 ### Diff 블록
 
@@ -361,6 +362,7 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 - 명령 상자: 배경 `background`, 반경 `md`, 좌우 12px, 위아래 10px. `$ 명령`은 Code 13/20, `foreground`입니다. 작업 폴더 줄은 Code Diff 크기의 `foreground-subtle`입니다.
 - 설명 글: Meta 12/18, `foreground-subtle`입니다.
 - 버튼 줄: 오른쪽 정렬, 간격 8px. 거부(ghost), 이 세션 동안 허용(secondary), 실행(primary)을 놓습니다.
+- **편집 상태:** 명령 상자 오른쪽 위의 연필 아이콘 14px(`foreground-subtle`)을 누르면 편집 상태가 됩니다. 명령 상자에 포커스 링이 생기고, 아래 줄에 `원본: <명령>`을 Code Diff 크기로 적습니다. 버튼은 취소(ghost)와 고친 명령으로 실행(primary)입니다. 엔진은 원본과 고친 명령을 함께 기록합니다(SPEC 5.1절).
 
 ### 입력창과 칩
 
@@ -368,7 +370,8 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 - 안내문은 Input 15/22, `foreground-subtle`입니다. 문구는 "Ora에게 메시지, @파일, /명령"입니다.
 - 아래 줄: 높이 28px. 첨부 아이콘 16px, 칩 셋(기본 모델, medium, 승인 생략), 오른쪽 끝에 전송·중지 원형 버튼을 놓습니다. 권한 칩의 글자는 모드 라벨(항상 묻기, 쓰기 허용, 승인 생략)입니다.
 - **칩:** 높이 26px, 반경 `sm`, 좌우 8px, 간격 4px. 글자는 Caption, `foreground-muted`입니다. 모델과 추론 강도 칩은 오른쪽에 아래 화살표 12px(`foreground-subtle`)이 붙고, 권한 칩은 방패 아이콘 14px이 앞에 붙습니다. 칩에는 배경이 없습니다.
-- **전송·중지 버튼:** 지름 30px 원, 배경 `primary`, 아이콘 12px은 `primary-foreground`입니다.
+- **전송·중지 버튼:** 지름 30px 원, 배경 `primary`입니다. 대기 중에는 위쪽 화살표 16px, 실행 중에는 정사각형 12px(`primary-foreground`)을 그립니다.
+- **실행 중 안내문:** "조향 메시지를 입력합니다. 현재 스텝이 끝난 뒤 반영합니다"입니다. 실행 중에 보낸 입력은 조향 메시지입니다(SPEC 2.9절).
 
 ### todo·증거 행
 
@@ -385,7 +388,9 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 - **Primary (실행):** 배경 `primary`, 글자 `primary-foreground` 600. 글자 뒤에 단축키 `↵`(JetBrains Mono 11/14, 500)를 6px 간격으로 붙입니다.
 - **Secondary (이 세션 동안 허용):** 배경 `surface-hover`, 글자 `foreground` 500입니다.
 - **Ghost (거부):** 배경 없음, 글자 `foreground-muted` 500입니다.
-- 호버, 포커스, 눌림 상태의 모양은 시안에 없어 미정입니다. 모션은 `duration-fast` 120ms, `duration-base` 160ms, 곡선 `cubic-bezier(0.23, 1, 0.32, 1)`을 토큰 파일에서 가져옵니다.
+- **Hover:** Primary는 배경 `foreground-muted`, Secondary는 `surface`, Ghost는 `surface-hover`입니다.
+- **Focus:** 키보드로 이동했을 때 요소 바깥에 2px `ring` 선을 그립니다. 마우스 클릭으로는 그리지 않습니다.
+- **Disabled:** 불투명도 40%입니다. 눌림 상태의 모양은 아직 그리지 않았습니다. 모션은 `duration-fast` 120ms, `duration-base` 160ms, 곡선 `cubic-bezier(0.23, 1, 0.32, 1)`을 토큰 파일에서 가져옵니다.
 
 ## Do's and Don'ts
 

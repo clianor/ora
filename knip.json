@@ -4,7 +4,7 @@
   "ignoreBinaries": ["agnix", "gitleaks", "lefthook"],
   "workspaces": {
     ".": {
-      "entry": ["scripts/*.ts"]
+      "entry": ["scripts/*.ts", "design/src/screens.mjs"]
     },
     "packages/*": {
       "project": ["src/**/*.ts"]

@@ -58,7 +58,7 @@ Ora는 특정 모델에 의존하지 않는 에이전트 엔진과, 그 위에�
 
 ## Evidence on Hand
 
-- 승인된 시안 두 장이 `design/previews/direction-D-dark.png`와 `direction-D-light.png`에 있습니다.
+- 승인된 시안은 `design/previews/`에 있습니다. 세션 화면은 `session-dark.png`이고, 라이트 모드 예시는 `theme-light.png`입니다. 시안을 그리는 생성 코드는 `design/src/`에 있습니다.
 - 시안의 세션 이름, 저장소 이름, 검증 결과는 화면을 그리려고 만든 예시 데이터입니다. 실제 사용 기록이 아닙니다.
 - 고객 사례, 후기, 벤치마크, 가격, 배포 수치는 없습니다. 지어내지 않습니다.
 - 성능 목표 수치는 제안값만 있고 확정하지 않았습니다(SPEC 12장 7번).
