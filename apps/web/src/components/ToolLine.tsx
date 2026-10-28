@@ -81,7 +81,7 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
     <>
       <div className="flex h-7 items-center gap-2">
         <Icon aria-hidden className="size-[15px] shrink-0 text-foreground-subtle" />
-        <span className="text-[13px] leading-[18px] font-medium text-foreground-muted">
+        <span className="shrink-0 text-[13px] leading-[18px] font-medium text-foreground-muted">
           {style.verb}
         </span>
         <span className="min-w-0 truncate font-mono text-[13px] leading-[18px] text-foreground-muted">

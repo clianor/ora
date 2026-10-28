@@ -58,6 +58,13 @@
   textarea {
     font: inherit;
   }
+  /* 승인 대화상자와 diff는 실행할 글자를 그대로 보여야 한다. JetBrains Mono 합자는 `=>`를 `⇒`로, `===`를 막대로 그린다. */
+  .font-mono,
+  code,
+  kbd,
+  pre {
+    font-variant-ligatures: none;
+  }
   :focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
