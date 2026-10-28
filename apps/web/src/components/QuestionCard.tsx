@@ -84,7 +84,7 @@ export function QuestionCard({ request, draft, onAnswer }: QuestionCardProps) {
                     {index + 1}
                   </span>
                 )}
-                {`질문 ${index + 1}`}
+                {item.header ?? `질문 ${index + 1}`}
                 {isDone && <span className="sr-only">(답함)</span>}
               </Tabs.Trigger>
             );

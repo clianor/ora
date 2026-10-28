@@ -13,6 +13,7 @@ import { useEffect, type ReactNode } from 'react';
 import type { ComposerChips, SessionView } from '../model.ts';
 import { cn } from '../lib/cn.ts';
 import type { CacheView } from '../lib/cache.ts';
+import { MarkdownText } from './Markdown.tsx';
 import { CacheStat } from './CacheStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
 
@@ -52,27 +53,6 @@ export function SteerRestore({ failure }: { failure: SessionView['steerFailure']
   return null;
 }
 
-/** 글 안의 `코드 조각`을 고정폭 글꼴로 구분합니다. */
-function InlineCode({ text }: { text: string }) {
-  return text.split('`').map((chunk, index) =>
-    index % 2 === 1 ? (
-      <code key={index} className="font-mono text-[13px] text-foreground">
-        {chunk}
-      </code>
-    ) : (
-      chunk
-    ),
-  );
-}
-
-function ReplyText({ text }: TextMessagePartProps) {
-  return (
-    <p className="text-foreground-muted">
-      <InlineCode text={text} />
-    </p>
-  );
-}
-
 function UserText({ text }: TextMessagePartProps) {
   return <p className="whitespace-pre-line text-foreground">{text}</p>;
 }
@@ -107,7 +87,7 @@ function AssistantMessage() {
     <MessagePrimitive.Root className="flex flex-col gap-4">
       <MessagePrimitive.Parts
         components={{
-          Text: ReplyText,
+          Text: MarkdownText,
           tools: { Fallback: ToolLine },
           ToolGroup,
           data: { Fallback: WarningNote },

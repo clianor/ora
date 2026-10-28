@@ -114,7 +114,7 @@ const mathEvents: OraEvent[] = [
   makeMath('question', '09:02', 'engine', {
     callId: 'c0',
     questions: [
-      { question: '어떤 파일을 고칠까요?', options: ['math.js', 'check.js'] },
+      { header: '대상 파일', question: '어떤 파일을 고칠까요?', options: ['math.js', 'check.js'] },
       {
         question: '함께 확인할 항목을 고르세요.',
         options: ['덧셈', '뺄셈', '곱셈'],
@@ -167,7 +167,20 @@ const mathEvents: OraEvent[] = [
     content: [
       {
         type: 'text',
-        text: '`add`가 뺄셈 부호를 쓰고 있어서 덧셈으로 고쳤습니다. 이제 저장소에 있는 `check.js`로 검증하겠습니다.',
+        text: [
+          '**원인:** `add`가 뺄셈 부호를 쓰고 있었습니다.',
+          '',
+          '- 덧셈으로 고쳤습니다',
+          '- 이제 저장소에 있는 `check.js`로 검증합니다',
+          '',
+          '| 항목 | 결과 |',
+          '| --- | --- |',
+          '| add(1, 2) | 3 |',
+          '',
+          '```js',
+          'exports.add = (a, b) => a + b;',
+          '```',
+        ].join('\n'),
       },
     ],
   }),
@@ -399,10 +412,12 @@ const questionView: SessionView = finishView(
           callId: 'q3',
           questions: [
             {
+              header: '타임아웃',
               question: '몇 초 넘게 걸리면 타임아웃으로 볼까요?',
               options: ['30초', '60초', '120초'],
             },
             {
+              header: '조사 범위',
               question: '어디까지 조사할까요?',
               options: ['검색 도구 코드', 'MCP 서버 설정', '네트워크 기록'],
               multiSelect: true,
