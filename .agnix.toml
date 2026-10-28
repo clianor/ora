@@ -1,0 +1,9 @@
+# 외부에서 원문 그대로 들여온 스킬은 고치지 않으므로 검사에서 뺀다. 출처와 버전은 CLAUDE.md "화면" 절에 있다.
+exclude = [
+  "node_modules/**",
+  ".claude/skills/frontend-design/**",
+  ".claude/skills/open-pencil/**",
+  ".claude/skills/impeccable/**",
+  ".claude/skills/emil-design-eng/**",
+  ".claude/skills/apple-design/**",
+]

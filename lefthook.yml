@@ -6,7 +6,7 @@ pre-commit:
       stage_fixed: true
     - name: lint
       glob: '*.{ts,js,mjs}'
-      run: mise exec -- pnpm exec eslint --max-warnings=0 {staged_files}
+      run: mise exec -- pnpm exec eslint --max-warnings=0 --no-warn-ignored {staged_files}
     - name: secrets
       run: mise exec -- gitleaks git --staged --no-banner --redact
     - name: agents

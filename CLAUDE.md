@@ -52,7 +52,10 @@
 
 - 화면은 OpenPencil MCP로 `design/`에 먼저 디자인하고, 사용자 승인을 받은 뒤 구현한다. 승인 전에는 `apps/web` 코드를 만들지 않는다.
 - 색, 간격, 반경, 모션은 디자인 토큰 파일 하나에서만 정의한다. 테마는 `light`, `dark`, `system` 셋이다 (SPEC 8.5절).
-- OpenPencil 작업 전에 `open-pencil` 스킬을, 화면 구현 전에 `frontend-design` 스킬을 읽는다. 두 스킬은 외부 원문을 고정 버전으로 들여온 것이라 고치지 않는다. `open-pencil`은 앱 버전과 같은 태그(`v0.16.0`)를, `frontend-design`은 anthropics/skills 커밋 `dbd4588`을 쓴다. 앱을 올리면 같은 태그의 스킬로 바꾼다.
+- OpenPencil 작업 전에 `open-pencil` 스킬을 읽는다. 화면을 다듬거나 비평할 때는 `impeccable`, `emil-design-eng`, `apple-design`을, 화면을 구현할 때는 `frontend-design`을 쓴다.
+- 위 다섯 스킬은 외부 원문을 고정 버전으로 들여온 것이라 고치지 않는다. 출처는 `open-pencil` v0.16.0(앱 버전과 같은 태그), anthropics/skills `dbd4588`, pbakaus/impeccable `8409a56`, emilkowalski/skills `2d22863`이다. lint, 포맷, agnix 검사에서 뺀다(`.prettierignore`, `eslint.config.js`, `knip.json`, `.agnix.toml`).
+- `impeccable`의 실행 파일은 처음 실행할 때 GitHub 릴리스에서 내려받아 `~/.impeccable`에 둔다. 저장소의 `engine-checksums.txt`와 SHA-256이 다르면 설치를 거부한다.
+- 화면을 승인받기 전에 `design/references/ui-ux-pro-max/quick-reference.md`의 UX 규칙(접근성, 상호작용, 폼, 내비게이션)으로 확인한다. 이 문서는 nextlevelbuilder/ui-ux-pro-max-skill `28b3b8d`의 규칙 문서만 들여온 것이다(MIT). 터치 영역 44px, 모바일 우선 같은 모바일 규칙은 데스크톱 앱인 Ora에 적용하지 않는다.
 - 토큰의 정본은 `design/tokens/Ora/Light.tokens.json`과 `Dark.tokens.json`이다. OpenPencil에는 `import_design_tokens`로 가져간다. OpenPencil 0.16의 JSX는 변수를 만들지 못하고 `designVar`로 참조만 한다.
 
 ## 테스트

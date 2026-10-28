@@ -5,7 +5,14 @@ import tseslint from 'typescript-eslint';
 const browserGlobals = ['window', 'document', 'localStorage', 'sessionStorage', 'navigator'];
 
 export default defineConfig(
-  globalIgnores(['**/node_modules/', '**/dist/', '**/coverage/', 'tmp/', 'pnpm-lock.yaml']),
+  globalIgnores([
+    '**/node_modules/',
+    '**/dist/',
+    '**/coverage/',
+    'tmp/',
+    'pnpm-lock.yaml',
+    '.claude/skills/impeccable/',
+  ]),
   eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
