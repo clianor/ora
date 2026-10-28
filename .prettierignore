@@ -3,3 +3,5 @@ dist
 coverage
 tmp
 SPEC.md
+.claude/skills/frontend-design
+.claude/skills/open-pencil

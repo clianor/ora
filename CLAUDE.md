@@ -52,6 +52,8 @@
 
 - 화면은 OpenPencil MCP로 `design/`에 먼저 디자인하고, 사용자 승인을 받은 뒤 구현한다. 승인 전에는 `apps/web` 코드를 만들지 않는다.
 - 색, 간격, 반경, 모션은 디자인 토큰 파일 하나에서만 정의한다. 테마는 `light`, `dark`, `system` 셋이다 (SPEC 8.5절).
+- OpenPencil 작업 전에 `open-pencil` 스킬을, 화면 구현 전에 `frontend-design` 스킬을 읽는다. 두 스킬은 외부 원문을 고정 버전으로 들여온 것이라 고치지 않는다. `open-pencil`은 앱 버전과 같은 태그(`v0.16.0`)를, `frontend-design`은 anthropics/skills 커밋 `dbd4588`을 쓴다. 앱을 올리면 같은 태그의 스킬로 바꾼다.
+- 토큰의 정본은 `design/tokens/Ora/Light.tokens.json`과 `Dark.tokens.json`이다. OpenPencil에는 `import_design_tokens`로 가져간다. OpenPencil 0.16의 JSX는 변수를 만들지 못하고 `designVar`로 참조만 한다.
 
 ## 테스트
 
