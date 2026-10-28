@@ -23,6 +23,7 @@ const DARK = {
   primary: '#ECECEC',
   onPrimary: '#1F1F1F',
   ring: '#8AB4F8',
+  overlay: '#00000099',
 };
 const LIGHT = {
   window: '#FFFFFF',
@@ -43,6 +44,7 @@ const LIGHT = {
   primary: '#0D0D0D',
   onPrimary: '#FFFFFF',
   ring: '#1A66D9',
+  overlay: '#0000004D',
 };
 export const palette = (mode) => (mode === 'Light' ? LIGHT : DARK);
 
@@ -242,8 +244,9 @@ ${body}
 </Frame>`;
 }
 
-export function windowFrame(c, name, { side, main, panel = '' }) {
-  return `<Frame name="${name}" w={1440} h={900} flex="row" bg="${c.window}" overflow="hidden" rounded={12}>${side}<Frame w="fill" h="fill" flex="col">${main}</Frame>${panel}</Frame>`;
+/** overlay는 창 위에 겹쳐 그릴 JSX다. 그 안의 프레임은 position="absolute"로 창 기준 좌표에 놓는다. */
+export function windowFrame(c, name, { side, main, panel = '', overlay = '' }) {
+  return `<Frame name="${name}" w={1440} h={900} flex="row" bg="${c.window}" overflow="hidden" rounded={12}>${side}<Frame w="fill" h="fill" flex="col">${main}</Frame>${panel}${overlay}</Frame>`;
 }
 
 /** 대화 영역. blocks는 위에서부터 쌓을 JSX 목록이고, 맨 아래에 입력창과 상태 표시줄을 둔다. */

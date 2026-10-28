@@ -67,6 +67,10 @@
     "ring": {
       "$type": "color",
       "$value": "#8AB4F8"
+    },
+    "overlay": {
+      "$type": "color",
+      "$value": "#00000099"
     }
   },
   "radius": {

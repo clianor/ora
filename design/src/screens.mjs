@@ -387,6 +387,52 @@ ${modeThumb(c, 'system', true)}${modeThumb(c, 'light', false)}${modeThumb(c, 'da
   return windowFrame(c, '07 Settings · Light', { side: settingsNav(c, '모양'), main: content });
 }
 
+/** 명령 팔레트. 세션 전환, 명령 실행, 화면 이동을 키보드만으로 한다(SPEC 8.2절). 세션 화면 위에 막을 덮고 띄운다. */
+function commandPaletteScreen() {
+  const c = palette('Dark');
+  const hit = (before, match, after) =>
+    `${before}<Span weight={600} color="${c.ink}">${match}</Span>${after}`;
+  const row = ({ icon, label, detail = '', key = '', active = false }) =>
+    `<Frame w="fill" h={36} flex="row" items="center" gap={10} px={12} rounded={8} ${active ? `bg="${c.hover}"` : ''}>${I(c, icon, active ? 'ink' : 'ink3', 15)}<Text size={13} lineHeight={18} weight={400} font="Pretendard" color="${c.ink2}">${label}</Text>${detail ? T(c, 12, 16, 400, 'ink3', detail, '', mono) : ''}${SP}${key ? T(c, 12, 16, 500, 'ink3', key, '', mono) : ''}</Frame>`;
+  const group = (title, rows) =>
+    `<Frame w="fill" h="hug" flex="col" gap={2}><Frame w="fill" h={24} flex="row" items="center" px={12}>${T(c, 12, 16, 500, 'ink3', title)}</Frame>${rows.map(row).join('')}</Frame>`;
+  const palettePanel = `<Frame name="CommandPalette" position="absolute" x={400} y={120} w={640} h="hug" flex="col" rounded={14} bg="${c.raised}" overflow="hidden">
+<Frame w="fill" h={52} flex="row" items="center" gap={10} px={16}>${I(c, 'search', 'ink3', 16)}${T(c, 15, 22, 400, 'ink', 'readme', 'grow={1}')}<Frame w="hug" h={22} flex="row" items="center" px={6} rounded={6} bg="${c.window}">${T(c, 11, 14, 500, 'ink3', 'Esc', '', mono)}</Frame></Frame>
+<Frame w="fill" h={1} bg="${c.window}" />
+<Frame w="fill" h="hug" flex="col" gap={8} p={8}>
+${group('세션', [
+  {
+    icon: 'message-square',
+    label: hit('', 'README', ' 설치 절차 갱신'),
+    detail: 'math-demo · docs/readme-pnpm',
+    active: true,
+  },
+  {
+    icon: 'message-square',
+    label: hit('', 'README', ' 예제 실행 확인'),
+    detail: 'math-demo · docs/readme-examples',
+  },
+])}
+${group('명령', [
+  { icon: 'square-pen', label: hit('', 'README', '를 갱신하는 새 세션 시작'), key: '⌘N' },
+  { icon: 'rotate-ccw', label: hit('', 'README', ' 설치 절차 갱신 재개') },
+])}
+${group('이동', [
+  { icon: 'list-checks', label: '할 일 패널', key: '⌘1' },
+  { icon: 'settings', label: '설정', key: '⌘,' },
+])}
+</Frame>
+<Frame w="fill" h={36} flex="row" items="center" gap={16} px={16} bg="${c.sunken}">${T(c, 12, 16, 400, 'ink3', '↑↓ 이동')}${T(c, 12, 16, 400, 'ink3', '↵ 실행')}${T(c, 12, 16, 400, 'ink3', 'Esc 닫기')}</Frame>
+</Frame>`;
+  const scrim = `<Frame name="Overlay" position="absolute" x={0} y={0} w={1440} h={900} bg="${c.overlay}" />`;
+  return windowFrame(c, '08 Command Palette · Dark', {
+    side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
+    main: sessionMain(c),
+    panel: evidence(c, { todos: SESSION_TODOS, current: 't1' }),
+    overlay: scrim + palettePanel,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -395,4 +441,5 @@ export const SCREENS = [
   { file: 'empty-dark', jsx: emptyScreen },
   { file: 'crashed-dark', jsx: crashedScreen },
   { file: 'settings-light', jsx: settingsScreen },
+  { file: 'command-palette-dark', jsx: commandPaletteScreen },
 ];

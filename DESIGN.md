@@ -19,6 +19,7 @@ colors:
   dark-danger-subtle: '#2D1517'
   dark-warning: '#D29922'
   dark-ring: '#8AB4F8'
+  dark-overlay: '#00000099'
   light-background: '#FFFFFF'
   light-sidebar: '#F9F9F9'
   light-surface: '#F4F4F4'
@@ -36,6 +37,7 @@ colors:
   light-danger-subtle: '#FDECEC'
   light-warning: '#7D5300'
   light-ring: '#1A66D9'
+  light-overlay: '#0000004D'
 typography:
   body:
     fontFamily: 'Pretendard'
@@ -261,6 +263,10 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 
 - **Ring** (`ring`): 키보드 포커스 표시입니다. 요소 바깥에 2px 선으로 그립니다. 배경 대비는 다크 6.81:1, 라이트 4.84:1 이상입니다. 상태색이 아니므로 포커스 표시 밖에는 쓰지 않습니다.
 
+### Overlay
+
+- **Overlay** (`overlay`): 명령 팔레트처럼 창 위에 뜨는 화면 뒤를 덮는 막입니다. 다크는 검정 60%, 라이트는 검정 30%입니다. 막 위에 뜬 화면에는 그림자를 쓰지 않고, 막이 뒤를 어둡게 해서 구분합니다.
+
 ### Named Rules
 
 **The Status-Only Color Rule.** 상태가 없는 자리에는 색을 쓰지 않습니다. 초록, 빨강, 황색은 상태를 말할 때만 나타납니다.
@@ -423,6 +429,14 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 - 사이드바 자리에 설정 항목 목록(너비 264px, 배경 `sidebar`)을 둡니다. 뒤로 가기 아이콘과 "설정"(18/26, 600), 검색 상자, 묶음 이름(Meta)과 항목 행(높이 32px, 아이콘 15px)입니다. 선택한 항목은 배경 `surface-hover`입니다.
 - 오른쪽 페이지는 너비 640px, 위 72px에서 시작합니다. 페이지 제목은 24/32, 600이고, 묶음 이름(Label) 아래에 설정 카드(배경 `surface`, 반경 `lg`)를 놓습니다.
 - **모드 미리보기:** "모양" 페이지의 모드 행에 시스템, 라이트, 다크 미리보기(96 × 60px, 반경 `sm`)를 놓습니다. 각 미리보기는 해당 모드의 토큰으로 창을 줄여 그리고, 시스템은 왼쪽 절반을 라이트, 오른쪽 절반을 다크로 그립니다. 고른 미리보기는 `foreground` 2px 선, 나머지는 `border` 1px 선이고, 아래 이름은 고른 것만 Label 600 `foreground`입니다.
+
+### 명령 팔레트
+
+- `⌘K`로 엽니다. 창 전체를 `overlay` 막으로 덮고, 위 120px 가운데에 너비 640px, 배경 `surface`, 반경 `lg`의 창을 띄웁니다.
+- **입력 줄:** 높이 52px, 좌우 16px. 검색 아이콘 16px, 입력 글자(Input 15/22), 오른쪽 끝에 `Esc` 키 표시(배경 `background`, 반경 6px)를 놓습니다. 아래에 배경 `background`의 1px 줄로 결과 목록과 나눕니다.
+- **결과 묶음:** 세션, 명령, 이동 순서입니다. 묶음 이름은 Meta(`foreground-subtle`)이고, 행은 높이 36px, 좌우 12px, 반경 `sm`입니다. 행에는 아이콘 15px, 이름(Body Small), 위치(Code 12px, `foreground-subtle`), 오른쪽 끝 단축키(Code)를 놓습니다.
+- 검색어와 일치한 부분은 600 `foreground`로 굵게 씁니다. 화살표 키로 고른 행은 배경 `surface-hover`입니다.
+- **아래 줄:** 높이 36px, 배경 `surface-sunken`. "↑↓ 이동", "↵ 실행", "Esc 닫기"를 Meta로 적습니다.
 
 ## Do's and Don'ts
 
