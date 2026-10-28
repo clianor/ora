@@ -1,0 +1,16 @@
+pre-commit:
+  jobs:
+    - name: format
+      glob: '*.{ts,js,mjs,json,md,yml,yaml}'
+      run: mise exec -- pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+    - name: lint
+      glob: '*.{ts,js,mjs}'
+      run: mise exec -- pnpm exec eslint --max-warnings=0 {staged_files}
+    - name: secrets
+      run: mise exec -- gitleaks git --staged --no-banner --redact
+
+pre-push:
+  jobs:
+    - name: check
+      run: mise exec -- pnpm run check

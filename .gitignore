@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.eslintcache
+.DS_Store
+
+.env
+.env.*
+!.env.example
+
+# 추적 파일은 커밋하지 않는다
+tmp/
+
+# 개인 지침과 개인 설정
+CLAUDE.local.md
+AGENTS.local.md
+.claude/settings.local.json
