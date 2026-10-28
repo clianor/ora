@@ -205,6 +205,7 @@ async function createModel(
       cacheTtl: claude.cacheTtl,
       commands: claude.command,
       env,
+      cwd: command.cwd,
       ...(claude.effort === undefined ? {} : { effort: claude.effort }),
       ...(claudeResume === undefined ? {} : { resumeFrom: claudeResume }),
     });

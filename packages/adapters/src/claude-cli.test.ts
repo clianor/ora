@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ModelRequest, ModelStreamEvent } from '@ora/core';
 import { expect, test, vi } from 'vitest';
 import { ClaudeLimitError, createClaudeCliModel } from './claude-cli.ts';
@@ -15,7 +15,7 @@ const flag = (name) => { const i = args.indexOf(name); return i === -1 ? undefin
 const log = (record) => appendFileSync(process.env.FAKE_LOG, JSON.stringify(record) + '\\n');
 log({ kind: 'start', pid: process.pid, mode, resume: flag('--resume'), session: flag('--session-id'),
   ttl: process.env.CLAUDE_CODE_PROMPT_CACHE_TTL, apiKey: process.env.ANTHROPIC_API_KEY ?? null,
-  cwd: process.cwd(), system: flag('--system-prompt'), tools: flag('--tools'), strict: args.includes('--strict-mcp-config') });
+  cwd: process.cwd(), mds: process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS, system: flag('--system-prompt'), tools: flag('--tools'), strict: args.includes('--strict-mcp-config') });
 console.log('Launching fake account');
 if (mode === 'resume-strict' && flag('--resume') !== undefined) process.exit(1);
 const mcp = JSON.parse(readFileSync(flag('--mcp-config'), 'utf8')).mcpServers.ora;
@@ -67,6 +67,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 const dir = mkdtempSync(join(tmpdir(), 'ora-claude-test-'));
 const fakePath = join(dir, 'fake-claude.mjs');
 writeFileSync(fakePath, FAKE_SOURCE);
+const workFolder = mkdtempSync(join(tmpdir(), 'ora-claude-work-'));
 
 interface LogRecord {
   kind: string;
@@ -83,6 +84,7 @@ function newModel(modes: string[], resumeSession?: string) {
     cacheTtl: '1h',
     commands,
     env: { ...process.env, FAKE_LOG: logPath, ANTHROPIC_API_KEY: 'sk-ant-api03-secret' },
+    cwd: workFolder,
     ...(resumeSession === undefined
       ? {}
       : {
@@ -182,7 +184,8 @@ test('병렬 tool_use를 callId로 풀고 안내를 마지막 결과에 덧붙�
     tools: '',
     strict: true,
   });
-  expect(starts[0]?.cwd).not.toBe(process.cwd());
+  expect(String(starts[0]?.cwd).endsWith(basename(workFolder))).toBe(true);
+  expect(starts[0]).toMatchObject({ mds: '1' });
 });
 
 // 응답하지 않는 자식 프로세스는 e2e가 만들 수 없다.

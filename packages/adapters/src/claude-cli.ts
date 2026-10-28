@@ -42,6 +42,8 @@ export interface ClaudeCliOptions {
   readonly commands: readonly (readonly string[])[];
   /** 자식 프로세스에 넘길 환경변수다. API 키 변수는 넘기지 않는다. */
   readonly env: NodeJS.ProcessEnv;
+  /** 세션 작업 폴더다. `claude`를 이 폴더에서 띄워서 모델이 보는 작업 디렉터리가 도구가 실행되는 폴더와 같게 한다. */
+  readonly cwd: string;
   readonly resumeFrom?: ClaudeResumeState;
 }
 
@@ -229,11 +231,19 @@ export function createClaudeCliModel(options: ClaudeCliOptions): ModelPort {
       ...(mode.kind === 'resume' ? ['--resume', sessionId] : ['--session-id', sessionId]),
     ];
     const env: NodeJS.ProcessEnv = Object.fromEntries(
-      Object.entries({ ...options.env, CLAUDE_CODE_PROMPT_CACHE_TTL: options.cacheTtl }).filter(
-        ([name]) => !STRIPPED_ENV.includes(name),
-      ),
+      Object.entries({
+        ...options.env,
+        CLAUDE_CODE_PROMPT_CACHE_TTL: options.cacheTtl,
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+        CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
+        CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+      }).filter(([name]) => !STRIPPED_ENV.includes(name)),
     );
-    const child = spawn(command[0], args, { cwd: dir, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(command[0], args, {
+      cwd: options.cwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     child.unref();
     for (const stream of [child.stdin, child.stdout, child.stderr]) {
       if (stream instanceof Socket) stream.unref();

@@ -10,6 +10,7 @@ export interface PromptParts {
   readonly isolation: Isolation;
   readonly instructionFiles: readonly InstructionFile[];
   readonly recall: RecallPack;
+  readonly cwd: string;
 }
 
 /** SPEC 2.3.5절 순서: 엔진 규칙, 도구, 권한·격리 요약, 지시 파일, 회상 팩. 작업 요청은 첫 사용자 메시지에 넣는다. */
@@ -18,6 +19,7 @@ export function assembleSystemPrompt(parts: PromptParts): string {
     ...parts.promptFiles.map((file) => file.content.trim()),
     `## 도구\n${parts.tools.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')}`,
     `## 권한과 격리\n- 권한 모드: ${parts.permissionMode}\n- 격리 옵션: ${parts.isolation}`,
+    `## 작업 폴더\n- 경로: ${parts.cwd}\n- 모든 도구는 이 폴더에서 실행한다. 상대 경로는 이 폴더 기준으로 해석한다.`,
   ];
   if (parts.instructionFiles.length > 0) {
     const body = parts.instructionFiles

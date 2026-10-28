@@ -10,7 +10,7 @@ import {
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 
@@ -108,9 +108,11 @@ test('providers.claude 설정으로 세션을 돌리면 기록에 claude-cli 사
   const fake = join(home, 'fake-claude.mjs');
   writeFileSync(
     fake,
-    `import { createInterface } from 'node:readline';
+    `import { writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 const emit = (event) => console.log(JSON.stringify({ type: 'stream_event', event }));
 for await (const line of createInterface({ input: process.stdin })) {
+  writeFileSync('fake-info.json', JSON.stringify({ cwd: process.cwd(), system: process.argv[process.argv.indexOf('--system-prompt') + 1] }));
   void line;
   emit({ type: 'message_start', message: { usage: { input_tokens: 3, cache_read_input_tokens: 5, cache_creation_input_tokens: 7 } } });
   emit({ type: 'content_block_start', index: 0, content_block: { type: 'text' } });
@@ -148,6 +150,13 @@ for await (const line of createInterface({ input: process.stdin })) {
   expect(transcript).toContain('"cacheReadInputTokens":5');
   expect(transcript).toContain('"cacheCreationInputTokens":7');
   expect(transcript).toContain('key=undefined');
+  const info = JSON.parse(readFileSync(join(home, 'fake-info.json'), 'utf8')) as {
+    cwd: string;
+    system: string;
+  };
+  expect(info.cwd.endsWith(basename(home))).toBe(true);
+  expect(info.system).toContain(`## 작업 폴더\n- 경로: `);
+  expect(info.system).toContain(basename(home));
   for (const path of files) expect(readFileSync(path, 'utf8')).not.toContain(TOKEN);
   expect(result.output).not.toContain(TOKEN);
 }, 60_000);

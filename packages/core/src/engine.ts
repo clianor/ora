@@ -185,6 +185,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       isolation: settings.isolation,
       instructionFiles,
       recall,
+      cwd: input.cwd,
     }),
   ).text;
   const promptHash = await workspace.hashText(
