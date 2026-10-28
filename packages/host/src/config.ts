@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { catalogModelSchema } from '@ora/adapters';
 import { isolationSchema, permissionModeSchema } from '@ora/protocol';
 import { z } from 'zod';
 
@@ -24,9 +25,9 @@ const anthropicProviderSchema = z.strictObject({
   effort: z.enum(['low', 'medium', 'high']).optional(),
 });
 
-/** 사용자의 `claude` CLI를 실행하는 프로바이더다. 로그인은 Claude Code가 갖고 있어서 비밀 값이 없다. */
+/** Claude 구독 프로바이더다. `fetch`는 Ora가 로그인한 계정(`<oraHome>/auth.json`)으로 직접 호출하고, `sdk`와 `cli`는 설치된 `claude`를 쓴다. */
 const claudeProviderSchema = z.strictObject({
-  /** 실행 명령의 목록이다. 한도 오류가 나면 다음 명령으로 넘어가고, 하나뿐이면 오류로 끝낸다. */
+  /** `sdk`와 `cli` 경로의 실행 명령 목록이다. 한도 오류가 나면 다음 명령으로 넘어가고, 하나뿐이면 오류로 끝낸다. */
   command: z
     .array(z.array(z.string().min(1)).min(1))
     .min(1)
@@ -34,8 +35,22 @@ const claudeProviderSchema = z.strictObject({
   model: z.string().min(1).optional(),
   effort: z.enum(['low', 'medium', 'high']).optional(),
   cacheTtl: z.enum(['5m', '1h']).default('1h'),
-  /** 구독 경로의 구현이다. `sdk`는 Claude Agent SDK, `cli`는 `claude` CLI 직접 실행이다. */
-  via: z.enum(['sdk', 'cli']).default('sdk'),
+  /** 구독 경로의 구현이다. */
+  via: z.enum(['fetch', 'sdk', 'cli']).default('fetch'),
+  /** `fetch` 경로에서 쓸 계정 이름이다. 없으면 순위 순서로 쓰고 한도 오류가 나면 다음 계정으로 바꾼다. 있으면 그 계정만 쓴다. */
+  account: z.string().min(1).optional(),
+  /** `fetch` 경로의 최대 출력 토큰이다. */
+  maxTokens: z.number().int().positive().default(8192),
+});
+
+/** Codex(ChatGPT 구독)와 Grok(SuperGrok) 프로바이더다. 모델 id는 카탈로그에서 찾고, 없으면 기본 주소와 `maxTokens`로 만든다. */
+const responsesProviderSchema = z.strictObject({
+  model: z.string().min(1).optional(),
+  /** 쓸 계정 이름이다. 없으면 순위 순서로 쓰고 한도 오류가 나면 다음 계정으로 바꾼다. */
+  account: z.string().min(1).optional(),
+  effort: z.enum(['low', 'medium', 'high']).optional(),
+  /** 출력 토큰 상한이다. Codex 전송 형식은 출력 상한을 서버에 보내지 않으므로 Grok에서만 효과가 있다. */
+  maxTokens: z.number().int().positive().default(8192),
 });
 
 const configSchema = z.object({
@@ -58,10 +73,14 @@ const configSchema = z.object({
     .object({
       anthropic: anthropicProviderSchema.default(anthropicProviderSchema.parse({})),
       claude: claudeProviderSchema.default(claudeProviderSchema.parse({})),
+      codex: responsesProviderSchema.default(responsesProviderSchema.parse({})),
+      grok: responsesProviderSchema.default(responsesProviderSchema.parse({})),
     })
     .default({
       anthropic: anthropicProviderSchema.parse({}),
       claude: claudeProviderSchema.parse({}),
+      codex: responsesProviderSchema.parse({}),
+      grok: responsesProviderSchema.parse({}),
     }),
   isolation: isolationSchema.default('harness'),
   limits: z
@@ -81,6 +100,8 @@ const configSchema = z.object({
   recall: z
     .object({ tokenBudget: z.number().int().nonnegative().default(2000) })
     .default({ tokenBudget: 2000 }),
+  /** 모델 카탈로그다. 같은 id는 내장 항목(`claude-haiku-5-5` 등)을 덮어쓰고, 다른 id는 모델을 늘린다. */
+  models: z.array(catalogModelSchema).default([]),
 });
 export type Config = z.infer<typeof configSchema>;
 
@@ -110,14 +131,17 @@ export function resolveSessionsDir(config: Config, oraHome: string): string {
   return config.paths.sessions ?? join(oraHome, 'sessions');
 }
 
-/** 모델 이름이 있는 프로바이더를 고른다. 둘 다 있으면 어느 쪽을 쓸지 알 수 없으므로 오류다. */
-export function selectProvider(config: Config): 'claude' | 'anthropic' | undefined {
-  const { claude, anthropic } = config.providers;
-  if (claude.model !== undefined && anthropic.model !== undefined) {
+/** 모델 이름이 있는 프로바이더를 고른다. 둘 이상 있으면 어느 쪽을 쓸지 알 수 없으므로 오류다. */
+export function selectProvider(
+  config: Config,
+): 'claude' | 'anthropic' | 'codex' | 'grok' | undefined {
+  const configured = (['claude', 'anthropic', 'codex', 'grok'] as const).filter(
+    (name) => config.providers[name].model !== undefined,
+  );
+  if (configured.length > 1) {
     throw new UsageError(
-      '설정 providers.claude.model과 providers.anthropic.model이 모두 있습니다. 하나만 설정합니다.',
+      `설정 ${configured.map((name) => `providers.${name}.model`).join(', ')}이 모두 있습니다. 하나만 설정합니다.`,
     );
   }
-  if (claude.model !== undefined) return 'claude';
-  return anthropic.model === undefined ? undefined : 'anthropic';
+  return configured[0];
 }

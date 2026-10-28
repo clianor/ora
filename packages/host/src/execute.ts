@@ -5,12 +5,15 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   claudeResumeStateSchema,
+  createAccountStore,
   createAnthropicModel,
+  createCatalog,
   createClaudeCliModel,
   createClaudeSdkModel,
+  createFetchModel,
   loadScriptedModel,
 } from '@ora/adapters';
-import type { ClaudeResumeState } from '@ora/adapters';
+import type { CatalogModel, ClaudeResumeState } from '@ora/adapters';
 import { parseTranscript, planResume, ruleKey, runSession, scrubValue } from '@ora/core';
 import type {
   AlwaysApprovalPort,
@@ -190,6 +193,7 @@ async function createModel(
   env: NodeJS.ProcessEnv,
   claudeResume: ClaudeResumeState | undefined,
   isolation: Isolation,
+  oraHome: string,
 ): Promise<ModelPort> {
   if (command.modelScriptPath !== undefined) {
     try {
@@ -200,6 +204,18 @@ async function createModel(
   }
   const { claude, anthropic } = config.providers;
   const selected = selectProvider(config);
+  if (selected === 'claude' && claude.model !== undefined && claude.via === 'fetch') {
+    return createFetchProviderModel({
+      provider: 'claude',
+      modelId: claude.model,
+      settings: claude,
+      defaults: { wire: 'anthropic-messages', baseUrl: 'https://api.anthropic.com' },
+      loginHint: 'ora login claude를 실행하거나 providers.claude.via를 "sdk"로 설정합니다.',
+      config,
+      env,
+      oraHome,
+    });
+  }
   if (selected === 'claude' && claude.model !== undefined) {
     const createClaudeModel = claude.via === 'cli' ? createClaudeCliModel : createClaudeSdkModel;
     return createClaudeModel({
@@ -213,6 +229,23 @@ async function createModel(
       persistSession: isolation !== 'clean-home',
     });
   }
+  if (selected === 'codex' || selected === 'grok') {
+    const provider = config.providers[selected];
+    return createFetchProviderModel({
+      provider: selected,
+      modelId: provider.model ?? '',
+      settings: provider,
+      defaults:
+        selected === 'codex'
+          ? { wire: 'openai-codex-responses', baseUrl: 'https://chatgpt.com/backend-api' }
+          : { wire: 'openai-responses', baseUrl: 'https://api.x.ai/v1' },
+      loginHint: `ora login ${selected}를 실행합니다.`,
+      config,
+      env,
+      oraHome,
+    });
+  }
+
   if (anthropic.model === undefined) {
     throw new UsageError(
       '설정 providers.claude.model이나 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
@@ -231,7 +264,68 @@ async function createModel(
   });
 }
 
+interface FetchProviderModelOptions {
+  readonly provider: 'claude' | 'codex' | 'grok';
+  readonly modelId: string;
+  readonly settings: {
+    readonly account?: string;
+    readonly effort?: 'low' | 'medium' | 'high';
+    readonly maxTokens: number;
+    readonly cacheTtl?: '5m' | '1h';
+  };
+  /** 카탈로그에 없는 모델 id가 쓰는 전송 형식과 주소다. */
+  readonly defaults: Pick<CatalogModel, 'wire' | 'baseUrl'>;
+  readonly loginHint: string;
+  readonly config: Config;
+  readonly env: NodeJS.ProcessEnv;
+  readonly oraHome: string;
+}
+
+/** 로그인한 계정으로 직접 호출하는 모델을 만든다. 계정이나 카탈로그 항목이 선택한 프로바이더와 맞지 않으면 세션을 시작하지 않는다. */
+async function createFetchProviderModel(options: FetchProviderModelOptions): Promise<ModelPort> {
+  const { provider, modelId, settings, config } = options;
+  const known = createCatalog(config.models)(modelId);
+  if (known !== undefined && known.provider !== provider) {
+    throw new UsageError(
+      `모델 ${modelId}의 카탈로그 프로바이더가 ${known.provider}입니다. providers.${provider}.model에는 ${provider} 모델을 적습니다.`,
+    );
+  }
+  const store = createAccountStore({ path: join(options.oraHome, AUTH_FILE), env: options.env });
+  const accounts = await store.list(provider);
+  if (
+    settings.account === undefined
+      ? accounts.length === 0
+      : !accounts.some((a) => a.name === settings.account)
+  ) {
+    throw new UsageError(
+      settings.account === undefined
+        ? `로그인한 ${provider} 계정이 없습니다. ${options.loginHint}`
+        : `${provider} 계정을 찾을 수 없습니다: ${settings.account}. ora accounts로 확인합니다.`,
+    );
+  }
+  const catalog: CatalogModel = {
+    id: modelId,
+    provider,
+    ...options.defaults,
+    contextWindow: 200_000,
+    maxOutputTokens: settings.maxTokens,
+    cacheTtl: '1h',
+    ...known,
+    ...(settings.cacheTtl === undefined ? {} : { cacheTtl: settings.cacheTtl }),
+  };
+  return createFetchModel({
+    catalog,
+    store,
+    ...(settings.account === undefined ? {} : { account: settings.account }),
+    wireOptions: {
+      maxTokens: Math.min(settings.maxTokens, catalog.maxOutputTokens),
+      ...(settings.effort === undefined ? {} : { effort: settings.effort }),
+    },
+  });
+}
+
 const PERMISSIONS_FILE = 'permissions.json';
+const AUTH_FILE = 'auth.json';
 
 const LOCK_RETRY_MS = 25;
 const LOCK_TIMEOUT_MS = 3000;
@@ -392,7 +486,7 @@ export async function executeSession(
     );
   }
   // clean-home에서는 Claude Code 세션을 남기지 않고 기록 재주입으로만 재개한다.
-  const model = await createModel(command, config, hooks.env, claudeResume, isolation);
+  const model = await createModel(command, config, hooks.env, claudeResume, isolation, oraHome);
 
   const storage = await createSessionStorage(sessionDir);
   // 워커가 죽으면 호스트가 이 파일의 셸 그룹을 종료한다. 셸은 워커와 다른 프로세스 그룹이라 워커 그룹 종료로는 닿지 않는다.
@@ -423,6 +517,7 @@ export async function executeSession(
         shellTimeoutMs: config.tools.shellTimeoutMs,
         maxOutputBytes: config.tools.maxOutputBytes,
         maxFileBytes: config.tools.maxFileBytes,
+        secretPaths: [join(oraHome, AUTH_FILE)],
         protectedPaths: [
           join(oraHome, PERMISSIONS_FILE),
           join(oraHome, 'engine.config.json'),

@@ -15,6 +15,8 @@ export interface BuiltinToolOptions {
   readonly maxFileBytes: number;
   /** `file_write`·`file_edit`이 쓰지 못하는 파일과 디렉터리다 (SPEC 5.7절). 디렉터리는 안쪽 전체를 막는다. */
   readonly protectedPaths: readonly string[];
+  /** 읽기와 쓰기를 모두 막는 파일이다. 모델 프로바이더 토큰을 담은 `<oraHome>/auth.json`이 여기에 든다 (SPEC 5.2절). */
+  readonly secretPaths: readonly string[];
 }
 
 const FORBIDDEN_SEGMENTS = ['.ssh', '.aws'];
@@ -105,8 +107,8 @@ async function writeAtomic(path: string, content: string): Promise<void> {
 }
 
 export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
-  const isProtectedPath = async (path: string): Promise<boolean> => {
-    const guarded = await Promise.all(options.protectedPaths.map(resolveThroughSymlinks));
+  const isUnder = async (roots: readonly string[], path: string): Promise<boolean> => {
+    const guarded = await Promise.all(roots.map(resolveThroughSymlinks));
     const candidates = [path, await resolveThroughSymlinks(path)].map(foldCase);
     return guarded
       .map(foldCase)
@@ -114,6 +116,8 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
         candidates.some((candidate) => candidate === root || candidate.startsWith(root + sep)),
       );
   };
+  const isProtectedPath = (path: string) => isUnder(options.protectedPaths, path);
+  const isSecretPath = (path: string) => isUnder(options.secretPaths, path);
 
   // file_edit이 읽은 뒤 바뀐 파일을 거부하도록 마지막으로 본 내용의 해시를 기억한다.
   const seenHashes = new Map<string, string>();
@@ -155,7 +159,7 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
     }),
     async run(input, context) {
       const path = resolve(context.cwd, input.path);
-      if (await isForbiddenPath(path))
+      if ((await isForbiddenPath(path)) || (await isSecretPath(path)))
         return { status: 'error', text: `금지 구역입니다: ${input.path}` };
       if ((await stat(path)).size > options.maxFileBytes) {
         return { status: 'error', text: `파일이 ${options.maxFileBytes}바이트를 넘습니다.` };
@@ -182,7 +186,7 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
     inputSchema: z.object({ path: z.string().min(1), content: z.string() }),
     async run(input, context) {
       const path = resolve(context.cwd, input.path);
-      if (await isForbiddenPath(path))
+      if ((await isForbiddenPath(path)) || (await isSecretPath(path)))
         return { status: 'error', text: `금지 구역입니다: ${input.path}` };
       if (await isProtectedPath(path))
         return { status: 'error', text: `엔진이 관리하는 파일이라 쓸 수 없습니다: ${input.path}` };
@@ -207,7 +211,7 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
     }),
     async run(input, context) {
       const path = resolve(context.cwd, input.path);
-      if (await isForbiddenPath(path))
+      if ((await isForbiddenPath(path)) || (await isSecretPath(path)))
         return { status: 'error', text: `금지 구역입니다: ${input.path}` };
       if (await isProtectedPath(path))
         return { status: 'error', text: `엔진이 관리하는 파일이라 쓸 수 없습니다: ${input.path}` };

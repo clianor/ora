@@ -101,9 +101,9 @@ test('--model-script 없이 설정의 모델로 세션을 돌리고, 토큰은 �
   }
 }, 60_000);
 
-// 설정의 `providers.claude.command`를 따라 `ora run`이 가짜 claude 프로세스로 세션을 끝까지 돌린다. `via`를 생략하면 SDK 경로다.
+// 설정의 `providers.claude.command`를 따라 `ora run`이 가짜 claude 프로세스로 세션을 끝까지 돌린다. `via`는 기본이 fetch이므로 sdk를 명시한다.
 test.each([
-  { via: undefined, adapter: 'claude-sdk' },
+  { via: 'sdk', adapter: 'claude-sdk' },
   { via: 'cli', adapter: 'claude-cli' },
 ])(
   'providers.claude 설정(via $via)으로 세션을 돌리면 기록에 $adapter 사용량이 남고 API 키 환경변수는 자식에게 넘어가지 않는다',
@@ -148,7 +148,7 @@ for await (const line of createInterface({ input: process.stdin })) {
             model: 'claude-haiku-5-5',
             effort: 'low',
             command: [[process.execPath, fake]],
-            ...(via === undefined ? {} : { via }),
+            via,
           },
         },
       }),
@@ -180,6 +180,228 @@ for await (const line of createInterface({ input: process.stdin })) {
   },
   60_000,
 );
+
+// `via`를 생략한 기본값(fetch)으로 `ora run`이 로그인한 계정의 OAuth 토큰을 Bearer로 보내 세션을 끝까지 돌린다.
+test('providers.claude 기본값(fetch)은 auth.json의 계정으로 가짜 /v1/messages를 부르고, 토큰은 세션 파일과 출력에 남지 않는다', async () => {
+  const access = `sk-ant-oat01-${'e'.repeat(40)}`;
+  const seen: { authorization: string | undefined; system: string }[] = [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+        system: { text: string }[];
+      };
+      seen.push({
+        authorization: req.headers.authorization,
+        system: body.system.map((block) => block.text).join('|'),
+      });
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const frames = [
+        { type: 'message_start', message: { usage: { input_tokens: 3 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: `토큰은 ${access}` },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
+        { type: 'message_stop' },
+      ];
+      res.end(
+        frames.map((frame) => `event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`).join(''),
+      );
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'ora-fetch-e2e-'));
+    mkdirSync(join(home, 'work'));
+    writeFileSync(
+      join(home, 'auth.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        providers: {
+          claude: {
+            accounts: [
+              {
+                kind: 'oauth',
+                name: 'main',
+                rank: 0,
+                accessToken: access,
+                refreshToken: `sk-ant-ort01-${'f'.repeat(40)}`,
+                expiresAt: Date.parse('2099-01-01T00:00:00Z'),
+              },
+            ],
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const config = join(home, 'config.json');
+    writeFileSync(
+      config,
+      JSON.stringify({
+        schemaVersion: 1,
+        limits: { maxSteps: 2 },
+        providers: { claude: { model: 'claude-haiku-5-5' } },
+        models: [
+          {
+            id: 'claude-haiku-5-5',
+            provider: 'claude',
+            wire: 'anthropic-messages',
+            baseUrl: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`,
+            contextWindow: 200000,
+            maxOutputTokens: 1000,
+          },
+        ],
+      }),
+    );
+    const result = await runOra(['run', '작업', '--config', config], {}, home);
+
+    expect(seen[0]?.authorization).toBe(`Bearer ${access}`);
+    expect(seen[0]?.system).toContain("You are Claude Code, Anthropic's official CLI for Claude.");
+    const files = filesUnder(join(home, 'sessions'));
+    const transcript = files.find((path) => path.endsWith('transcript.jsonl')) ?? '';
+    expect(readFileSync(transcript, 'utf8')).toContain('"adapter":"claude-fetch"');
+    for (const path of files) expect(readFileSync(path, 'utf8')).not.toContain(access);
+    expect(result.output).not.toContain(access);
+
+    const accounts = await runOra(['accounts'], {}, home);
+    expect(accounts.output).toContain('claude\t0\tmain\toauth');
+    expect(accounts.output).not.toContain(access);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+}, 60_000);
+
+// 카탈로그의 codex 모델로 `ora run`이 ChatGPT 계정의 토큰과 계정 id 헤더를 보내 세션을 끝까지 돌린다.
+test('providers.codex는 auth.json의 계정으로 가짜 /codex/responses를 부르고, 토큰은 세션 파일과 출력에 남지 않는다', async () => {
+  const claims = Buffer.from(
+    JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct-e2e' } }),
+  ).toString('base64url');
+  const access = `eyJhbGciOiJub25lIn0.${claims}.${'s'.repeat(30)}`;
+  const seen: { authorization: string | undefined; account: string | undefined; store: unknown }[] =
+    [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { store: unknown };
+      seen.push({
+        authorization: req.headers.authorization,
+        account: req.headers['chatgpt-account-id'] as string | undefined,
+        store: body.store,
+      });
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const frames = [
+        { type: 'response.output_text.delta', delta: `토큰은 ${access}` },
+        {
+          type: 'response.completed',
+          response: {
+            output: [
+              {
+                type: 'message',
+                content: [{ type: 'output_text', text: `토큰은 ${access}` }],
+              },
+            ],
+            usage: {
+              input_tokens: 10,
+              output_tokens: 2,
+              input_tokens_details: { cached_tokens: 4 },
+            },
+          },
+        },
+      ];
+      res.end(
+        frames.map((frame) => `event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`).join(''),
+      );
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+  try {
+    const home = mkdtempSync(join(tmpdir(), 'ora-codex-e2e-'));
+    mkdirSync(join(home, 'work'));
+    writeFileSync(
+      join(home, 'auth.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        providers: {
+          codex: {
+            accounts: [
+              {
+                kind: 'oauth',
+                name: 'main',
+                rank: 0,
+                accessToken: access,
+                refreshToken: 'refresh-e2e',
+                expiresAt: Date.parse('2099-01-01T00:00:00Z'),
+                accountUuid: 'acct-e2e',
+              },
+            ],
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    const config = join(home, 'config.json');
+    writeFileSync(
+      config,
+      JSON.stringify({
+        schemaVersion: 1,
+        limits: { maxSteps: 2 },
+        providers: { codex: { model: 'gpt-5.5' } },
+        models: [
+          {
+            id: 'gpt-5.5',
+            provider: 'codex',
+            wire: 'openai-codex-responses',
+            baseUrl: `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`,
+            contextWindow: 200000,
+            maxOutputTokens: 1000,
+          },
+        ],
+      }),
+    );
+    const result = await runOra(['run', '작업', '--config', config], {}, home);
+
+    expect(seen[0]).toEqual({
+      authorization: `Bearer ${access}`,
+      account: 'acct-e2e',
+      store: false,
+    });
+    const files = filesUnder(join(home, 'sessions'));
+    const transcript = files.find((path) => path.endsWith('transcript.jsonl')) ?? '';
+    expect(readFileSync(transcript, 'utf8')).toContain('"adapter":"codex-fetch"');
+    for (const path of files) expect(readFileSync(path, 'utf8')).not.toContain(access);
+    expect(result.output).not.toContain(access);
+
+    const accounts = await runOra(['accounts'], {}, home);
+    expect(accounts.output).toContain('codex\t0\tmain\toauth');
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+}, 60_000);
+
+test('둘 이상의 프로바이더에 모델이 있으면 세션을 시작하지 않고 사용법 오류(종료 코드 2)로 멈춘다', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'ora-multi-'));
+  const config = join(home, 'config.json');
+  writeFileSync(
+    config,
+    JSON.stringify({
+      schemaVersion: 1,
+      providers: { codex: { model: 'gpt-5.5' }, grok: { model: 'grok-4.6' } },
+    }),
+  );
+  const result = await runOra(['run', '작업', '--config', config], {}, home);
+
+  expect(result.code).toBe(2);
+  expect(result.output).toContain('providers.codex.model');
+  expect(result.output).toContain('providers.grok.model');
+});
 
 test('모델 이름이나 토큰이 없으면 세션을 시작하지 않고 사용법 오류(종료 코드 2)로 멈춘다', async () => {
   const home = mkdtempSync(join(tmpdir(), 'ora-model-'));

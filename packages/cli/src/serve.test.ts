@@ -776,7 +776,7 @@ test(
 );
 
 test(
-  'file_write는 permissions.json과 세션 기록을 쓰지 못한다(링크 폴더 안의 새 파일과 대소문자만 다른 이름 포함)',
+  'file_write는 permissions.json과 세션 기록을 쓰지 못하고, auth.json은 읽지도 쓰지도 못한다(링크 폴더 안의 새 파일과 대소문자만 다른 이름 포함)',
   async () => {
     const running = await startServer((home) => [
       respond(use('p1', 'file_write', { path: join(home, 'permissions.json'), content: '{}' })),
@@ -794,6 +794,8 @@ test(
             ),
           ]
         : []),
+      respond(use('p5', 'file_read', { path: join(home, 'auth.json') })),
+      respond(use('p6', 'file_write', { path: join(home, 'auth.json'), content: '{}' })),
       finalText,
     ]);
     try {
@@ -804,13 +806,18 @@ test(
         permissionMode: 'bypass-permissions',
       });
       const sessionId = (JSON.parse(reply.text) as { sessionId: string }).sessionId;
-      const calls = process.platform === 'darwin' ? ['p1', 'p2', 'p3', 'p4'] : ['p1', 'p2', 'p3'];
+      const calls = [
+        ...(process.platform === 'darwin' ? ['p1', 'p2', 'p3', 'p4'] : ['p1', 'p2', 'p3']),
+        'p5',
+        'p6',
+      ];
       await waitFor(() => calls.every((callId) => findResult(running, sessionId, callId)));
       for (const callId of calls) {
         expect(findResult(running, sessionId, callId)).toMatchObject({ status: 'error' });
       }
       expect(existsSync(join(running.home, 'permissions.json'))).toBe(false);
       expect(existsSync(join(running.home, 'sessions', 's-20260101-aaaaaa'))).toBe(false);
+      expect(existsSync(join(running.home, 'auth.json'))).toBe(false);
     } finally {
       await stopServer(running);
     }

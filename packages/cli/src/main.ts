@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +9,10 @@ import {
   CancelledBeforeStartError,
   UsageError,
   launchSession,
+  listAccounts,
   listSessions,
+  loginAccount,
+  logoutAccount,
   startLocalServer,
 } from '@ora/host';
 import type { LaunchRequest, SessionResult } from '@ora/host';
@@ -19,7 +23,10 @@ const USAGE = `사용법:
   ora run "<작업>" [--model-script <경로>] [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--isolation <none|harness|clean-home>] [--json]
   ora resume <세션 ID> [--model-script <경로>] [--steer "<조향 메시지>"] [--config <경로>] [--isolation <none|harness|clean-home>] [--json]
   ora sessions [--config <경로>] [--json]
-  ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>] [--isolation <none|harness|clean-home>]`;
+  ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>] [--isolation <none|harness|clean-home>]
+  ora login <claude|codex|grok> [--name <계정 이름>] [--api-key-env <환경변수 이름>] [--device (codex 전용)]
+  ora logout <claude|codex|grok> [--name <계정 이름>]
+  ora accounts`;
 
 const EXIT_CODES = { passed: 0, failed: 1, usage: 2, cancelled: 130 } as const;
 
@@ -101,6 +108,9 @@ async function main(): Promise<number> {
         steer: { type: 'string' },
         'web-dir': { type: 'string' },
         port: { type: 'string' },
+        name: { type: 'string' },
+        'api-key-env': { type: 'string' },
+        device: { type: 'boolean', default: false },
       },
     });
   } catch (error) {
@@ -136,6 +146,43 @@ async function main(): Promise<number> {
         );
       }
       return EXIT_CODES.passed;
+    }
+
+    if (command === 'accounts') {
+      if (argument !== undefined) return usageError('accounts는 인자를 받지 않습니다.');
+      for (const row of await listAccounts(process.env)) process.stdout.write(`${row}\n`);
+      return EXIT_CODES.passed;
+    }
+
+    if (command === 'login' || command === 'logout') {
+      if (argument === undefined || extra.length > 0)
+        return usageError('프로바이더 이름이 필요합니다.');
+      const name = values.name;
+      if (command === 'logout') {
+        const removed = await logoutAccount(argument, name, process.env);
+        process.stdout.write(`로그아웃한 계정: ${removed.join(', ') || '없음'}\n`);
+        return EXIT_CODES.passed;
+      }
+      const rl = createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        const saved = await loginAccount(
+          argument,
+          {
+            ...(name === undefined ? {} : { name }),
+            ...(values['api-key-env'] === undefined ? {} : { apiKeyEnv: values['api-key-env'] }),
+            ...(values.device ? { device: true } : {}),
+          },
+          process.env,
+          {
+            print: (line) => process.stderr.write(`${line}\n`),
+            readLine: () => rl.question('코드 붙여 넣기: '),
+          },
+        );
+        process.stdout.write(`저장한 계정: ${saved}\n`);
+        return EXIT_CODES.passed;
+      } finally {
+        rl.close();
+      }
     }
 
     if (command === 'serve') {

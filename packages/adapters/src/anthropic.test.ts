@@ -183,7 +183,7 @@ test('도구 호출 왕복: 요청 헤더·시스템 첫 블록·도구 이름 �
   const [seen] = api.seen;
   expect(seen?.headers['x-api-key']).toBe(TOKEN);
   expect(seen?.headers.authorization).toBeUndefined();
-  expect(seen?.headers['anthropic-beta']).toBeUndefined();
+  expect(seen?.headers['anthropic-beta']).toBe('extended-cache-ttl-2025-04-11');
   expect(seen?.body).toMatchObject({
     model: 'test-model',
     stream: true,
