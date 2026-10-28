@@ -1,0 +1,132 @@
+{
+  "color": {
+    "background": {
+      "$type": "color",
+      "$value": "#FFFFFF"
+    },
+    "sidebar": {
+      "$type": "color",
+      "$value": "#F9F9F9"
+    },
+    "surface": {
+      "$type": "color",
+      "$value": "#F4F4F4"
+    },
+    "surface-sunken": {
+      "$type": "color",
+      "$value": "#F7F7F8"
+    },
+    "surface-hover": {
+      "$type": "color",
+      "$value": "#EFEFEF"
+    },
+    "border": {
+      "$type": "color",
+      "$value": "#E8E8E8"
+    },
+    "foreground": {
+      "$type": "color",
+      "$value": "#0D0D0D"
+    },
+    "foreground-muted": {
+      "$type": "color",
+      "$value": "#4A4A4A"
+    },
+    "foreground-subtle": {
+      "$type": "color",
+      "$value": "#6B6B6B"
+    },
+    "primary": {
+      "$type": "color",
+      "$value": "#0D0D0D"
+    },
+    "primary-foreground": {
+      "$type": "color",
+      "$value": "#FFFFFF"
+    },
+    "success": {
+      "$type": "color",
+      "$value": "#116329"
+    },
+    "success-subtle": {
+      "$type": "color",
+      "$value": "#E6F4EA"
+    },
+    "danger": {
+      "$type": "color",
+      "$value": "#CF222E"
+    },
+    "danger-subtle": {
+      "$type": "color",
+      "$value": "#FDECEC"
+    },
+    "warning": {
+      "$type": "color",
+      "$value": "#7D5300"
+    }
+  },
+  "radius": {
+    "sm": {
+      "$type": "number",
+      "$value": 8
+    },
+    "md": {
+      "$type": "number",
+      "$value": 10
+    },
+    "lg": {
+      "$type": "number",
+      "$value": 14
+    },
+    "xl": {
+      "$type": "number",
+      "$value": 18
+    }
+  },
+  "space": {
+    "1": {
+      "$type": "number",
+      "$value": 4
+    },
+    "2": {
+      "$type": "number",
+      "$value": 8
+    },
+    "3": {
+      "$type": "number",
+      "$value": 12
+    },
+    "4": {
+      "$type": "number",
+      "$value": 16
+    },
+    "5": {
+      "$type": "number",
+      "$value": 20
+    },
+    "6": {
+      "$type": "number",
+      "$value": 24
+    }
+  },
+  "motion": {
+    "ease-out": {
+      "$type": "cubicBezier",
+      "$value": [0.23, 1, 0.32, 1]
+    },
+    "duration-fast": {
+      "$type": "duration",
+      "$value": {
+        "value": 120,
+        "unit": "ms"
+      }
+    },
+    "duration-base": {
+      "$type": "duration",
+      "$value": {
+        "value": 160,
+        "unit": "ms"
+      }
+    }
+  }
+}

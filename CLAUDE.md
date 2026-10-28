@@ -56,8 +56,8 @@
 - 위 다섯 스킬은 외부 원문을 고정 버전으로 들여온 것이라 고치지 않는다. 출처는 `open-pencil` v0.16.0(앱 버전과 같은 태그), anthropics/skills `dbd4588`, pbakaus/impeccable `8409a56`, emilkowalski/skills `2d22863`이다. lint, 포맷, agnix 검사에서 뺀다(`.prettierignore`, `eslint.config.js`, `knip.json`, `.agnix.toml`).
 - `impeccable`의 실행 파일은 처음 실행할 때 GitHub 릴리스에서 내려받아 `~/.impeccable`에 둔다. 저장소의 `engine-checksums.txt`와 SHA-256이 다르면 설치를 거부한다.
 - 화면을 승인받기 전에 `design/references/ui-ux-pro-max/quick-reference.md`의 UX 규칙(접근성, 상호작용, 폼, 내비게이션)으로 확인한다. 이 문서는 nextlevelbuilder/ui-ux-pro-max-skill `28b3b8d`의 규칙 문서만 들여온 것이다(MIT). 터치 영역 44px, 모바일 우선 같은 모바일 규칙은 데스크톱 앱인 Ora에 적용하지 않는다.
-- 시각 방향을 정한 뒤 토큰을 DTCG 파일로 `design/` 아래에 두고 정본으로 쓴다. OpenPencil에는 `import_design_tokens`로 가져간다. OpenPencil 0.16의 JSX는 변수를 만들지 못하고 `designVar`로 참조만 한다.
-- OpenPencil 0.16은 그렸다 지웠다를 반복하면 렌더러가 손상되고(#976), 저장한 파일을 다시 열면 글자를 다른 글리프로 그린다(#1543). 화면은 한 번에 그리고 바로 저장한다. 검토는 그린 직후 내보낸 PNG로 한다.
+- 시각 방향은 D(다크 우선 중립 회색, 글 중심, 테두리 대신 배경 밝기)로 정했다. 토큰의 정본은 `design/tokens/Ora/Dark.tokens.json`과 `Light.tokens.json`이다. OpenPencil에는 `import_design_tokens`로 가져간다. OpenPencil 0.16의 JSX는 변수를 만들지 못하고 `designVar`로 참조만 한다.
+- OpenPencil 0.16은 그렸다 지웠다를 반복하면 렌더러의 메모리를 망가뜨리고(#976), 저장한 파일을 다시 열면 글자를 다른 글리프로 그린다(#1543). 화면은 한 번에 그리고 바로 저장한다. 검토는 그린 직후 내보낸 PNG로 한다.
 
 ## 테스트
 
