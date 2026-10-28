@@ -193,7 +193,7 @@ test(
         respond(use('s2', 'verify.run', { todoId: 't1' })),
         ...closingResponses,
       ],
-      ['--permission', 'yolo'],
+      ['--permission', 'bypass-permissions'],
     );
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('모델이 만든 검사로만 통과');
@@ -249,7 +249,7 @@ test(
         ...repairResponses('f', 'a - b', 'a + b', true),
         ...closingResponses,
       ],
-      ['--permission', 'yolo'],
+      ['--permission', 'bypass-permissions'],
     );
     expect(result.code).toBe(0);
 
@@ -286,7 +286,7 @@ test(
         respond(use('r4', 'verify.run', { todoId: 't1' })),
         ...closingResponses,
       ],
-      ['--permission', 'yolo'],
+      ['--permission', 'bypass-permissions'],
     );
     expect(result.code).toBe(0);
 
@@ -313,7 +313,7 @@ test(
   async () => {
     const project = createProject();
     const result = await runCli(project, [...setupResponses, ...closingResponses], [], {
-      permissions: { mode: 'yolo' },
+      permissions: { mode: 'bypass-permissions' },
       limits: { maxSteps: 2 },
     });
     expect(result.code).toBe(1);
@@ -354,7 +354,7 @@ test(
         respond({ type: 'text', text: '출력을 확인했습니다.' }),
       ],
       [],
-      { permissions: { mode: 'yolo' }, limits: { maxSteps: 3 } },
+      { permissions: { mode: 'bypass-permissions' }, limits: { maxSteps: 3 } },
     );
 
     const { dir, events } = readSession(project);
@@ -459,7 +459,7 @@ function startRun(
     '파일을 고친다',
     ...writeScript(project, name, responses),
     '--permission',
-    'yolo',
+    'bypass-permissions',
     ...configArgs,
   ]);
 }

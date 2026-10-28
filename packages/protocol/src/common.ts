@@ -43,7 +43,7 @@ export const stageSchema = z.enum([
 ]);
 export type Stage = z.infer<typeof stageSchema>;
 
-export const permissionModeSchema = z.enum(['always-ask', 'write', 'yolo']);
+export const permissionModeSchema = z.enum(['always-ask', 'write', 'bypass-permissions']);
 export type PermissionMode = z.infer<typeof permissionModeSchema>;
 
 export const isolationSchema = z.enum(['none', 'harness', 'clean-home']);

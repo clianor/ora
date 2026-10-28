@@ -18,10 +18,10 @@ const configSchema = z.object({
     .default({ sessions: null, memory: null }),
   permissions: z
     .object({
-      mode: permissionModeSchema.default('yolo'),
+      mode: permissionModeSchema.default('bypass-permissions'),
       tools: z.record(z.string(), z.enum(['allow', 'prompt', 'deny'])).default({}),
     })
-    .default({ mode: 'yolo', tools: {} }),
+    .default({ mode: 'bypass-permissions', tools: {} }),
   isolation: isolationSchema.default('harness'),
   limits: z
     .object({

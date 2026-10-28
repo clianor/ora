@@ -6,7 +6,7 @@ export type PermissionVerdict = 'auto' | 'ask' | 'deny';
 const AUTO_TIERS: Readonly<Record<PermissionMode, readonly ToolTier[]>> = {
   'always-ask': ['read'],
   write: ['read', 'write'],
-  yolo: ['read', 'write', 'exec'],
+  'bypass-permissions': ['read', 'write', 'exec'],
 };
 
 /** 도구별 정책이 모드보다 앞선다 (SPEC 5.1절). */

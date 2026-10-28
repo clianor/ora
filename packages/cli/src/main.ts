@@ -5,7 +5,7 @@ import { CancelledBeforeStartError, UsageError, launchSession, listSessions } fr
 import type { LaunchRequest, SessionResult } from '@ora/host';
 
 const USAGE = `사용법:
-  ora run "<작업>" --model-script <경로> [--config <경로>] [--permission <always-ask|write|yolo>] [--json]
+  ora run "<작업>" --model-script <경로> [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--json]
   ora resume <세션 ID> --model-script <경로> [--steer "<조향 메시지>"] [--config <경로>] [--json]
   ora sessions [--config <경로>] [--json]`;
 
