@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { permissionModeSchema, sessionIdSchema } from './common.ts';
+import { isolationSchema, permissionModeSchema, sessionIdSchema } from './common.ts';
 import {
   approvalDecisionSchema,
   approvalRequestSchema,
@@ -63,6 +63,8 @@ export const sessionDetailResponseSchema = z.strictObject({
   session: sessionRecordSchema,
   todos: z.array(todoSchema),
   live: z.boolean(),
+  /** 이 서버 설정의 최대 스텝 수다. session.json에는 없는 값이라 여기서 알려 준다. */
+  maxSteps: z.number().int().positive(),
   pendingApprovals: z.array(pendingApprovalSchema),
   pendingQuestions: z.array(pendingQuestionSchema),
 });
@@ -94,3 +96,14 @@ export const steerFailedSchema = z.strictObject({
   texts: z.array(z.string().min(1)),
 });
 export type SteerFailed = z.infer<typeof steerFailedSchema>;
+
+/** 새 세션 화면이 보여 줄 서버 기본값이다. `branch`는 `cwd`가 git 저장소이고 브랜치 위에 있을 때만 있다. */
+export const infoResponseSchema = z.strictObject({
+  cwd: z.string(),
+  branch: z.string().optional(),
+  /** 새 세션이 받을 권한 모드다. 설정 파일 값이고, 설정 파일이 없으면 `always-ask`다. */
+  permissionMode: permissionModeSchema,
+  isolation: isolationSchema,
+  maxSteps: z.number().int().positive(),
+});
+export type InfoResponse = z.infer<typeof infoResponseSchema>;

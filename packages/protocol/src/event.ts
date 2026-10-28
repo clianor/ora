@@ -139,6 +139,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       scope: approvalScopeSchema.optional(),
       originalCommand: z.string().optional(),
       editedCommand: z.string().optional(),
+      /** 승인은 적용했지만 기억 저장에 실패했을 때 사용자에게 보여 줄 경고다. */
+      warning: z.string().optional(),
     }),
   ),
   // 승인 응답을 기다리기 시작할 때 `session.json`을 `awaiting_approval`로 바꾸기 전에 쓴다. 대기 중인 요청은 이 이벤트로 다시 만든다.

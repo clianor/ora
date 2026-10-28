@@ -1,13 +1,16 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import {
+  cpSync,
   existsSync,
+  realpathSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -120,18 +123,44 @@ async function waitFor(condition: () => boolean | Promise<boolean>): Promise<voi
   throw new Error('조건을 기다리다 시간이 지났습니다.');
 }
 
-async function startServer(responses: { content: Block[] }[]): Promise<Running> {
+const DEMO_DIR = fileURLToPath(new URL('../demo/', import.meta.url));
+
+/** `'demo'`면 `packages/cli/demo`의 시연 스크립트와 설정, 예제 프로젝트를 쓴다. */
+async function startServer(
+  responses: { content: Block[] }[] | ((home: string) => { content: Block[] }[]) | 'demo',
+  gitBranch?: string,
+): Promise<Running> {
   const root = mkdtempSync(join(tmpdir(), 'ora-serve-'));
   const dir = join(root, 'project');
   const home = join(root, 'home');
   const web = join(root, 'web');
   for (const path of [dir, home, web]) mkdirSync(path);
+  // 서버는 process.cwd()를 기본 cwd로 쓰므로 심볼릭 링크를 푼 경로를 써야 요청한 cwd와 같다.
+  const realDir = realpathSync(dir);
   writeFileSync(join(web, 'index.html'), '<title>ORA-INDEX</title>');
-  const script = join(home, 'script.json');
-  writeFileSync(script, JSON.stringify({ responses }));
+  let script = join(DEMO_DIR, 'model-script.json');
+  if (responses === 'demo') {
+    cpSync(join(DEMO_DIR, 'project'), realDir, { recursive: true });
+  } else {
+    script = join(home, 'script.json');
+    writeFileSync(
+      script,
+      JSON.stringify({ responses: typeof responses === 'function' ? responses(home) : responses }),
+    );
+  }
+  if (gitBranch !== undefined)
+    execFileSync('git', ['init', '--quiet', '-b', gitBranch], { cwd: dir });
   const child = spawn(
     process.execPath,
-    [CLI_PATH, 'serve', '--model-script', script, '--web-dir', web],
+    [
+      CLI_PATH,
+      'serve',
+      '--model-script',
+      script,
+      '--web-dir',
+      web,
+      ...(responses === 'demo' ? ['--config', join(DEMO_DIR, 'engine.config.json')] : []),
+    ],
     { cwd: dir, env: { ...process.env, ORA_HOME: home }, stdio: ['ignore', 'pipe', 'inherit'] },
   );
   const { promise, resolve, reject } = Promise.withResolvers<string>();
@@ -145,7 +174,7 @@ async function startServer(responses: { content: Block[] }[]): Promise<Running> 
   });
   const startUrl = await promise;
   const port = Number(new URL(startUrl).port);
-  const running: Running = { child, startUrl, port, home, dir, cookie: '' };
+  const running: Running = { child, startUrl, port, home, dir: realDir, cookie: '' };
   const entry = await send(running, `/${new URL(startUrl).search}`, { cookie: false });
   running.cookie = String(entry.headers['set-cookie']).split(';')[0] ?? '';
   return running;
@@ -175,6 +204,13 @@ function readEvents(running: Running, sessionId: string): OraEvent[] {
     });
 }
 
+function findResult(running: Running, sessionId: string, callId: string) {
+  for (const event of readEvents(running, sessionId)) {
+    if (event.type === 'tool_result' && event.payload.callId === callId) return event.payload;
+  }
+  return undefined;
+}
+
 function safeJson(line: string): unknown {
   try {
     return JSON.parse(line);
@@ -196,6 +232,7 @@ async function createSession(running: Running): Promise<string> {
 interface Detail {
   session: { status: string };
   live: boolean;
+  maxSteps: number;
   pendingApprovals: { requestId: string; request: Record<string, unknown> }[];
   pendingQuestions: { requestId: string }[];
 }
@@ -207,6 +244,7 @@ async function detail(running: Running, sessionId: string): Promise<Detail> {
   return {
     session: { status: 'created' },
     live: false,
+    maxSteps: 0,
     pendingApprovals: [],
     pendingQuestions: [],
     ...body,
@@ -329,6 +367,7 @@ test(
         detail: { kind: 'shell', command: 'touch a.txt', cwd: running.dir, risk: 'low' },
       });
       expect((await detail(running, sessionId)).session.status).toBe('awaiting_approval');
+      expect((await detail(running, sessionId)).maxSteps).toBe(50);
       await post(running, `/api/sessions/${sessionId}/approval`, {
         requestId: first.requestId,
         decision: { outcome: 'denied' },
@@ -602,6 +641,259 @@ test(
         stream.close();
         expect(stream.seqs).toEqual(stream.seqs.map((_, index) => index + 1));
       }
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+async function approveNext(
+  running: Running,
+  sessionId: string,
+  scope: 'once' | 'session' | 'always',
+): Promise<string> {
+  const next = await nextApproval(running, sessionId);
+  await post(running, `/api/sessions/${sessionId}/approval`, {
+    requestId: next.requestId,
+    decision: { outcome: 'approved', scope },
+  });
+  return (next.request as { callId: string }).callId;
+}
+
+async function createIn(running: Running, cwd: string): Promise<string> {
+  const reply = await post(running, '/api/sessions', {
+    task: '일을 한다',
+    cwd,
+    permissionMode: 'always-ask',
+  });
+  return (JSON.parse(reply.text) as { sessionId: string }).sessionId;
+}
+
+test(
+  '항상 승인은 새 세션에서 묻지 않고, 다른 명령과 다른 cwd는 다시 묻고, 깨진 permissions.json은 쓰지 않는다',
+  async () => {
+    const running = await startServer([
+      respond(use('a1', 'shell', { command: 'echo one > one.txt' })),
+      respond(use('a2', 'shell', { command: 'echo two > two.txt' })),
+      finalText,
+    ]);
+    try {
+      const first = await createSession(running);
+      expect(await approveNext(running, first, 'always')).toBe('a1');
+      expect(await approveNext(running, first, 'once')).toBe('a2');
+      await waitFor(() => existsSync(join(running.dir, 'two.txt')));
+      const stored = JSON.parse(readFileSync(join(running.home, 'permissions.json'), 'utf8')) as {
+        rules: unknown[];
+      };
+      expect(stored.rules).toEqual([
+        { tool: 'shell', command: 'echo one > one.txt', cwd: running.dir },
+      ]);
+
+      // 같은 명령은 묻지 않고 실행하며, 다른 명령(a2)은 다시 묻는다.
+      const second = await createSession(running);
+      expect(await approveNext(running, second, 'once')).toBe('a2');
+      const secondEvents = readEvents(running, second);
+      const remembered = secondEvents.find(
+        (event) => event.type === 'permission' && event.payload.callId === 'a1',
+      );
+      expect(remembered).toMatchObject({ payload: { decision: 'approved', scope: 'always' } });
+      expect(
+        secondEvents.some(
+          (event) => event.type === 'approval_request' && event.payload.callId === 'a1',
+        ),
+      ).toBe(false);
+
+      // 다른 cwd에서는 같은 명령도 다시 묻는다.
+      const elsewhere = join(running.dir, 'sub');
+      mkdirSync(elsewhere);
+      const third = await createIn(running, elsewhere);
+      expect(await approveNext(running, third, 'once')).toBe('a1');
+
+      // 파일이 깨졌으면 기억을 쓰지 않아 다시 묻고, 파일은 덮어쓰지 않는다.
+      writeFileSync(join(running.home, 'permissions.json'), '{ 깨진 파일');
+      const fourth = await createSession(running);
+      expect(await approveNext(running, fourth, 'always')).toBe('a1');
+      expect(readFileSync(join(running.home, 'permissions.json'), 'utf8')).toBe('{ 깨진 파일');
+      // 저장하지 못한 사실은 permission 이벤트의 warning으로 사용자에게 보인다.
+      await waitFor(() =>
+        readEvents(running, fourth).some(
+          (event) => event.type === 'permission' && event.payload.warning !== undefined,
+        ),
+      );
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '이 세션 동안 승인은 하드 킬과 재개 뒤에도 유지된다',
+  async () => {
+    const running = await startServer([
+      respond(use('s1', 'shell', { command: 'echo one >> one.txt' })),
+      respond(use('s2', 'shell', { command: 'sleep 30' })),
+    ]);
+    try {
+      const sessionId = await createSession(running);
+      expect(await approveNext(running, sessionId, 'session')).toBe('s1');
+      expect((await nextApproval(running, sessionId)).request).toMatchObject({ callId: 's2' });
+      await post(running, `/api/sessions/${sessionId}/cancel`, { mode: 'hard' });
+      await waitFor(async () => {
+        const current = await detail(running, sessionId);
+        return !current.live && current.session.status === 'crashed';
+      });
+
+      await post(running, `/api/sessions/${sessionId}/resume`, {});
+      // 재개하면 같은 호출(s1)이 다시 오지만 묻지 않고, 아직 승인하지 않은 s2만 묻는다.
+      expect((await nextApproval(running, sessionId)).request).toMatchObject({ callId: 's2' });
+      const permissions = readEvents(running, sessionId).flatMap((event) =>
+        event.type === 'permission' && event.payload.callId === 's1' ? [event.payload] : [],
+      );
+      expect(permissions).toMatchObject([
+        { decision: 'approved', scope: 'session' },
+        { decision: 'approved', scope: 'session' },
+      ]);
+      const asked = readEvents(running, sessionId).filter(
+        (event) => event.type === 'approval_request' && event.payload.callId === 's1',
+      );
+      expect(asked).toHaveLength(1);
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'file_write는 permissions.json과 세션 기록을 쓰지 못한다(링크 폴더 안의 새 파일과 대소문자만 다른 이름 포함)',
+  async () => {
+    const running = await startServer((home) => [
+      respond(use('p1', 'file_write', { path: join(home, 'permissions.json'), content: '{}' })),
+      respond(use('p2', 'file_write', { path: 'link/permissions.json', content: '{}' })),
+      respond(
+        use('p3', 'file_write', {
+          path: join(home, 'sessions', 's-20260101-aaaaaa', 'session.json'),
+          content: '{}',
+        }),
+      ),
+      ...(process.platform === 'darwin'
+        ? [
+            respond(
+              use('p4', 'file_write', { path: join(home, 'Permissions.json'), content: '{}' }),
+            ),
+          ]
+        : []),
+      finalText,
+    ]);
+    try {
+      symlinkSync(running.home, join(running.dir, 'link'));
+      const reply = await post(running, '/api/sessions', {
+        task: '일을 한다',
+        cwd: running.dir,
+        permissionMode: 'bypass-permissions',
+      });
+      const sessionId = (JSON.parse(reply.text) as { sessionId: string }).sessionId;
+      const calls = process.platform === 'darwin' ? ['p1', 'p2', 'p3', 'p4'] : ['p1', 'p2', 'p3'];
+      await waitFor(() => calls.every((callId) => findResult(running, sessionId, callId)));
+      for (const callId of calls) {
+        expect(findResult(running, sessionId, callId)).toMatchObject({ status: 'error' });
+      }
+      expect(existsSync(join(running.home, 'permissions.json'))).toBe(false);
+      expect(existsSync(join(running.home, 'sessions', 's-20260101-aaaaaa'))).toBe(false);
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '두 세션이 동시에 항상 승인해도 permissions.json의 규칙이 하나도 사라지지 않는다',
+  async () => {
+    const running = await startServer([
+      respond(use('c1', 'shell', { command: 'true' })),
+      finalText,
+    ]);
+    try {
+      const other = join(running.dir, 'sub');
+      mkdirSync(other);
+      const sessions = await Promise.all([createSession(running), createIn(running, other)]);
+      const pending = await Promise.all(sessions.map((id) => nextApproval(running, id)));
+      await Promise.all(
+        sessions.map((id, index) =>
+          post(running, `/api/sessions/${id}/approval`, {
+            requestId: pending[index]?.requestId,
+            decision: { outcome: 'approved', scope: 'always' },
+          }),
+        ),
+      );
+      await waitFor(() => {
+        const path = join(running.home, 'permissions.json');
+        if (!existsSync(path)) return false;
+        return (JSON.parse(readFileSync(path, 'utf8')) as { rules: unknown[] }).rules.length === 2;
+      });
+      expect(existsSync(join(running.home, 'permissions.json.lock'))).toBe(false);
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'GET /api/info는 기본 cwd를 알려 주고 git 저장소이면 브랜치도 알려 준다',
+  async () => {
+    const plain = await startServer([]);
+    const repo = await startServer([], 'trunk');
+    try {
+      expect(JSON.parse((await send(plain, '/api/info')).text)).toEqual({
+        cwd: plain.dir,
+        permissionMode: 'always-ask',
+        isolation: 'harness',
+        maxSteps: 50,
+      });
+      expect(JSON.parse((await send(repo, '/api/info')).text)).toEqual({
+        cwd: repo.dir,
+        branch: 'trunk',
+        permissionMode: 'always-ask',
+        isolation: 'harness',
+        maxSteps: 50,
+      });
+    } finally {
+      await stopServer(plain);
+      await stopServer(repo);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '시연 스크립트는 질문 2개, 승인 3번, 검증을 거쳐 completed로 끝난다',
+  async () => {
+    const running = await startServer('demo');
+    try {
+      const sessionId = await createSession(running);
+      let question: Detail['pendingQuestions'][number] | undefined;
+      await waitFor(async () => {
+        question = (await detail(running, sessionId)).pendingQuestions[0];
+        return question !== undefined;
+      });
+      await post(running, `/api/sessions/${sessionId}/answer`, {
+        requestId: question?.requestId,
+        answers: [{ choices: ['한국어'] }, { choices: ['덧셈', '곱셈'] }],
+      });
+      for (const callId of ['d6', 'd8', 'd10']) {
+        expect(await approveNext(running, sessionId, 'once')).toBe(callId);
+      }
+      await waitFor(async () => (await detail(running, sessionId)).session.status === 'completed');
+
+      expect(readFileSync(join(running.dir, 'calc.mjs'), 'utf8')).toContain('a + b');
+      const todos = JSON.parse(
+        readFileSync(join(sessionDirOf(running, sessionId), 'todos.json'), 'utf8'),
+      ) as { status: string }[];
+      expect(todos.map((todo) => todo.status)).toEqual(['verified']);
     } finally {
       await stopServer(running);
     }

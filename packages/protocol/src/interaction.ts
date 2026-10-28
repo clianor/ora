@@ -63,3 +63,20 @@ export const questionAnswerSchema = z
     message: '선택지나 직접 입력 중 하나는 있어야 합니다.',
   });
 export type QuestionAnswer = z.infer<typeof questionAnswerSchema>;
+
+/**
+ * 기억한 승인 하나다 (SPEC 5.1절). 일치 단위는 도구와 인자의 정확한 일치이고 와일드카드는 없다.
+ * `shell`과 `verify.run`은 명령 전문과 cwd가 모두 같아야 일치한다.
+ */
+export const approvalRuleSchema = z.union([
+  z.strictObject({ tool: z.string().min(1), command: z.string(), cwd: z.string() }),
+  z.strictObject({ tool: z.string().min(1), args: z.record(z.string(), z.unknown()) }),
+]);
+export type ApprovalRule = z.infer<typeof approvalRuleSchema>;
+
+/** `<oraHome>/permissions.json`의 형식이다. "항상 승인"한 규칙이 쌓이고, 사용자가 직접 고쳐 규칙을 더할 수 있다. */
+export const permissionsFileSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  rules: z.array(approvalRuleSchema),
+});
+export type PermissionsFile = z.infer<typeof permissionsFileSchema>;

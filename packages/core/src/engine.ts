@@ -1,5 +1,6 @@
 import type {
   ApprovalRequest,
+  ApprovalRule,
   ApprovalScope,
   ContentBlock,
   EndReason,
@@ -24,7 +25,7 @@ import {
 } from './control-tools.ts';
 import { assessRisk, decidePermission } from './permission.ts';
 import type { ToolPolicy } from './permission.ts';
-import type { ApprovalPort, QuestionPort } from './ports/approval.ts';
+import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
 import type { MemoryPort } from './ports/memory.ts';
 import type { ModelMessage, ModelPort, ModelStreamEvent } from './ports/model.ts';
@@ -67,6 +68,8 @@ export interface EngineDeps {
   readonly approval?: ApprovalPort;
   /** 없으면 `ask_user`를 headless 오류로 돌려준다. */
   readonly questions?: QuestionPort;
+  /** "항상 승인" 저장소다. 없으면 "항상 승인"을 이 세션 동안의 승인으로 다룬다. */
+  readonly alwaysApprovals?: AlwaysApprovalPort;
 }
 
 export interface RunInput {
@@ -130,6 +133,28 @@ function formatCommandOutput(result: {
 }): string {
   const status = result.timedOut ? 'timeout' : `exit code: ${result.exitCode ?? 'signal'}`;
   return `${status}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
+}
+
+/** 키 순서와 상관없이 같은 값이면 같은 문자열이 되게 객체 키를 정렬해 직렬화한다. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+    return `{${entries.map(([name, item]) => `${JSON.stringify(name)}:${stableStringify(item)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function ruleKey(rule: ApprovalRule): string {
+  return stableStringify(
+    'command' in rule ? [rule.tool, rule.command, rule.cwd] : [rule.tool, rule.args],
+  );
+}
+
+/** 도구가 쓰는 cwd다. 경로 정규화는 하지 않으므로 문자열이 다르면 다른 규칙이 되어 다시 묻는다. */
+function joinCwd(sessionCwd: string, requested: unknown): string {
+  if (typeof requested !== 'string' || requested === '') return sessionCwd;
+  return requested.startsWith('/') ? requested : `${sessionCwd.replace(/\/$/, '')}/${requested}`;
 }
 
 export async function runSession(deps: EngineDeps, input: RunInput): Promise<RunOutcome> {
@@ -264,7 +289,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     return finish('interrupted', 'user_cancel', '사용자가 중단했습니다.');
   };
 
-  const approvedKeys = new Set<string>();
+  // "이 세션 동안" 승인한 규칙이다. session.json에 저장해 재개한 뒤에도 유지한다.
+  const sessionRules: ApprovalRule[] = [...(resume?.session.approvals ?? [])];
   type Authorization = { readonly denied: string } | { readonly editedCommand?: string };
 
   const authorize = async (
@@ -283,7 +309,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const command = call.tool === 'shell' ? call.input.command : verifyTodo?.verify?.command;
     const record = (
       decision: 'auto' | 'approved' | 'denied',
-      extra: { scope?: ApprovalScope; editedCommand?: string } = {},
+      extra: { scope?: ApprovalScope; editedCommand?: string; warning?: string } = {},
     ) =>
       emit('engine', {
         type: 'permission',
@@ -305,6 +331,23 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       await record('denied');
       return { denied: `권한 거부: 도구 ${call.tool}의 정책이 deny입니다.` };
     }
+    const rest = Object.fromEntries(
+      Object.entries(call.input).filter(([name]) => name !== 'intent'),
+    );
+    const cwd = joinCwd(input.cwd, call.input.cwd);
+    const rule: ApprovalRule =
+      typeof command === 'string'
+        ? { tool: call.tool, command, cwd }
+        : { tool: call.tool, args: rest };
+    const key = ruleKey(rule);
+    if (sessionRules.some((entry) => ruleKey(entry) === key)) {
+      await record('approved', { scope: 'session' });
+      return {};
+    }
+    if (await deps.alwaysApprovals?.has(rule)) {
+      await record('approved', { scope: 'always' });
+      return {};
+    }
     if (deps.approval === undefined) {
       await record('denied');
       return {
@@ -312,16 +355,6 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       };
     }
 
-    const rest = Object.fromEntries(
-      Object.entries(call.input).filter(([name]) => name !== 'intent'),
-    );
-    const key = JSON.stringify([call.tool, rest]);
-    if (approvedKeys.has(key)) {
-      await record('approved', { scope: 'session' });
-      return {};
-    }
-
-    const cwd = typeof call.input.cwd === 'string' ? call.input.cwd : input.cwd;
     let detail: ApprovalRequest['detail'];
     if (typeof command === 'string') {
       detail = { kind: 'shell', command, cwd, risk: assessRisk(command) };
@@ -353,7 +386,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const restoreRunning = async () => {
       if (keepWaiting) return;
       waiting = undefined;
-      await saveSession({ status: 'running' });
+      await saveSession({
+        status: 'running',
+        ...(sessionRules.length === 0 ? {} : { approvals: sessionRules }),
+      });
     };
 
     if (decision.outcome === 'denied') {
@@ -362,14 +398,28 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       const steer = decision.steer === undefined ? '' : ` 사용자 지시: ${decision.steer}`;
       return { denied: `사용자가 ${call.tool} 호출을 거부했습니다.${steer}` };
     }
-    if (decision.scope !== 'once') approvedKeys.add(key);
     const edited =
       call.tool === 'shell' && decision.editedCommand !== command
         ? decision.editedCommand
         : undefined;
+    let warning: string | undefined;
+    // 고친 명령을 승인했으면 원본이 아니라 고친 명령을 기억한다.
+    const remembered: ApprovalRule =
+      edited === undefined || !('command' in rule) ? rule : { ...rule, command: edited };
+    if (decision.scope === 'session' || (decision.scope === 'always' && !deps.alwaysApprovals)) {
+      sessionRules.push(remembered);
+    } else if (decision.scope === 'always') {
+      const saved = await deps.alwaysApprovals?.add(remembered);
+      if (saved?.saved === false) {
+        // 저장에 실패해도 이번 승인은 적용하고, 같은 세션에서는 다시 묻지 않도록 세션 규칙으로 둔다.
+        sessionRules.push(remembered);
+        warning = `항상 승인을 저장하지 못해 이 세션 동안만 적용합니다: ${saved.reason}`;
+      }
+    }
     await record('approved', {
       scope: decision.scope,
       ...(edited === undefined ? {} : { editedCommand: edited }),
+      ...(warning === undefined ? {} : { warning }),
     });
     await restoreRunning();
     return edited === undefined ? {} : { editedCommand: edited };

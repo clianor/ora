@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -17,6 +18,7 @@ import {
 } from '@ora/protocol';
 import type {
   ApprovalRequest,
+  InfoResponse,
   OraEvent,
   PendingApproval,
   PendingQuestion,
@@ -84,6 +86,16 @@ class HttpError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+/** `cwd`가 git 저장소이고 브랜치 위에 있으면 브랜치 이름을 돌려준다. 저장소가 아니거나 detached HEAD면 `undefined`다. */
+function readBranch(cwd: string): Promise<string | undefined> {
+  const { promise, resolve } = Promise.withResolvers<string | undefined>();
+  execFile('git', ['-C', cwd, 'symbolic-ref', '--short', '-q', 'HEAD'], (error, stdout) => {
+    const name = stdout.trim();
+    resolve(error !== null || name === '' ? undefined : name);
+  });
+  return promise;
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -383,6 +395,19 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       await serveStatic(url.pathname, res);
       return;
     }
+    if (segments[1] === 'info' && segments.length === 2) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const branch = await readBranch(options.cwd);
+      const info: InfoResponse = {
+        cwd: options.cwd,
+        ...(branch === undefined ? {} : { branch }),
+        permissionMode: config.permissions.mode,
+        isolation: config.isolation,
+        maxSteps: config.limits.maxSteps,
+      };
+      reply(res, 200, info);
+      return;
+    }
     if (segments[1] !== 'sessions') throw new HttpError(404, '알 수 없는 API입니다.');
     const [, , rawId, action] = segments;
 
@@ -417,6 +442,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         session,
         todos: await readTodos(sessionDir),
         live: entry !== undefined,
+        maxSteps: config.limits.maxSteps,
         pendingApprovals: [...(entry?.approvals ?? [])].map(
           ([requestId, request]): PendingApproval => ({ requestId, request }),
         ),

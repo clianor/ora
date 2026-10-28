@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmod, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { defineTool } from '@ora/core';
 import type { CommandRunner, Tool } from '@ora/core';
 import { z } from 'zod';
@@ -13,6 +13,8 @@ export interface BuiltinToolOptions {
   readonly shellTimeoutMs: number;
   readonly maxOutputBytes: number;
   readonly maxFileBytes: number;
+  /** `file_write`·`file_edit`이 쓰지 못하는 파일과 디렉터리다 (SPEC 5.7절). 디렉터리는 안쪽 전체를 막는다. */
+  readonly protectedPaths: readonly string[];
 }
 
 const FORBIDDEN_SEGMENTS = ['.ssh', '.aws'];
@@ -31,6 +33,24 @@ function matchesForbiddenName(path: string): boolean {
 async function isForbiddenPath(path: string): Promise<boolean> {
   const real = await realpath(path).catch(() => path);
   return matchesForbiddenName(path) || matchesForbiddenName(real);
+}
+
+/** 아직 없는 경로는 가장 가까운 기존 조상을 `realpath`로 풀고 나머지를 다시 붙인다. 링크 폴더 안의 새 파일도 실제 위치로 비교하려는 것이다. */
+async function resolveThroughSymlinks(path: string): Promise<string> {
+  const rest: string[] = [];
+  for (let current = path; ; current = dirname(current)) {
+    try {
+      return join(await realpath(current), ...rest.reverse());
+    } catch {
+      if (dirname(current) === current) return path;
+      rest.push(basename(current));
+    }
+  }
+}
+
+/** macOS와 Windows의 기본 파일시스템은 대소문자를 구분하지 않으므로 그 플랫폼에서는 소문자로 맞춰 비교한다. */
+function foldCase(path: string): string {
+  return process.platform === 'darwin' || process.platform === 'win32' ? path.toLowerCase() : path;
 }
 
 function hashContent(content: Buffer | string): string {
@@ -85,6 +105,16 @@ async function writeAtomic(path: string, content: string): Promise<void> {
 }
 
 export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
+  const isProtectedPath = async (path: string): Promise<boolean> => {
+    const guarded = await Promise.all(options.protectedPaths.map(resolveThroughSymlinks));
+    const candidates = [path, await resolveThroughSymlinks(path)].map(foldCase);
+    return guarded
+      .map(foldCase)
+      .some((root) =>
+        candidates.some((candidate) => candidate === root || candidate.startsWith(root + sep)),
+      );
+  };
+
   // file_edit이 읽은 뒤 바뀐 파일을 거부하도록 마지막으로 본 내용의 해시를 기억한다.
   const seenHashes = new Map<string, string>();
 
@@ -154,6 +184,8 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
       const path = resolve(context.cwd, input.path);
       if (await isForbiddenPath(path))
         return { status: 'error', text: `금지 구역입니다: ${input.path}` };
+      if (await isProtectedPath(path))
+        return { status: 'error', text: `엔진이 관리하는 파일이라 쓸 수 없습니다: ${input.path}` };
       const before = await readFile(path, 'utf8').catch(() => undefined);
       await writeAtomic(path, input.content);
       seenHashes.set(path, hashContent(input.content));
@@ -177,6 +209,8 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
       const path = resolve(context.cwd, input.path);
       if (await isForbiddenPath(path))
         return { status: 'error', text: `금지 구역입니다: ${input.path}` };
+      if (await isProtectedPath(path))
+        return { status: 'error', text: `엔진이 관리하는 파일이라 쓸 수 없습니다: ${input.path}` };
       const seen = seenHashes.get(path);
       if (seen === undefined)
         return { status: 'error', text: '먼저 file_read로 파일을 읽어야 합니다.' };
