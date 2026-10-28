@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 
 const CLI_PATH = fileURLToPath(new URL('./main.ts', import.meta.url));
-const TOKEN = `sk-ant-oat01-${'b'.repeat(32)}`;
+const TOKEN = `sk-ant-api03-${'b'.repeat(32)}`;
 
 interface Outcome {
   readonly code: number;
@@ -27,7 +27,7 @@ function runOra(args: string[], env: Record<string, string>, home: string): Prom
   execFile(
     process.execPath,
     [CLI_PATH, ...args],
-    { cwd: home, env: { ...process.env, ORA_HOME: home, ANTHROPIC_OAUTH_TOKEN: '', ...env } },
+    { cwd: home, env: { ...process.env, ORA_HOME: home, ANTHROPIC_API_KEY: '', ...env } },
     (error, stdout, stderr) => {
       resolve({ code: typeof error?.code === 'number' ? error.code : 0, output: stdout + stderr });
     },
@@ -46,7 +46,7 @@ function filesUnder(dir: string): string[] {
 test('--model-script 없이 설정의 모델로 세션을 돌리고, 토큰은 세션 파일과 CLI 출력 어디에도 남지 않는다', async () => {
   const seen: string[] = [];
   const server = createServer((req, res) => {
-    seen.push(String(req.headers.authorization));
+    seen.push(String(req.headers['x-api-key']));
     req.resume();
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const frames = [
@@ -85,11 +85,11 @@ test('--model-script 없이 설정의 모델로 세션을 돌리고, 토큰은 �
     );
     const result = await runOra(
       ['run', '작업', '--config', config],
-      { ANTHROPIC_OAUTH_TOKEN: TOKEN },
+      { ANTHROPIC_API_KEY: TOKEN },
       home,
     );
 
-    expect(seen[0]).toBe(`Bearer ${TOKEN}`);
+    expect(seen[0]).toBe(TOKEN);
     const files = filesUnder(join(home, 'sessions'));
     const transcript = files.find((path) => path.endsWith('transcript.jsonl')) ?? '';
     expect(readFileSync(transcript, 'utf8')).toContain('"adapter":"anthropic"');
@@ -117,7 +117,7 @@ test('모델 이름이나 토큰이 없으면 세션을 시작하지 않고 사�
 
   const missingToken = await runOra(['run', '작업', '--config', withModel], {}, home);
   expect(missingToken.code).toBe(2);
-  expect(missingToken.output).toContain('ANTHROPIC_OAUTH_TOKEN');
+  expect(missingToken.output).toContain('ANTHROPIC_API_KEY');
 
   const valueInConfig = join(home, 'leak.json');
   writeFileSync(

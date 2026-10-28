@@ -3,10 +3,9 @@ import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ModelRequest, ModelStreamEvent } from '@ora/core';
 import { afterEach, expect, test } from 'vitest';
-import { CLAUDE_CODE_SYSTEM_PREAMBLE } from './anthropic-profile.ts';
 import { createAnthropicModel } from './anthropic.ts';
 
-const TOKEN = `sk-ant-oat01-${'a'.repeat(32)}`;
+const TOKEN = `sk-ant-api03-${'a'.repeat(32)}`;
 
 interface Seen {
   readonly headers: IncomingHttpHeaders;
@@ -113,7 +112,8 @@ function modelFor(baseUrl: string, delays: number[] = []) {
     model: 'test-model',
     maxTokens: 100,
     baseUrl,
-    getToken: () => TOKEN,
+    effort: 'low',
+    getApiKey: () => TOKEN,
     sleep: (ms) => {
       delays.push(ms);
       return Promise.resolve();
@@ -176,20 +176,28 @@ test('도구 호출 왕복: 요청 헤더·시스템 첫 블록·도구 이름 �
   });
 
   const [seen] = api.seen;
-  expect(seen?.headers.authorization).toBe(`Bearer ${TOKEN}`);
-  expect(seen?.headers['x-api-key']).toBeUndefined();
-  expect(seen?.headers['anthropic-beta']).toContain('claude-code-20250219');
-  expect(seen?.headers['anthropic-beta']).toContain('oauth-2025-04-20');
-  expect(seen?.headers['user-agent']).toMatch(/^claude-cli\/\S+ \(external, cli\)$/);
+  expect(seen?.headers['x-api-key']).toBe(TOKEN);
+  expect(seen?.headers.authorization).toBeUndefined();
+  expect(seen?.headers['anthropic-beta']).toBeUndefined();
   expect(seen?.body).toMatchObject({
     model: 'test-model',
     stream: true,
     max_tokens: 100,
     system: [
-      { type: 'text', text: CLAUDE_CODE_SYSTEM_PREAMBLE },
-      { type: 'text', text: 'Ora 시스템 프롬프트' },
+      {
+        type: 'text',
+        text: 'Ora 시스템 프롬프트',
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      },
     ],
-    tools: [{ name: 'todo__update', input_schema: { type: 'object' } }],
+    tools: [
+      {
+        name: 'todo__update',
+        input_schema: { type: 'object' },
+        cache_control: { type: 'ephemeral', ttl: '1h' },
+      },
+    ],
+    output_config: { effort: 'low' },
   });
   const messages = seen?.body.messages as { content: Record<string, unknown>[] }[];
   expect(messages[1]?.content[0]).toMatchObject({
@@ -246,7 +254,7 @@ test('서명된 thinking 블록은 서명과 함께 모으고 다음 요청에 �
   const sent = (api.seen[1]?.body.messages as { content: Record<string, unknown>[] }[])[1];
   expect(sent?.content).toEqual([
     { type: 'thinking', thinking: '서명 있음', signature: 'SIG-NATURE' },
-    { type: 'text', text: '답' },
+    { type: 'text', text: '답', cache_control: { type: 'ephemeral', ttl: '1h' } },
   ]);
 });
 

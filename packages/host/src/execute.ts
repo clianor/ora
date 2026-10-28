@@ -192,12 +192,13 @@ async function createModel(
   }
   const names = provider.credentialEnv;
   if (!names.some((name) => (env[name] ?? '') !== '')) {
-    throw new UsageError(`토큰 환경변수가 비어 있습니다: ${names.join(', ')}`);
+    throw new UsageError(`API 키 환경변수가 비어 있습니다: ${names.join(', ')}`);
   }
   return createAnthropicModel({
     model: provider.model,
     maxTokens: provider.maxTokens,
-    getToken: () => names.map((name) => env[name] ?? '').find((value) => value !== '') ?? '',
+    getApiKey: () => names.map((name) => env[name] ?? '').find((value) => value !== '') ?? '',
+    ...(provider.effort === undefined ? {} : { effort: provider.effort }),
     ...(provider.baseUrl === undefined ? {} : { baseUrl: provider.baseUrl }),
   });
 }
