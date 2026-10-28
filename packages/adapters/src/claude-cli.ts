@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ModelPort, ModelRequest } from '@ora/core';
-import { toApiName } from './anthropic-frames.ts';
 import { MCP_TOKEN_HEADER, startMcpServer } from './claude-mcp-server.ts';
 import type { McpServer } from './claude-mcp-server.ts';
 import {
@@ -15,6 +14,8 @@ import {
   buildClaudeEnv,
   ClaudeProcessError,
   createClaudeModel,
+  toMcpToolList,
+  trackStderrTail,
 } from './claude-shared.ts';
 import type {
   ClaudeBackend,
@@ -23,8 +24,6 @@ import type {
   StartMode,
   ToolBridge,
 } from './claude-shared.ts';
-
-const STDERR_TAIL_CHARS = 2000;
 
 function createCliBackend(options: ClaudeProviderOptions, bridge: ToolBridge): ClaudeBackend {
   let mcp: McpServer | undefined;
@@ -43,12 +42,7 @@ function createCliBackend(options: ClaudeProviderOptions, bridge: ToolBridge): C
     }
     const dir = workDir;
     mcp ??= await startMcpServer({
-      listTools: () =>
-        currentTools.map((tool) => ({
-          name: toApiName(tool.name),
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-        })),
+      listTools: () => toMcpToolList(currentTools),
       callTool: (_name, _args, toolUseId) => bridge.callTool(toolUseId),
     });
     await writeFile(
@@ -111,14 +105,8 @@ function createCliBackend(options: ClaudeProviderOptions, bridge: ToolBridge): C
       for (const stream of [child.stdin, child.stdout, child.stderr]) {
         if (stream instanceof Socket) stream.unref();
       }
-      const stderr = { tail: '' };
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr.tail = (stderr.tail + chunk.toString('utf8')).slice(-STDERR_TAIL_CHARS);
-      });
-      // spawn 실패(ENOENT 등)와 stdin 쓰기 오류는 읽기 루프에서 프로세스 종료로 드러난다.
-      child.on('error', (error) => {
-        stderr.tail = `${stderr.tail}${error.message}`.slice(-STDERR_TAIL_CHARS);
-      });
+      const readStderr = trackStderrTail(child);
+      // stdin 쓰기 오류는 읽기 루프에서 프로세스 종료로 드러난다.
       child.stdin.on('error', () => undefined);
       const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
       children.add(child);
@@ -151,7 +139,7 @@ function createCliBackend(options: ClaudeProviderOptions, bridge: ToolBridge): C
           if (child.stdout instanceof Socket) child.stdout.unref();
           child.unref();
         },
-        stderrTail: () => stderr.tail,
+        stderrTail: () => readStderr(),
         kill: () => {
           child.kill('SIGKILL');
         },

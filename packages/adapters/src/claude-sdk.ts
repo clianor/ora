@@ -5,12 +5,13 @@ import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { ModelPort, ModelRequest } from '@ora/core';
-import { toApiName } from './anthropic-frames.ts';
 import {
   MCP_SERVER_NAME,
   buildClaudeEnv,
   ClaudeProcessError,
   createClaudeModel,
+  toMcpToolList,
+  trackStderrTail,
 } from './claude-shared.ts';
 import type {
   ClaudeBackend,
@@ -19,18 +20,12 @@ import type {
   ToolBridge,
 } from './claude-shared.ts';
 
-const STDERR_TAIL_CHARS = 2000;
-
 /** Ora 도구를 같은 프로세스 안의 MCP 서버로 노출한다. 도구 목록은 요청마다 바뀔 수 있어서 호출 때 읽는다. */
 function createOraMcpServer(getTools: () => ModelRequest['tools'], bridge: ToolBridge) {
   const instance = new McpServer({ name: MCP_SERVER_NAME, version: '0.0.0' });
   instance.server.registerCapabilities({ tools: {} });
   instance.server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: getTools().map((tool) => ({
-      name: toApiName(tool.name),
-      description: tool.description,
-      inputSchema: { type: 'object' as const, ...tool.inputSchema },
-    })),
+    tools: toMcpToolList(getTools()),
   }));
   instance.server.setRequestHandler(CallToolRequestSchema, async (_request, extra) => {
     const toolUseId = extra._meta?.['claudecode/toolUseId'];
@@ -84,7 +79,7 @@ function createSdkBackend(options: ClaudeProviderOptions, bridge: ToolBridge): C
       const [executable, ...prefix] = command;
       const input = createInputQueue();
       const abortController = new AbortController();
-      const stderr = { tail: '' };
+      let readStderr = () => '';
       let child: ChildProcess | undefined;
       const env = Object.fromEntries(
         Object.entries(buildClaudeEnv(options.env, options.cacheTtl)).flatMap(([name, value]) =>
@@ -111,18 +106,18 @@ function createSdkBackend(options: ClaudeProviderOptions, bridge: ToolBridge): C
           persistSession: options.persistSession,
           // SDK가 번들한 바이너리 대신 사용자가 설정한 명령(`claude`, `cswap run <계정> --` 등)으로 실행한다.
           spawnClaudeCodeProcess: (spawnOptions) => {
-            const spawned = spawn(executable, [...prefix, ...spawnOptions.args], {
+            // 번들 실행 파일이 네이티브가 아니면 SDK가 cli.js 경로를 첫 인자로 넣는다. 사용자 명령에는 필요 없다.
+            const args = /\.[cm]?js$/.test(spawnOptions.args[0] ?? '')
+              ? spawnOptions.args.slice(1)
+              : spawnOptions.args;
+            const spawned = spawn(executable, [...prefix, ...args], {
               cwd: spawnOptions.cwd,
               env: spawnOptions.env,
+              signal: spawnOptions.signal,
               stdio: ['pipe', 'pipe', 'pipe'],
             });
             spawned.unref();
-            spawned.stderr.on('data', (chunk: Buffer) => {
-              stderr.tail = (stderr.tail + chunk.toString('utf8')).slice(-STDERR_TAIL_CHARS);
-            });
-            spawned.on('error', (error) => {
-              stderr.tail = `${stderr.tail}${error.message}`.slice(-STDERR_TAIL_CHARS);
-            });
+            readStderr = trackStderrTail(spawned);
             child = spawned;
             // 파이프 세 개로 띄운 자식 프로세스라 stdin과 stdout이 있고, SDK가 쓰는 항목은 `SpawnedProcess`와 같다.
             return spawned;
@@ -148,17 +143,19 @@ function createSdkBackend(options: ClaudeProviderOptions, bridge: ToolBridge): C
         release: () => {
           child?.unref();
         },
-        stderrTail: () => stderr.tail,
+        stderrTail: () => readStderr(),
         kill: () => {
+          process.off('exit', onExit);
           input.close();
           abortController.abort();
           running.close();
           child?.kill('SIGKILL');
         },
       };
-      process.once('exit', () => {
+      const onExit = () => {
         child?.kill('SIGKILL');
-      });
+      };
+      process.once('exit', onExit);
       return Promise.resolve(handle);
     },
   };

@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { scrubText } from '@ora/core';
 import type { ModelMessage, ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import type { ContentBlock } from '@ora/protocol';
@@ -7,6 +8,32 @@ import type { McpToolResult } from './claude-mcp-server.ts';
 
 export const MCP_SERVER_NAME = 'ora';
 const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
+const STDERR_TAIL_CHARS = 2000;
+
+/** spawn 실패 메시지도 같은 꼬리에 붙여 오류에 함께 싣는다. */
+export function trackStderrTail(child: ChildProcess): () => string {
+  let tail = '';
+  const append = (text: string) => {
+    tail = (tail + text).slice(-STDERR_TAIL_CHARS);
+  };
+  child.stderr?.on('data', (chunk: Buffer) => {
+    append(chunk.toString('utf8'));
+  });
+  child.on('error', (error) => {
+    append(error.message);
+  });
+  return () => tail;
+}
+
+/** Anthropic 도구 이름 규칙에 맞춰 이름을 바꾼다. */
+export function toMcpToolList(tools: ModelRequest['tools']) {
+  return tools.map((tool) => ({
+    name: toApiName(tool.name),
+    description: tool.description,
+    inputSchema: { type: 'object' as const, ...tool.inputSchema },
+  }));
+}
+
 const LIMIT_TEXT = /usage limit|rate limit|limit reached|hit your limit|limit will reset/i;
 
 /** 한도 오류 때문에 현재 명령(계정)으로 더 진행할 수 없음을 뜻한다. */

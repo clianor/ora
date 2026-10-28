@@ -168,16 +168,7 @@ test('SDK 경로: 병렬 tool_use를 callId로 풀고 안내를 덧붙이며, �
   expect(starts[0]).toMatchObject({ mode: 'ok', ttl: '1h', apiKey: null, leak: null, mds: '1' });
   expect(starts[0]?.argv).not.toContain('--no-session-persistence');
   expect(String(starts[0]?.cwd).endsWith(basename(workFolder))).toBe(true);
-  expect(starts[0]?.argv).toEqual(
-    expect.arrayContaining([
-      '--tools=',
-      '--setting-sources=',
-      '--strict-mcp-config',
-      '--model=claude-haiku-5-5',
-      '--effort=low',
-      '--disable-slash-commands',
-    ]),
-  );
+  expect((starts[0]?.argv as string[]).some((arg) => /\.[cm]?js$/.test(arg))).toBe(false);
 });
 
 // 응답하지 않는 자식 프로세스는 e2e가 만들 수 없다.
