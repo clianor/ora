@@ -63,6 +63,10 @@
     "warning": {
       "$type": "color",
       "$value": "#D29922"
+    },
+    "ring": {
+      "$type": "color",
+      "$value": "#8AB4F8"
     }
   },
   "radius": {

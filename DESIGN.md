@@ -18,6 +18,7 @@ colors:
   dark-danger: '#FF7B72'
   dark-danger-subtle: '#2D1517'
   dark-warning: '#D29922'
+  dark-ring: '#8AB4F8'
   light-background: '#FFFFFF'
   light-sidebar: '#F9F9F9'
   light-surface: '#F4F4F4'
@@ -34,6 +35,7 @@ colors:
   light-danger: '#CF222E'
   light-danger-subtle: '#FDECEC'
   light-warning: '#7D5300'
+  light-ring: '#1A66D9'
 typography:
   body:
     fontFamily: 'Pretendard'
@@ -254,6 +256,10 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 - **Success** (`success`): 검증을 마친 todo 상태, 완료, 추가된 줄 수, 기기 연결 점에 씁니다. `success-subtle`은 추가된 diff 줄의 배경입니다.
 - **Danger** (`danger`): 실패, 삭제된 줄 수입니다. `danger-subtle`은 삭제된 diff 줄의 배경입니다.
 - **Warning** (`warning`): 승인 대기, 시도함, 위험도 표시입니다.
+
+### Focus
+
+- **Ring** (`ring`): 키보드 포커스 표시입니다. 요소 바깥에 2px 선으로 그립니다. 배경 대비는 다크 6.81:1, 라이트 4.84:1 이상입니다. 상태색이 아니므로 포커스 표시 밖에는 쓰지 않습니다.
 
 ### Named Rules
 
