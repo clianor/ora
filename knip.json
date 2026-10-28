@@ -8,6 +8,9 @@
     },
     "packages/*": {
       "project": ["src/**/*.ts"]
+    },
+    "apps/*": {
+      "project": ["src/**/*.{ts,tsx,css}", "*.ts", "*.js"]
     }
   }
 }

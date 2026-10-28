@@ -13,9 +13,10 @@ export default {
     {
       name: 'not-to-unresolvable',
       severity: 'error',
-      comment: '해석할 수 없는 import입니다. 경로나 package.json 선언을 확인합니다.',
+      comment:
+        '해석할 수 없는 import입니다. 경로나 package.json 선언을 확인합니다. Vite 플러그인이 만드는 virtual: 모듈은 예외입니다.',
       from: {},
-      to: { couldNotResolve: true },
+      to: { couldNotResolve: true, pathNot: '^virtual:' },
     },
     {
       name: 'no-undeclared-deps',
@@ -112,7 +113,7 @@ export default {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '^(tmp|coverage|dist|\\.claude)/' },
+    exclude: { path: '^(tmp|coverage|\\.claude)/|(^|/)dist/' },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: 'tsconfig.json' },
     enhancedResolveOptions: {

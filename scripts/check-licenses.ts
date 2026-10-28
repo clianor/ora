@@ -1,8 +1,11 @@
 import { execFileSync } from 'node:child_process';
 
 const prodAllowed = ['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', '0BSD'];
-// 사용자가 결정한 개발 도구 전용 예외다.
-const devAllowed = [...prodAllowed, 'BlueOak-1.0.0', 'MPL-2.0'];
+// 사용자가 결정한 개발 도구 전용 예외다. CC-BY-4.0은 사용자 결정, caniuse-lite 데이터, 개발 전용이다.
+const devAllowed = [...prodAllowed, 'BlueOak-1.0.0', 'MPL-2.0', 'CC-BY-4.0'];
+
+// 글꼴 패키지 두 개에만 허용하는 예외다. OFL-1.1을 일반 허용 목록에 넣지 않는다.
+const fontPackages = new Set(['pretendard', '@fontsource/jetbrains-mono']);
 
 interface LicensedPackage {
   name: string;
@@ -31,9 +34,10 @@ const prodPackages = new Set(
     .map((pkg) => pkg.name),
 );
 
-const violations = Object.entries(readLicenses(['licenses', 'list', '--json'])).flatMap(
+const violations = Object.entries(readLicenses(['-r', 'licenses', 'list', '--json'])).flatMap(
   ([license, packages]) =>
     packages
+      .filter((pkg) => !(license === 'OFL-1.1' && fontPackages.has(pkg.name)))
       .filter((pkg) => !isAllowed(license, prodPackages.has(pkg.name) ? prodAllowed : devAllowed))
       .map((pkg) => `${pkg.name}@${pkg.versions.join(',')} (${license})`),
 );

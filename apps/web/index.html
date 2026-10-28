@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ora</title>
+    <script>
+      // 첫 화면을 그리기 전에 저장한 테마를 적용해 깜빡임을 막습니다. 키 이름은 src/lib/theme.ts와 같습니다.
+      (function () {
+        var stored = null;
+        try {
+          stored = localStorage.getItem('ora-theme');
+        } catch (error) {
+          // 저장소를 읽지 못하면 system으로 동작합니다.
+        }
+        var dark =
+          stored === 'dark' ||
+          (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', dark);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
