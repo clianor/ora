@@ -55,3 +55,6 @@ export async function loadScriptedModel(
     },
   };
 }
+
+export { createAnthropicModel } from './anthropic.ts';
+export type { AnthropicOptions } from './anthropic.ts';

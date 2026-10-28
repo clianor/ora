@@ -3,13 +3,14 @@ import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadScriptedModel } from '@ora/adapters';
+import { createAnthropicModel, loadScriptedModel } from '@ora/adapters';
 import { parseTranscript, planResume, ruleKey, runSession, scrubValue } from '@ora/core';
 import type {
   AlwaysApprovalPort,
   ApprovalPort,
   Clock,
   InstructionFile,
+  ModelPort,
   PromptFile,
   QuestionPort,
   ResumeInput,
@@ -29,6 +30,7 @@ import { permissionsFileSchema } from '@ora/protocol';
 import { createSessionStorage, readSessionRecord, readTranscriptText } from '@ora/store';
 import { createBuiltinTools, createCommandRunner } from '@ora/tools';
 import { ENGINE_VERSION, UsageError, loadConfig, resolveSessionsDir } from './config.ts';
+import type { Config } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
 
@@ -169,6 +171,37 @@ export function createIpcPorts(send: (message: WorkerMessage) => void) {
   };
 }
 
+/** `--model-script`가 있으면 가짜 모델을, 없으면 설정의 Anthropic 모델을 만든다. */
+async function createModel(
+  command: LaunchCommand,
+  config: Config,
+  env: NodeJS.ProcessEnv,
+): Promise<ModelPort> {
+  if (command.modelScriptPath !== undefined) {
+    try {
+      return await loadScriptedModel(command.modelScriptPath, command.modelInputLogPath);
+    } catch (error) {
+      throw new UsageError(`가짜 모델 스크립트를 읽을 수 없습니다: ${String(error)}`);
+    }
+  }
+  const provider = config.providers.anthropic;
+  if (provider.model === undefined) {
+    throw new UsageError(
+      '설정 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
+    );
+  }
+  const names = provider.credentialEnv;
+  if (!names.some((name) => (env[name] ?? '') !== '')) {
+    throw new UsageError(`토큰 환경변수가 비어 있습니다: ${names.join(', ')}`);
+  }
+  return createAnthropicModel({
+    model: provider.model,
+    maxTokens: provider.maxTokens,
+    getToken: () => names.map((name) => env[name] ?? '').find((value) => value !== '') ?? '',
+    ...(provider.baseUrl === undefined ? {} : { baseUrl: provider.baseUrl }),
+  });
+}
+
 const PERMISSIONS_FILE = 'permissions.json';
 
 const LOCK_RETRY_MS = 25;
@@ -293,12 +326,7 @@ export async function executeSession(
   const sessionDir = join(resolveSessionsDir(config, oraHome), command.sessionId);
   const memoryDir = config.paths.memory ?? join(oraHome, 'memory');
 
-  let model;
-  try {
-    model = await loadScriptedModel(command.modelScriptPath, command.modelInputLogPath);
-  } catch (error) {
-    throw new UsageError(`가짜 모델 스크립트를 읽을 수 없습니다: ${String(error)}`);
-  }
+  const model = await createModel(command, config, hooks.env);
   if (!(await stat(command.cwd)).isDirectory())
     throw new UsageError('작업 폴더가 디렉터리가 아닙니다.');
 

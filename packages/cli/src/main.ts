@@ -16,10 +16,10 @@ import type { LaunchRequest, SessionResult } from '@ora/host';
 const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../../apps/web/dist', import.meta.url));
 
 const USAGE = `사용법:
-  ora run "<작업>" --model-script <경로> [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--json]
-  ora resume <세션 ID> --model-script <경로> [--steer "<조향 메시지>"] [--config <경로>] [--json]
+  ora run "<작업>" [--model-script <경로>] [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--json]
+  ora resume <세션 ID> [--model-script <경로>] [--steer "<조향 메시지>"] [--config <경로>] [--json]
   ora sessions [--config <경로>] [--json]
-  ora serve --model-script <경로> [--web-dir <경로>] [--port <번호>] [--config <경로>]`;
+  ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>]`;
 
 const EXIT_CODES = { passed: 0, failed: 1, usage: 2, cancelled: 130 } as const;
 
@@ -133,9 +133,6 @@ async function main(): Promise<number> {
 
     if (command === 'serve') {
       if (argument !== undefined) return usageError('serve는 인자를 받지 않습니다.');
-      if (values['model-script'] === undefined) {
-        return usageError('실제 모델 어댑터는 아직 없어서 --model-script가 필요합니다.');
-      }
       const port = values.port === undefined ? undefined : Number(values.port);
       if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port <= 65535)) {
         return usageError(`--port 값이 올바르지 않습니다: ${values.port}`);
@@ -145,7 +142,9 @@ async function main(): Promise<number> {
       const server = await startLocalServer({
         env: process.env,
         cwd: process.cwd(),
-        modelScriptPath: values['model-script'],
+        ...(values['model-script'] === undefined
+          ? {}
+          : { modelScriptPath: values['model-script'] }),
         ...(values.config === undefined ? {} : { configPath: values.config }),
         ...(hasWeb ? { webDir } : {}),
         ...(port === undefined ? {} : { port }),
@@ -170,12 +169,9 @@ async function main(): Promise<number> {
     if ((command !== 'run' && command !== 'resume') || argument === undefined || extra.length > 0) {
       return usageError('명령이나 인자가 올바르지 않습니다.');
     }
-    if (modelScriptPath === undefined) {
-      return usageError('실제 모델 어댑터는 아직 없어서 --model-script가 필요합니다.');
-    }
     const launch = {
       ...common,
-      modelScriptPath,
+      ...(modelScriptPath === undefined ? {} : { modelScriptPath }),
       ...(values['record-model-input'] === undefined
         ? {}
         : { modelInputLogPath: values['record-model-input'] }),

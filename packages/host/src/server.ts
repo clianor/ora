@@ -55,7 +55,8 @@ export interface LocalServerOptions {
   readonly configPath?: string;
   /** 새 세션과 재개의 기본 작업 폴더다. */
   readonly cwd: string;
-  readonly modelScriptPath: string;
+  /** 없으면 설정의 실제 모델을 쓴다. */
+  readonly modelScriptPath?: string;
   /** 정적 웹 결과물 디렉터리다. 없으면 API만 제공한다. */
   readonly webDir?: string;
   /** 생략하면 운영체제가 빈 포트를 고른다. */
@@ -163,9 +164,16 @@ function parseBody<T extends z.ZodType>(schema: T, raw: unknown): z.infer<T> {
 export async function startLocalServer(options: LocalServerOptions): Promise<LocalServer> {
   const oraHome = resolveOraHome(options.env);
   const config = await loadConfig(options.configPath, oraHome);
+  if (options.modelScriptPath === undefined && config.providers.anthropic.model === undefined) {
+    throw new UsageError(
+      '설정 providers.anthropic.model이 없습니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
+    );
+  }
   const sessionsDir = resolveSessionsDir(config, oraHome);
   const token = randomBytes(32).toString('hex');
   const webRoot = options.webDir === undefined ? undefined : resolve(options.webDir);
+  const modelArgs =
+    options.modelScriptPath === undefined ? {} : { modelScriptPath: options.modelScriptPath };
   const configArgs = options.configPath === undefined ? {} : { configPath: options.configPath };
 
   const live = new Map<string, LiveSession>();
@@ -239,7 +247,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     type: 'resumeSession',
     sessionId: id,
     cwd: options.cwd,
-    modelScriptPath: options.modelScriptPath,
+    ...modelArgs,
     ...configArgs,
     ...(steer === undefined ? {} : { steer }),
   });
@@ -422,7 +430,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
           type: 'createSession',
           task: body.task,
           cwd: body.cwd ?? options.cwd,
-          modelScriptPath: options.modelScriptPath,
+          ...modelArgs,
           ...configArgs,
           ...(body.permissionMode === undefined ? {} : { permissionMode: body.permissionMode }),
         });

@@ -17,7 +17,8 @@ import { todoSchema } from './todo.ts';
 const launchFields = {
   sessionId: sessionIdSchema,
   cwd: z.string().min(1),
-  modelScriptPath: z.string().min(1),
+  /** 있으면 가짜 모델 스크립트를 쓰고, 없으면 설정의 실제 모델을 쓴다. */
+  modelScriptPath: z.string().min(1).optional(),
   modelInputLogPath: z.string().min(1).optional(),
   configPath: z.string().min(1).optional(),
   /** true면 승인과 `ask_user`를 호스트로 올려 답을 기다린다. false면 `ora run`처럼 응답할 사람이 없는 headless 실행이다. */

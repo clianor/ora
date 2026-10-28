@@ -7,6 +7,25 @@ export const ENGINE_VERSION = '0.0.0';
 
 export class UsageError extends Error {}
 
+const anthropicProviderSchema = z.strictObject({
+  /** 토큰을 읽을 환경변수 이름의 목록이다. 앞에서부터 값이 있는 첫 변수를 쓴다. 토큰 값은 설정 파일에 적지 못한다. */
+  credentialEnv: z
+    .array(
+      z
+        .string()
+        .regex(
+          /^[A-Za-z_][A-Za-z0-9_]*$/,
+          '환경변수 이름이어야 합니다. 토큰 값을 적으면 안 됩니다.',
+        ),
+    )
+    .min(1)
+    .default(['ANTHROPIC_OAUTH_TOKEN']),
+  /** 모델 이름은 코드에 두지 않는다 (SPEC 2.4절). `--model-script`가 없으면 필수다. */
+  model: z.string().min(1).optional(),
+  baseUrl: z.url().optional(),
+  maxTokens: z.number().int().positive().default(8192),
+});
+
 const configSchema = z.object({
   schemaVersion: z.literal(1).default(1),
   projectId: z.string().nullable().default(null),
@@ -22,6 +41,9 @@ const configSchema = z.object({
       tools: z.record(z.string(), z.enum(['allow', 'prompt', 'deny'])).default({}),
     })
     .default({ mode: 'bypass-permissions', tools: {} }),
+  providers: z
+    .object({ anthropic: anthropicProviderSchema.default(anthropicProviderSchema.parse({})) })
+    .default({ anthropic: anthropicProviderSchema.parse({}) }),
   isolation: isolationSchema.default('harness'),
   limits: z
     .object({
