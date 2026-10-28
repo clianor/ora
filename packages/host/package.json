@@ -1,0 +1,22 @@
+{
+  "name": "@ora/host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ora/adapters": "workspace:*",
+    "@ora/core": "workspace:*",
+    "@ora/memory": "workspace:*",
+    "@ora/protocol": "workspace:*",
+    "@ora/store": "workspace:*",
+    "@ora/tools": "workspace:*",
+    "zod": "catalog:"
+  }
+}
