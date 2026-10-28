@@ -24,6 +24,8 @@ const DARK = {
   onPrimary: '#1F1F1F',
   ring: '#8AB4F8',
   overlay: '#00000099',
+  popover: '#333333',
+  borderStrong: '#4D4D4D',
 };
 const LIGHT = {
   window: '#FFFFFF',
@@ -45,6 +47,8 @@ const LIGHT = {
   onPrimary: '#FFFFFF',
   ring: '#1A66D9',
   overlay: '#0000004D',
+  popover: '#FFFFFF',
+  borderStrong: '#D4D4D4',
 };
 export const palette = (mode) => (mode === 'Light' ? LIGHT : DARK);
 

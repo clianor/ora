@@ -71,6 +71,14 @@
     "overlay": {
       "$type": "color",
       "$value": "#00000099"
+    },
+    "popover": {
+      "$type": "color",
+      "$value": "#333333"
+    },
+    "border-strong": {
+      "$type": "color",
+      "$value": "#4D4D4D"
     }
   },
   "radius": {

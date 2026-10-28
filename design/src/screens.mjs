@@ -146,16 +146,17 @@ function sessionScreen() {
 /** 상태 표시줄의 캐시 적중률에 마우스를 올렸을 때 뜨는 세부 카드다. 적중률은 캐시에서 읽은 입력 토큰을 전체 입력 토큰으로 나눈 값이다. */
 function cacheScreen() {
   const c = palette('Dark');
+  // 밝은 면 위에서 foreground-subtle은 다크 4.11:1로 AA에 못 미쳐, 카드 안 이름은 foreground-muted로 쓴다.
   const row = (label, value) =>
-    `<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', label, 'w={72}')}${T(c, 12, 16, 400, 'ink2', value, 'grow={1}', mono)}</Frame>`;
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink2', label, 'w={72}')}${T(c, 12, 16, 400, 'ink', value, 'grow={1}', mono)}</Frame>`;
   // 카드 아래 끝을 상태 표시줄(y=860) 4px 위에, 왼쪽 끝을 "캐시 적중" 글자(x=600)에 맞춘다. 카드 높이는 174px이다.
-  const card = `<Frame name="CacheCard" position="absolute" x={600} y={682} w={340} h="hug" flex="col" gap={10} p={12} rounded={10} bg="${c.raised}">
+  const card = `<Frame name="CacheCard" position="absolute" x={600} y={682} w={340} h="hug" flex="col" gap={10} p={12} rounded={10} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
 <Frame w="fill" h="hug" flex="row" items="center">${T(c, 12, 16, 600, 'ink', '프롬프트 캐시')}${SP}${T(c, 12, 16, 600, 'ink', '82%', '', mono)}</Frame>
-<Frame w="fill" h={4} flex="row" rounded={2} bg="${c.line}"><Frame w={259} h={4} rounded={2} bg="${c.ink2}" /></Frame>
+<Frame w="fill" h={4} flex="row" rounded={2} bg="${c.borderStrong}"><Frame w={259} h={4} rounded={2} bg="${c.ink2}" /></Frame>
 ${row('세션 누적', '읽기 182.4k / 입력 222.1k')}
 ${row('마지막 요청', '읽기 41.2k · 쓰기 1.1k · 새 0.3k')}
 ${row('유지 시간', '1시간')}
-${T(c, 12, 16, 400, 'ink3', '적중한 토큰은 모델이 다시 처리하지 않습니다. 응답이 빨라지고 구독 사용량이 줄어듭니다.', 'w={316} textAutoResize="height"')}
+${T(c, 12, 16, 400, 'ink2', '적중한 토큰은 모델이 다시 처리하지 않습니다. 응답이 빨라지고 구독 사용량이 줄어듭니다.', 'w={316} textAutoResize="height"')}
 </Frame>`;
   return windowFrame(c, '09 Cache · Dark', {
     side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
