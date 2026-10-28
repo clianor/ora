@@ -109,6 +109,28 @@ const mathEvents: OraEvent[] = [
       { type: 'text', text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.' },
     ],
   }),
+  makeMath('tool_call', '09:02', 'model', { callId: 'c0', tool: 'ask_user', args: {} }),
+  makeMath('question', '09:02', 'engine', {
+    callId: 'c0',
+    questions: [
+      { question: '어떤 파일을 고칠까요?', options: ['math.js', 'check.js'] },
+      {
+        question: '함께 확인할 항목을 고르세요.',
+        options: ['덧셈', '뺄셈', '곱셈'],
+        multiSelect: true,
+      },
+    ],
+  }),
+  makeMath('answer', '09:03', 'user', {
+    callId: 'c0',
+    answers: [{ choices: ['math.js'] }, { choices: ['덧셈', '뺄셈'], text: '음수도 확인' }],
+  }),
+  makeMath('tool_result', '09:03', 'tool', {
+    callId: 'c0',
+    status: 'ok',
+    summary: '답을 받았습니다',
+    durationMs: 4000,
+  }),
   makeMath('tool_call', '09:03', 'model', {
     callId: 'c1',
     tool: 'read',

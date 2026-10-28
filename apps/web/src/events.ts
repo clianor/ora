@@ -12,6 +12,19 @@ export interface ToolResultView {
   summary: string;
 }
 
+/** 상태를 헤더와 할 일 패널이 이미 보여 주는 제어 도구입니다. 실패했을 때만 줄로 보입니다. */
+const controlTools = new Set(['ask_user', 'todo.update', 'stage.advance', 'memory.propose']);
+
+/** 질문 하나의 답을 짧은 글로 만듭니다. */
+function formatAnswer(
+  question: string,
+  choices: readonly string[],
+  text: string | undefined,
+): string {
+  const parts = [...choices, ...(text ? [`직접 입력: ${text}`] : [])];
+  return `${question}\n→ ${parts.join(', ')}`;
+}
+
 export interface ThreadData {
   messages: ThreadMessageLike[];
   abortedCalls: number;
@@ -44,6 +57,13 @@ export function buildThread(
     if (event.payload.status === 'aborted') abortedCalls += 1;
   }
 
+  const questionsByCall = new Map<string, readonly { question: string }[]>();
+  for (const event of events) {
+    if (event.type === 'question') {
+      questionsByCall.set(event.payload.callId, event.payload.questions);
+    }
+  }
+
   const messages: ThreadMessageLike[] = [];
   const assistantContent: MessageContent[number][] = [];
   const flushAssistant = () => {
@@ -65,10 +85,24 @@ export function buildThread(
         flushAssistant();
         messages.push({ role: 'user', content: [{ type: 'text', text }] });
       }
+    } else if (event.type === 'answer') {
+      const questions = questionsByCall.get(event.payload.callId) ?? [];
+      const text = event.payload.answers
+        .map((answer, index) =>
+          formatAnswer(
+            questions[index]?.question ?? `질문 ${index + 1}`,
+            answer.choices,
+            answer.text,
+          ),
+        )
+        .join('\n\n');
+      flushAssistant();
+      messages.push({ role: 'user', content: [{ type: 'text', text }] });
     } else if (event.type === 'permission' && event.payload.warning) {
       assistantContent.push({ type: 'data-warning', data: { text: event.payload.warning } });
     } else if (event.type === 'tool_call' && !waitingCallIds.has(event.payload.callId)) {
       const { callId, tool, args } = event.payload;
+      if (controlTools.has(tool) && (results.get(callId)?.status ?? 'ok') === 'ok') continue;
       assistantContent.push({
         type: 'tool-call',
         toolCallId: callId,

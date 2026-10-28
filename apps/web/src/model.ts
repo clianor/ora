@@ -28,6 +28,8 @@ export interface WorktreeNode {
   name: string;
   /** 이 행에서 새 세션을 열 때 쓰는 작업 폴더입니다. 없으면 서버 기본 폴더입니다. */
   cwd?: string;
+  /** name이 폴더 이름만 보여 줄 때의 전체 경로입니다. */
+  title?: string;
   add?: number;
   del?: number;
   sessions: SessionNode[];
@@ -64,6 +66,8 @@ export interface SessionView {
   /** 답을 기다리는 `ask_user` 질문입니다. */
   questions: PendingQuestion[];
   repoLabel: string;
+  /** repoLabel이 폴더 이름만 보여 줄 때의 전체 경로입니다. 툴팁과 스크린리더에 씁니다. */
+  repoTitle?: string;
   diff: { add: number; del: number } | null;
   statusLine: string[];
   chips?: ComposerChips;

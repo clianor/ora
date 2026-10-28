@@ -72,7 +72,7 @@ function ReplyText({ text }: TextMessagePartProps) {
 }
 
 function UserText({ text }: TextMessagePartProps) {
-  return <p className="text-foreground">{text}</p>;
+  return <p className="whitespace-pre-line text-foreground">{text}</p>;
 }
 
 function UserMessage() {

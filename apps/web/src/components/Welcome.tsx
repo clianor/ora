@@ -1,5 +1,6 @@
 import { ChevronDown, Folder, GitBranch } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
+import { basename } from '../lib/path.ts';
 import { navigate } from '../lib/route.ts';
 import { useStore } from '../store.tsx';
 import type { ComposerChips, OraStore, WorktreeContext } from '../model.ts';
@@ -74,10 +75,13 @@ export function NewSessionWelcome({ context, cwd }: { context: WorktreeContext; 
       chips={context.chips}
       context={
         <>
-          <span className={chipClass}>
+          <span className={chipClass} title={context.path}>
             <Folder aria-hidden className="size-3.5 text-foreground-muted" />
             <span className="font-mono text-[13px] leading-[18px] font-medium text-foreground-muted">
-              {context.path ?? '서버 기본 작업 폴더'}
+              {context.path === undefined ? '서버 기본 작업 폴더' : basename(context.path)}
+              {context.path !== undefined && context.path !== basename(context.path) && (
+                <span className="sr-only"> ({context.path})</span>
+              )}
             </span>
           </span>
           {context.branch !== undefined && (

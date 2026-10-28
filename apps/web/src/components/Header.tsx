@@ -48,6 +48,7 @@ function StageChip({ index }: { index: number }) {
 interface HeaderProps {
   title?: string;
   repoLabel?: string;
+  repoTitle?: string;
   stageIndex?: number | null;
   diff?: { add: number; del: number } | null;
   isCrashed?: boolean;
@@ -57,6 +58,7 @@ interface HeaderProps {
 export function Header({
   title,
   repoLabel,
+  repoTitle,
   stageIndex = null,
   diff = null,
   isCrashed = false,
@@ -74,7 +76,10 @@ export function Header({
       </button>
       {title && <h1 className="text-sm leading-5 font-semibold text-foreground">{title}</h1>}
       {repoLabel && (
-        <span className="text-[13px] leading-[18px] text-foreground-subtle">{repoLabel}</span>
+        <span title={repoTitle} className="text-[13px] leading-[18px] text-foreground-subtle">
+          {repoLabel}
+          {repoTitle && repoTitle !== repoLabel && <span className="sr-only"> ({repoTitle})</span>}
+        </span>
       )}
       {isCrashed && (
         <span className="flex h-6 items-center gap-1 rounded-[6px] bg-surface px-2 text-xs leading-4 font-medium text-foreground-muted">

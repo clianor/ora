@@ -151,6 +151,7 @@ function WorktreeTree({
     <>
       <a
         href={hashFor('new', { cwd: node.cwd })}
+        title={node.title}
         aria-current={isSelected ? 'page' : undefined}
         style={{ paddingLeft: 20 + stackIndent * depth }}
         className={cn(
@@ -172,6 +173,9 @@ function WorktreeTree({
           )}
         >
           {node.name}
+          {node.title && node.title !== node.name && (
+            <span className="sr-only"> ({node.title})</span>
+          )}
         </span>
         {node.add !== undefined && node.del !== undefined && (
           <DiffStat add={node.add} del={node.del} />

@@ -6,6 +6,7 @@ import { Sidebar } from './components/Sidebar.tsx';
 import { focusTodoPanel } from './components/TodoPanel.tsx';
 import { EmptyWelcome, NewSessionWelcome } from './components/Welcome.tsx';
 import { Workbench } from './components/Workbench.tsx';
+import { basename } from './lib/path.ts';
 import { navigate, useRouteState, type RouteState } from './lib/route.ts';
 import { useStore } from './store.tsx';
 
@@ -48,7 +49,8 @@ function NewScreen({ cwd }: { cwd?: string }) {
       <main className="flex min-w-0 flex-1 flex-col">
         <Header
           title="새 세션"
-          repoLabel={context.path}
+          repoLabel={context.path === undefined ? undefined : basename(context.path)}
+          repoTitle={context.path}
           onToggleSidebar={() => {
             setIsSidebarOpen(!isSidebarOpen);
           }}

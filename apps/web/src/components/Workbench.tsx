@@ -76,6 +76,7 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
         <Header
           title={record.title}
           repoLabel={view.repoLabel}
+          repoTitle={view.repoTitle}
           stageIndex={getStageIndex(view.events)}
           diff={view.diff}
           isCrashed={isCrashed}

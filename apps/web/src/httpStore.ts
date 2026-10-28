@@ -23,6 +23,7 @@ import {
 } from '@ora/protocol';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { buildThread, reuseMessages } from './events.ts';
+import { basename } from './lib/path.ts';
 import { permissionLabel } from './lib/status.ts';
 import type {
   OraActions,
@@ -109,11 +110,6 @@ async function requestJson<T>(
   return schema.parse(body);
 }
 
-function basename(path: string): string {
-  const parts = path.split('/').filter((part) => part !== '');
-  return parts.at(-1) ?? path;
-}
-
 /** 세션의 `repo` 경로로 저장소 그룹을 만들고, 그룹마다 그 작업 폴더 하나를 워크트리 행으로 둡니다(SPEC 2.7절). */
 function buildRepos(records: readonly SessionRecord[]): RepoNode[] {
   const groups = new Map<string, SessionRecord[]>();
@@ -123,8 +119,9 @@ function buildRepos(records: readonly SessionRecord[]): RepoNode[] {
   }
   return [...groups.entries()].map(([repo, list]) => {
     const worktree: WorktreeNode = {
-      name: repo === '' ? '작업 폴더 없음' : repo,
+      name: repo === '' ? '작업 폴더 없음' : basename(repo),
       cwd: repo === '' ? undefined : repo,
+      title: repo === '' ? undefined : repo,
       sessions: list.map((record) => ({ record, todoTitles: [] })),
       stack: [],
     };
@@ -203,7 +200,8 @@ export function createHttpStore(): OraStoreSource {
       todos: state.todos,
       approvals: state.approvals,
       questions: state.questions,
-      repoLabel: state.record.repo ?? '',
+      repoLabel: state.record.repo === undefined ? '' : basename(state.record.repo),
+      repoTitle: state.record.repo,
       diff: null,
       statusLine: buildStatusLine(state.events, state.maxSteps ?? info?.maxSteps),
       chips: {
