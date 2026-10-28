@@ -10,7 +10,7 @@
   "scripts": {
     "prepare": "lefthook install",
     "format": "prettier --write .",
-    "check": "pnpm run check:format && pnpm run check:types && pnpm run check:lint && pnpm run check:test && pnpm run check:arch && pnpm run check:unused && pnpm run check:paths && pnpm run check:licenses && pnpm run check:secrets",
+    "check": "pnpm run check:format && pnpm run check:types && pnpm run check:lint && pnpm run check:test && pnpm run check:arch && pnpm run check:unused && pnpm run check:paths && pnpm run check:licenses && pnpm run check:secrets && pnpm run check:agents && pnpm run check:claude-md",
     "check:format": "prettier --check .",
     "check:types": "tsc --noEmit && pnpm -r run typecheck",
     "check:lint": "eslint --max-warnings=0 .",
@@ -19,7 +19,9 @@
     "check:unused": "knip",
     "check:paths": "sh scripts/check-forbidden-paths.sh",
     "check:licenses": "node scripts/check-licenses.ts",
-    "check:secrets": "gitleaks dir . --no-banner --redact"
+    "check:secrets": "gitleaks dir . --no-banner --redact",
+    "check:agents": "agnix --strict .",
+    "check:claude-md": "node scripts/check-claude-md.ts"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

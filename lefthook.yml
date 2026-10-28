@@ -9,6 +9,9 @@ pre-commit:
       run: mise exec -- pnpm exec eslint --max-warnings=0 {staged_files}
     - name: secrets
       run: mise exec -- gitleaks git --staged --no-banner --redact
+    - name: agents
+      glob: '*.{md,json}'
+      run: mise exec -- pnpm run check:agents && mise exec -- pnpm run check:claude-md
 
 pre-push:
   jobs:
