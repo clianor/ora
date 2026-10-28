@@ -1,0 +1,201 @@
+import { createHash } from 'node:crypto';
+import { chmod, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, resolve, sep } from 'node:path';
+import { defineTool } from '@ora/core';
+import type { CommandRunner, Tool } from '@ora/core';
+import { z } from 'zod';
+
+export { createCommandRunner } from './command-runner.ts';
+
+export interface BuiltinToolOptions {
+  readonly runner: CommandRunner;
+  readonly shellTimeoutMs: number;
+  readonly maxOutputBytes: number;
+  readonly maxFileBytes: number;
+}
+
+const FORBIDDEN_SEGMENTS = ['.ssh', '.aws'];
+
+function matchesForbiddenName(path: string): boolean {
+  const name = basename(path);
+  return (
+    name === '.env' ||
+    name.startsWith('.env.') ||
+    name.endsWith('.pem') ||
+    name.endsWith('.key') ||
+    path.split(sep).some((segment) => FORBIDDEN_SEGMENTS.includes(segment))
+  );
+}
+
+async function isForbiddenPath(path: string): Promise<boolean> {
+  const real = await realpath(path).catch(() => path);
+  return matchesForbiddenName(path) || matchesForbiddenName(real);
+}
+
+function hashContent(content: Buffer | string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+/** 앞부분과 뒷부분만 남기고 가운데를 자른다. */
+function truncateMiddle(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= maxBytes) return text;
+  const half = Math.floor(maxBytes / 2);
+  const head = bytes.subarray(0, half).toString('utf8');
+  const tail = bytes.subarray(bytes.length - half).toString('utf8');
+  return `${head}\n[... 가운데 ${bytes.length - 2 * half}바이트를 잘랐습니다 ...]\n${tail}`;
+}
+
+/** 공통 접두·접미 줄을 뺀 단순 diff다. 최소 diff는 아니다. */
+function simpleDiff(path: string, before: string, after: string): string {
+  const oldLines = before.split('\n');
+  const newLines = after.split('\n');
+  let start = 0;
+  while (
+    start < oldLines.length &&
+    start < newLines.length &&
+    oldLines[start] === newLines[start]
+  ) {
+    start += 1;
+  }
+  let oldEnd = oldLines.length;
+  let newEnd = newLines.length;
+  while (oldEnd > start && newEnd > start && oldLines[oldEnd - 1] === newLines[newEnd - 1]) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+  const removed = oldLines.slice(start, oldEnd).map((line) => `-${line}`);
+  const added = newLines.slice(start, newEnd).map((line) => `+${line}`);
+  return [`--- ${path}`, `@@ line ${start + 1} @@`, ...removed, ...added].join('\n');
+}
+
+async function writeAtomic(path: string, content: string): Promise<void> {
+  const target = await realpath(path).catch(() => path);
+  const mode = (await stat(target).catch(() => undefined))?.mode;
+  const temporary = `${target}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporary, content, 'utf8');
+    if (mode !== undefined) await chmod(temporary, mode & 0o7777);
+    await rename(temporary, target);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
+  // file_edit이 읽은 뒤 바뀐 파일을 거부하도록 마지막으로 본 내용의 해시를 기억한다.
+  const seenHashes = new Map<string, string>();
+
+  const shell = defineTool({
+    name: 'shell',
+    description: '셸 명령을 실행한다. 종료 코드가 0이 아니어도 도구 오류가 아니라 결과다.',
+    tier: 'exec',
+    inputSchema: z.object({
+      command: z.string().min(1),
+      cwd: z.string().optional(),
+      timeoutMs: z.number().int().positive().optional(),
+    }),
+    async run(input, context) {
+      const result = await options.runner.run({
+        command: input.command,
+        cwd: resolve(context.cwd, input.cwd ?? '.'),
+        timeoutMs: input.timeoutMs ?? options.shellTimeoutMs,
+        signal: context.signal,
+      });
+      const status = result.timedOut ? 'timeout' : `exit code: ${result.exitCode ?? 'signal'}`;
+      const full = `${status}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
+      return {
+        status: result.timedOut ? 'timeout' : 'ok',
+        text: truncateMiddle(full, options.maxOutputBytes),
+        fullOutput: full,
+      };
+    },
+  });
+
+  const fileRead = defineTool({
+    name: 'file_read',
+    description: '파일을 줄 번호와 함께 읽는다. offset은 1부터 시작하는 줄 번호다.',
+    tier: 'read',
+    inputSchema: z.object({
+      path: z.string().min(1),
+      offset: z.number().int().positive().optional(),
+      limit: z.number().int().positive().optional(),
+    }),
+    async run(input, context) {
+      const path = resolve(context.cwd, input.path);
+      if (await isForbiddenPath(path))
+        return { status: 'error', text: `금지 구역입니다: ${input.path}` };
+      if ((await stat(path)).size > options.maxFileBytes) {
+        return { status: 'error', text: `파일이 ${options.maxFileBytes}바이트를 넘습니다.` };
+      }
+      const bytes = await readFile(path);
+      if (bytes.includes(0)) return { status: 'error', text: '바이너리 파일은 읽지 않습니다.' };
+      seenHashes.set(path, hashContent(bytes));
+      const first = input.offset ?? 1;
+      const lines = bytes
+        .toString('utf8')
+        .split('\n')
+        .slice(first - 1, input.limit === undefined ? undefined : first - 1 + input.limit);
+      return {
+        status: 'ok',
+        text: lines.map((line, index) => `${first + index}\t${line}`).join('\n'),
+      };
+    },
+  });
+
+  const fileWrite = defineTool({
+    name: 'file_write',
+    description: '파일을 새로 만들거나 전체를 바꾼다. 임시 파일에 쓴 뒤 이름을 바꿔 적용한다.',
+    tier: 'write',
+    inputSchema: z.object({ path: z.string().min(1), content: z.string() }),
+    async run(input, context) {
+      const path = resolve(context.cwd, input.path);
+      if (await isForbiddenPath(path))
+        return { status: 'error', text: `금지 구역입니다: ${input.path}` };
+      const before = await readFile(path, 'utf8').catch(() => undefined);
+      await writeAtomic(path, input.content);
+      seenHashes.set(path, hashContent(input.content));
+      const bytes = Buffer.byteLength(input.content, 'utf8');
+      const diff = before === undefined ? '' : `\n${simpleDiff(input.path, before, input.content)}`;
+      return { status: 'ok', text: `${bytes}바이트를 썼습니다.${diff}` };
+    },
+  });
+
+  const fileEdit = defineTool({
+    name: 'file_edit',
+    description:
+      '파일에서 oldText가 정확히 한 곳과 일치할 때 newText로 바꾼다. 먼저 file_read로 읽어야 하고, 읽은 뒤 파일이 바뀌었으면 거부한다.',
+    tier: 'write',
+    inputSchema: z.object({
+      path: z.string().min(1),
+      oldText: z.string().min(1),
+      newText: z.string(),
+    }),
+    async run(input, context) {
+      const path = resolve(context.cwd, input.path);
+      if (await isForbiddenPath(path))
+        return { status: 'error', text: `금지 구역입니다: ${input.path}` };
+      const seen = seenHashes.get(path);
+      if (seen === undefined)
+        return { status: 'error', text: '먼저 file_read로 파일을 읽어야 합니다.' };
+      const before = await readFile(path, 'utf8');
+      if (hashContent(before) !== seen) {
+        return { status: 'error', text: '읽은 뒤 파일이 바뀌었습니다. file_read로 다시 읽습니다.' };
+      }
+      const matches = before.split(input.oldText).length - 1;
+      if (matches !== 1) {
+        return {
+          status: 'error',
+          text: `oldText의 일치가 ${matches}곳입니다. 정확히 한 곳이어야 합니다.`,
+        };
+      }
+      const after = before.replace(input.oldText, () => input.newText);
+      await writeAtomic(path, after);
+      seenHashes.set(path, hashContent(after));
+      return { status: 'ok', text: simpleDiff(input.path, before, after) };
+    },
+  });
+
+  return [shell, fileRead, fileWrite, fileEdit];
+}
