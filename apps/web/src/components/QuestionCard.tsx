@@ -1,7 +1,7 @@
 import { CircleCheck, MessageCircleQuestion, Pencil, Square, SquareCheck } from 'lucide-react';
 import { Tabs } from 'radix-ui';
 import type { QuestionAnswer, QuestionRequest } from '@ora/protocol';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { cn } from '../lib/cn.ts';
 import { Button, KeyHint } from '../ui/button.tsx';
 
@@ -19,6 +19,7 @@ export function QuestionCard({ request, draft, onAnswer }: QuestionCardProps) {
     questions.map((_, index) => draft?.picks[index] ?? []),
   );
   const [texts, setTexts] = useState<string[]>(questions.map(() => ''));
+  const headingId = useId();
 
   const question = questions[current];
   if (!question) return null;
@@ -93,14 +94,16 @@ export function QuestionCard({ request, draft, onAnswer }: QuestionCardProps) {
         <span className="ml-auto text-xs leading-4 font-medium text-warning">답변 대기</span>
       </Tabs.Root>
       <div className="flex flex-col gap-0.5">
-        <h2 className="text-sm leading-5 font-semibold text-foreground">{question.question}</h2>
+        <h2 id={headingId} className="text-sm leading-5 font-semibold text-foreground">
+          <InlineCode text={question.question} />
+        </h2>
         <p className="text-xs leading-[18px] text-foreground-subtle">
           {question.multiSelect === true ? '여러 개를 고를 수 있습니다.' : '하나를 고릅니다.'}
         </p>
       </div>
       <div
         role={question.multiSelect === true ? 'group' : 'radiogroup'}
-        aria-label={question.question}
+        aria-labelledby={headingId}
         className="flex flex-col gap-1.5"
       >
         {question.options.map((option, index) => {
@@ -138,7 +141,9 @@ export function QuestionCard({ request, draft, onAnswer }: QuestionCardProps) {
                 </span>
               )}
               <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-sm leading-5 font-medium text-foreground">{option}</span>
+                <span className="text-sm leading-5 font-medium text-foreground">
+                  <InlineCode text={option} />
+                </span>
               </span>
               {question.multiSelect === true && (
                 <span
@@ -188,5 +193,20 @@ export function QuestionCard({ request, draft, onAnswer }: QuestionCardProps) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** 모델이 질문과 선택지에 `코드` 표기를 섞어 씁니다. 백틱 짝이 맞을 때만 그 구간을 코드 글꼴로 그립니다. */
+function InlineCode({ text }: { text: string }) {
+  const parts = text.split('`');
+  if (parts.length % 2 === 0) return text;
+  return parts.map((part, index) =>
+    index % 2 === 1 ? (
+      <code key={index} className="font-mono text-[13px]">
+        {part}
+      </code>
+    ) : (
+      part
+    ),
   );
 }
