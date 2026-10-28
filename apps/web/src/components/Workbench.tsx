@@ -146,7 +146,7 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
                 runAction(actions.cancelRun(sessionId, view.isStopping ? 'hard' : 'soft'));
               }}
             />
-            <StatusLine items={view.statusLine} />
+            <StatusLine items={view.statusLine} cache={view.cache} />
           </div>
         </ChatProvider>
       </main>

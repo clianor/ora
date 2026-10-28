@@ -23,6 +23,7 @@ import {
 } from '@ora/protocol';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { buildThread, reuseMessages } from './events.ts';
+import { buildCacheView } from './lib/cache.ts';
 import { basename } from './lib/path.ts';
 import { permissionLabel } from './lib/status.ts';
 import type {
@@ -204,6 +205,7 @@ export function createHttpStore(): OraStoreSource {
       repoTitle: state.record.repo,
       diff: null,
       statusLine: buildStatusLine(state.events, state.maxSteps ?? info?.maxSteps),
+      cache: buildCacheView(state.events),
       chips: {
         model: state.record.models[0]?.model,
         permission: permissionLabel[state.record.permissionMode],

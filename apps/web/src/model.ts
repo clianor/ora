@@ -8,6 +8,7 @@ import type {
   Todo,
 } from '@ora/protocol';
 import type { ThreadData } from './events.ts';
+import type { CacheView } from './lib/cache.ts';
 
 /** 입력창 칩에 적는 글자입니다. 서버가 주지 않는 값은 비워 두고, 비어 있으면 칩을 그리지 않습니다. */
 export interface ComposerChips {
@@ -70,6 +71,8 @@ export interface SessionView {
   repoTitle?: string;
   diff: { add: number; del: number } | null;
   statusLine: string[];
+  /** 프롬프트 캐시 적중 정보입니다. 계산할 수 없으면 null이고 상태 표시줄에서 숨깁니다. */
+  cache: CacheView | null;
   chips?: ComposerChips;
   placeholder?: string;
   initialSearch?: { query: string };

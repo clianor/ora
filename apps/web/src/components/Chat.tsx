@@ -12,6 +12,8 @@ import { ArrowUp, TriangleAlert, Cpu, Paperclip, Shield, Square } from 'lucide-r
 import { useEffect, type ReactNode } from 'react';
 import type { ComposerChips, SessionView } from '../model.ts';
 import { cn } from '../lib/cn.ts';
+import type { CacheView } from '../lib/cache.ts';
+import { CacheStat } from './CacheStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
 
 interface ChatProviderProps {
@@ -217,13 +219,23 @@ export function Composer({
   );
 }
 
-/** 입력창 바로 아래의 한 줄입니다. 스텝 수, 사용 모델, 격리 옵션을 가운뎃점으로 나눕니다. */
-export function StatusLine({ items }: { items: readonly string[] }) {
+/** 입력창 바로 아래의 한 줄입니다. 스텝 수, 사용 모델, 격리 옵션, 캐시 적중을 가운뎃점으로 나눕니다. */
+export function StatusLine({
+  items,
+  cache,
+}: {
+  items: readonly string[];
+  cache?: CacheView | null;
+}) {
+  const parts: ReactNode[] = [
+    ...items,
+    ...(cache ? [<CacheStat key="cache" cache={cache} />] : []),
+  ];
   return (
-    <p className="flex h-5 w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-subtle">
-      {items.flatMap((item, index) =>
-        index === 0 ? [item] : [<span key={`dot-${index}`}>·</span>, item],
+    <div className="flex h-5 w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-subtle">
+      {parts.flatMap((part, index) =>
+        index === 0 ? [part] : [<span key={`dot-${index}`}>·</span>, part],
       )}
-    </p>
+    </div>
   );
 }

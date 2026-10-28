@@ -1,4 +1,5 @@
 import { buildThread } from './events.ts';
+import { buildCacheView } from './lib/cache.ts';
 import type {
   Actor,
   EventOf,
@@ -170,6 +171,58 @@ const mathEvents: OraEvent[] = [
       },
     ],
   }),
+  makeMath('model_request', '09:02', 'engine', {
+    model: 'fake/scripted',
+    adapter: 'fake',
+    chainPosition: 0,
+    nativeToolCalls: true,
+    usage: {
+      outputTokens: 420,
+      uncachedInputTokens: 25200,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 8000,
+    },
+    durationMs: 2100,
+  }),
+  makeMath('model_request', '09:03', 'engine', {
+    model: 'fake/scripted',
+    adapter: 'fake',
+    chainPosition: 0,
+    nativeToolCalls: true,
+    usage: {
+      outputTokens: 380,
+      uncachedInputTokens: 900,
+      cacheReadInputTokens: 70000,
+      cacheCreationInputTokens: 2000,
+    },
+    durationMs: 1800,
+  }),
+  makeMath('model_request', '09:04', 'engine', {
+    model: 'fake/scripted',
+    adapter: 'fake',
+    chainPosition: 0,
+    nativeToolCalls: true,
+    usage: {
+      outputTokens: 210,
+      uncachedInputTokens: 700,
+      cacheReadInputTokens: 71200,
+      cacheCreationInputTokens: 1500,
+    },
+    durationMs: 1500,
+  }),
+  makeMath('model_request', '09:05', 'engine', {
+    model: 'fake/scripted',
+    adapter: 'fake',
+    chainPosition: 0,
+    nativeToolCalls: true,
+    usage: {
+      outputTokens: 160,
+      uncachedInputTokens: 300,
+      cacheReadInputTokens: 41200,
+      cacheCreationInputTokens: 1100,
+    },
+    durationMs: 1300,
+  }),
   makeMath('tool_call', '09:06', 'model', {
     callId: 'c3',
     tool: 'bash',
@@ -219,7 +272,7 @@ const designChips = { model: '기본 모델', effort: 'medium', permission: '승
 
 type ViewBase = Omit<
   SessionView,
-  'thread' | 'approvals' | 'questions' | 'isStopping' | 'error' | 'steerFailure'
+  'thread' | 'approvals' | 'questions' | 'isStopping' | 'error' | 'steerFailure' | 'cache'
 >;
 
 /** 기다리는 요청(승인, 질문)을 정하고 이벤트에서 채팅 메시지를 만들어 화면 데이터를 완성합니다. */
@@ -236,6 +289,7 @@ function finishView(
   return {
     ...base,
     chips: designChips,
+    cache: buildCacheView(base.events, base.record.id === mathId ? '1시간' : undefined),
     thread: buildThread(base.events, waitingCallIds),
     approvals,
     questions,
