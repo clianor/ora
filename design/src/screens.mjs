@@ -22,40 +22,69 @@ import {
   windowFrame,
 } from './kit.mjs';
 
-const GROUPS = [
+const REPOS = [
   {
     repo: 'ora',
-    rows: [
-      { title: 'main', add: 4, del: 0 },
-      { title: 'feat/engine-slice2', add: 1930, del: 350, meta: '검증 3/3, 완료', dot: 'ok' },
+    worktrees: [
+      { name: 'main', add: 4, del: 0 },
+      {
+        name: 'feat/engine-slice2',
+        add: 1930,
+        del: 350,
+        sessions: [{ title: '엔진 슬라이스 2 구현', meta: '검증 3/3, 완료', dot: 'ok' }],
+      },
     ],
   },
   {
     repo: 'math-demo',
-    rows: [
+    worktrees: [
       {
-        title: 'add 함수 버그 수정',
+        name: 'main',
         add: 1,
         del: 1,
-        meta: '승인 대기',
-        selected: true,
-        dot: 'warn',
+        sessions: [{ title: 'add 함수 버그 수정', meta: '승인 대기', dot: 'warn' }],
       },
-      { title: 'README 설치 절차 갱신', add: 12, del: 3, meta: '검증 2/2, 완료', dot: 'ok' },
+      {
+        name: 'docs/readme-pnpm',
+        add: 12,
+        del: 3,
+        sessions: [{ title: 'README 설치 절차 갱신', meta: '검증 2/2, 완료', dot: 'ok' }],
+      },
     ],
   },
   {
     repo: 'notes',
-    rows: [
-      { title: '검색 도구 타임아웃 조사', add: 0, del: 0, meta: '실패, 1시간 전', dot: 'del' },
+    worktrees: [
+      {
+        name: 'main',
+        add: 0,
+        del: 0,
+        sessions: [{ title: '검색 도구 타임아웃 조사', meta: '실패, 1시간 전', dot: 'del' }],
+      },
     ],
   },
 ];
+
+/** 사이드바 예시 데이터에 선택 상태를 입힌다. worktree는 'repo/이름', patch는 세션 제목별로 덮어쓸 값이다. */
+function repos({ worktree = null, session = null, patch = {} } = {}) {
+  return REPOS.map((g) => ({
+    ...g,
+    worktrees: g.worktrees.map((w) => ({
+      ...w,
+      selected: `${g.repo}/${w.name}` === worktree,
+      sessions: (w.sessions ?? []).map((s) => ({
+        ...s,
+        ...patch[s.title],
+        selected: s.title === session,
+      })),
+    })),
+  }));
+}
 const STATUS = [['스텝 12/50'], ['기본 모델 사용 중'], ['격리 harness']];
 
 function sessionMain(c) {
   return (
-    header(c, { title: 'add 함수 버그 수정', repo: 'math-demo', stage: 4, diff: [1, 1] }) +
+    header(c, { title: 'add 함수 버그 수정', repo: 'math-demo · main', stage: 4, diff: [1, 1] }) +
     thread(
       c,
       [
@@ -98,35 +127,41 @@ const SESSION_TODOS = [
   { id: 't3', title: '변경 요약을 남긴다', status: 'pending' },
 ];
 
-function sessionScreen(mode) {
-  const c = palette(mode);
-  return windowFrame(c, `02 Session · ${mode}`, {
-    side: sidebar(c, { groups: GROUPS }),
+function sessionScreen() {
+  const c = palette('Dark');
+  return windowFrame(c, '02 Session · Dark', {
+    side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
     main: sessionMain(c),
     panel: evidence(c, { todos: SESSION_TODOS, current: 't1' }),
   });
 }
 
+/** 질문 카드. 질문이 여러 개면 위쪽 탭으로 오가고, 선택지는 하나만 고르거나 여러 개를 고르는 두 가지다. */
 function questionCard(c) {
+  const tab = (label, state) => {
+    if (state === 'done')
+      return `<Frame w="hug" h={26} flex="row" items="center" gap={6} px={10} rounded={6}>${I(c, 'circle-check', 'ok', 13)}${T(c, 12, 16, 500, 'ink2', label)}</Frame>`;
+    return `<Frame w="hug" h={26} flex="row" items="center" gap={6} px={10} rounded={6} bg="${c.window}">${T(c, 12, 16, 600, 'ink3', '2', '', mono)}${T(c, 12, 16, 600, 'ink', label)}</Frame>`;
+  };
   const option = (
     n,
     title,
     desc,
-    focused,
+    { checked, focused },
   ) => `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={12} py={10} rounded={10} bg="${focused ? c.hover : c.raised}" ${focused ? `stroke="${c.ring}" strokeWidth={2} strokeAlign="inside"` : ''}>
-<Frame w={22} h={22} flex="row" items="center" justify="center" rounded={6} bg="${c.window}">${T(c, 12, 16, 600, 'ink2', String(n), '', mono)}</Frame>
+${I(c, checked ? 'square-check' : 'square', checked ? 'ink' : 'ink3', 18)}
 <Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 14, 20, 500, 'ink', title)}${T(c, 12, 16, 400, 'ink3', desc)}</Frame>
-${focused ? I(c, 'check', 'ink', 16) : ''}</Frame>`;
+${T(c, 12, 16, 500, 'ink3', String(n), '', mono)}</Frame>`;
   return `<Frame name="Question" w="fill" h="hug" flex="col" gap={12} p={16} rounded={14} bg="${c.raised}">
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'message-circle-question', 'ink2', 16)}${T(c, 14, 20, 600, 'ink', '어떤 상황을 타임아웃으로 볼까요?')}${SP}${T(c, 12, 16, 500, 'warn', '답변 대기')}</Frame>
-${T(c, 12, 18, 400, 'ink3', '기준에 따라 재현 명령과 검증 명령이 달라집니다.')}
+<Frame w="fill" h="hug" flex="row" items="center" gap={4}>${I(c, 'message-circle-question', 'ink2', 16)}<Frame w={4} h={1} />${tab('타임아웃 기준', 'done')}${tab('조사 범위', 'current')}${SP}${T(c, 12, 16, 500, 'warn', '답변 대기')}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 14, 20, 600, 'ink', '어디까지 조사할까요?')}${T(c, 12, 18, 400, 'ink3', '여러 개를 고를 수 있습니다. 첫 질문의 답은 30초입니다.')}</Frame>
 <Frame w="fill" h="hug" flex="col" gap={6}>
-${option(1, '응답이 10초를 넘을 때', 'CLI 기본 타임아웃과 같습니다', false)}
-${option(2, '응답이 30초를 넘을 때', 'MCP 기본 타임아웃과 같습니다', true)}
-${option(3, '오류 응답이 돌아올 때', '시간과 관계없이 실패한 호출을 모두 봅니다', false)}
+${option(1, '검색 도구 코드', 'src/search.ts와 호출하는 쪽을 읽습니다', { checked: true, focused: false })}
+${option(2, 'MCP 서버 설정', '서버별 타임아웃과 재시도 값을 확인합니다', { checked: true, focused: true })}
+${option(3, '네트워크 기록', '느린 요청이 실제로 있었는지 로그로 확인합니다', { checked: false, focused: false })}
 <Frame w="fill" h={40} flex="row" items="center" gap={10} px={12} rounded={10} bg="${c.window}">${I(c, 'pencil', 'ink3', 14)}${T(c, 13, 18, 400, 'ink3', '직접 입력합니다')}</Frame>
 </Frame>
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '숫자 키로 고르고 Enter로 답합니다')}${SP}${button(c, 'primary', '답하기', { keyHint: '↵' })}</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '2개 골랐습니다. Space로 고르고 Enter로 보냅니다')}${SP}${button(c, 'ghost', '이전 질문')}${button(c, 'primary', '답 보내기', { keyHint: '↵' })}</Frame>
 </Frame>`;
 }
 
@@ -141,19 +176,26 @@ function questionScreen() {
   const groups = [
     {
       repo: 'notes',
-      rows: [
+      worktrees: [
         {
-          title: '검색 도구 타임아웃 조사',
-          meta: '답변 대기, 제목 일치',
-          selected: true,
-          dot: 'warn',
+          name: 'main',
+          add: 0,
+          del: 0,
+          sessions: [
+            {
+              title: '검색 도구 타임아웃 조사',
+              meta: '답변 대기, 제목 일치',
+              selected: true,
+              dot: 'warn',
+            },
+            { title: 'MCP 연결 끊김 조사', meta: '완료, 3일 전, 할 일 일치', dot: 'ok' },
+          ],
         },
-        { title: 'MCP 연결 끊김 조사', meta: '완료, 3일 전, todo 일치', dot: 'ok' },
       ],
     },
   ];
   const main =
-    header(c, { title: '검색 도구 타임아웃 조사', repo: 'notes', stage: 0 }) +
+    header(c, { title: '검색 도구 타임아웃 조사', repo: 'notes · main', stage: 0 }) +
     thread(
       c,
       [
@@ -161,7 +203,7 @@ function questionScreen() {
         `<Frame w="fill" h="hug" flex="col" gap={4}>${toolLine(c, { icon: 'file-text', verb: '읽기', target: 'src/search.ts' })}${toolLine(c, { icon: 'search', verb: '검색', target: 'timeout' })}</Frame>`,
         reply(
           c,
-          '검색 도구 호출이 기대보다 오래 걸려 실패하는 원인을 찾는 작업으로 이해했습니다. 시작하기 전에 타임아웃 기준을 하나 정해야 합니다.',
+          '검색 도구 호출이 기대보다 오래 걸려 실패하는 원인을 찾는 작업으로 이해했습니다. 시작하기 전에 두 가지를 정해야 합니다.',
         ),
         questionCard(c),
       ],
@@ -177,45 +219,28 @@ function questionScreen() {
   });
 }
 
-function field(c, label, control, hint = '설정 기본값') {
-  return `<Frame w="fill" h={44} flex="row" items="center" gap={16}>${T(c, 13, 18, 500, 'ink2', label, 'w={112}')}${control}${SP}${T(c, 12, 16, 400, 'ink3', hint)}</Frame>`;
-}
-function select(c, icon, value, caret = true) {
-  return `<Frame w={240} h={32} flex="row" items="center" gap={8} px={10} rounded={8} bg="${c.raised}">${icon ? I(c, icon, 'ink2', 14) : ''}${T(c, 13, 18, 400, 'ink', value, 'grow={1}')}${caret ? I(c, 'chevron-down', 'ink3', 12) : ''}</Frame>`;
-}
-function segmented(c, items, selected, font = undefined) {
-  const item = ([label, icon], i) => {
-    const on = i === selected;
-    return `<Frame w="hug" h={28} grow={1} flex="row" items="center" justify="center" gap={6} px={10} rounded={6} ${on ? `bg="${c.window}" shadow="0 1 2 #0000001F"` : ''}>${icon ? I(c, icon, on ? 'ink' : 'ink3', 14) : ''}${T(c, 13, 18, on ? 600 : 500, on ? 'ink' : 'ink3', label, '', font)}</Frame>`;
-  };
-  return `<Frame w="hug" h={32} flex="row" items="center" gap={2} p={2} rounded={8} bg="${c.raised}">${items.map(item).join('')}</Frame>`;
+/** 첫 화면과 워크트리별 새 세션 화면이 함께 쓰는 가운데 영역이다. context는 입력창 위에 놓을 칩 줄이다. */
+function welcome(c, context) {
+  const key = (k, label) =>
+    `<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${T(c, 12, 16, 500, 'ink2', k, '', mono)}${T(c, 12, 16, 400, 'ink3', label)}</Frame>`;
+  return `<Frame name="Welcome" w="fill" h="fill" flex="col" items="center" justify="center" gap={20} pb={80}>
+<Frame w={720} h="hug" flex="col" gap={6}>${T(c, 24, 32, 600, 'ink', '무엇을 할까요?')}${T(c, 14, 22, 400, 'ink3', 'Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를 보고합니다.')}</Frame>
+<Frame w={720} h="hug" flex="col" gap={8}>
+<Frame w="fill" h="hug" flex="row" items="center" gap={6}>${context}</Frame>
+${composer(c)}
+</Frame>
+<Frame w={720} h="hug" flex="row" gap={20} px={14}>${key('⌘K', '명령 팔레트')}${key('⌘N', '새 세션')}${key('⌘,', '설정')}</Frame>
+</Frame>`;
 }
 
 function newSessionScreen() {
   const c = palette('Dark');
-  const groups = GROUPS.map((g) => ({
-    ...g,
-    rows: g.rows.map((r) => ({ ...r, selected: false })),
-  }));
-  const form = `<Frame name="NewSessionForm" w="fill" h="fill" flex="col" items="center" pt={24}>
-<Frame w={640} h="hug" flex="col" gap={20}>
-<Frame w="fill" h="hug" flex="col" gap={8}>${T(c, 13, 18, 500, 'ink2', '작업 요청')}
-<Frame w="fill" h={132} flex="col" p={14} rounded={14} bg="${c.raised}">${T(c, 15, 24, 400, 'ink', 'README의 설치 절차를 pnpm 기준으로 갱신하고, 예제가 실제로 도는지 확인해 주세요.', 'w="fill" textAutoResize="height"')}</Frame></Frame>
-<Frame w="fill" h="hug" flex="col">
-${field(c, '저장소', select(c, 'folder', 'math-demo'), '마지막으로 쓴 저장소')}
-${field(c, '기준 브랜치', select(c, 'git-branch', 'main'))}
-${field(c, '모델', select(c, 'cpu', '기본 모델'))}
-${field(c, '카테고리', select(c, 'layers', '자동'), 'Ora가 요청을 보고 고릅니다')}
-${field(c, '권한 모드', segmented(c, [['항상 묻기'], ['쓰기 허용'], ['승인 생략']], 2))}
-${field(c, '격리', segmented(c, [['none'], ['harness'], ['clean-home']], 1, mono))}
-${field(c, '비용 상한', select(c, null, '없음', false))}
-</Frame>
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '항목마다 설정 파일의 기본값을 미리 채웠습니다')}${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '세션 시작', { keyHint: '⌘↵' })}</Frame>
-</Frame>
-</Frame>`;
+  const chip = (icon, label, extra = '') =>
+    `<Frame w="hug" h={28} flex="row" items="center" gap={6} px={10} rounded={8} bg="${c.raised}">${I(c, icon, 'ink2', 14)}${T(c, 13, 18, 500, 'ink2', label, '', mono)}${extra}</Frame>`;
+  const context = `${chip('folder', '~/Desktop/ora')}${chip('git-branch', 'main', T(c, 12, 16, 500, 'add', '+4', '', mono) + T(c, 12, 16, 500, 'del', '−0', '', mono))}${T(c, 12, 16, 400, 'ink3', '이 워크트리에서 시작합니다', 'pl={6}')}`;
   return windowFrame(c, '04 New Session · Dark', {
-    side: sidebar(c, { groups }),
-    main: header(c, { title: '새 세션' }) + form,
+    side: sidebar(c, { groups: repos({ worktree: 'ora/main' }) }),
+    main: header(c, { title: '새 세션', repo: 'ora · main' }) + welcome(c, context),
   });
 }
 
@@ -223,33 +248,23 @@ function emptyScreen() {
   const c = palette('Dark');
   const chip = (icon, label) =>
     `<Frame w="hug" h={28} flex="row" items="center" gap={6} px={10} rounded={8} bg="${c.raised}">${I(c, icon, 'ink2', 14)}${T(c, 13, 18, 500, 'ink2', label)}${I(c, 'chevron-down', 'ink3', 12)}</Frame>`;
-  const key = (k, label) =>
-    `<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${T(c, 12, 16, 500, 'ink2', k, '', mono)}${T(c, 12, 16, 400, 'ink3', label)}</Frame>`;
-  const main = `${header(c)}<Frame name="Welcome" w="fill" h="fill" flex="col" items="center" justify="center" gap={20} pb={80}>
-<Frame w={720} h="hug" flex="col" gap={6}>${T(c, 24, 32, 600, 'ink', '무엇을 할까요?')}${T(c, 14, 22, 400, 'ink3', 'Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를 보고합니다.')}</Frame>
-<Frame w={720} h="hug" flex="col" gap={8}>
-<Frame w="fill" h="hug" flex="row" gap={6}>${chip('folder', 'math-demo')}${chip('git-branch', 'main')}</Frame>
-${composer(c)}
-</Frame>
-<Frame w={720} h="hug" flex="row" gap={20} px={14}>${key('⌘K', '명령 팔레트')}${key('⌘N', '새 세션 폼')}${key('⌘,', '설정')}</Frame>
-</Frame>`;
-  return windowFrame(c, '05 Empty · Dark', { side: sidebar(c, { empty: true }), main });
+  return windowFrame(c, '05 Empty · Dark', {
+    side: sidebar(c, { empty: true }),
+    main: header(c) + welcome(c, chip('folder', 'math-demo') + chip('git-branch', 'main')),
+  });
 }
 
 function crashedScreen() {
   const c = palette('Dark');
-  const groups = GROUPS.map((g) => ({
-    ...g,
-    rows: g.rows.map((r) =>
-      r.title === 'README 설치 절차 갱신'
-        ? { ...r, meta: '강제 종료, 재개 가능', selected: true, dot: 'warn' }
-        : { ...r, selected: false },
-    ),
-  }));
-  const badge = `<Frame w="hug" h={24} flex="row" items="center" gap={4} px={8} rounded={6} bg="${c.raised}">${I(c, 'circle-pause', 'ink2', 12)}${T(c, 12, 16, 500, 'ink2', '강제 종료')}</Frame>`;
+  const title = 'README 설치 절차 갱신';
+  const groups = repos({
+    session: title,
+    patch: { [title]: { meta: '중간에 멈춤, 재개 가능', dot: 'warn' } },
+  });
+  const badge = `<Frame w="hug" h={24} flex="row" items="center" gap={4} px={8} rounded={6} bg="${c.raised}">${I(c, 'circle-pause', 'ink2', 12)}${T(c, 12, 16, 500, 'ink2', '멈춤')}</Frame>`;
   const aborted = `${I(c, 'circle-pause', 'ink3', 14)}${T(c, 12, 16, 500, 'ink3', 'aborted', '', mono)}`;
   const notice = `<Frame name="ResumeNotice" w="fill" h="hug" flex="col" gap={12} p={16} rounded={14} bg="${c.raised}">
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'triangle-alert', 'warn', 16)}${T(c, 14, 20, 600, 'ink', '하드 킬로 세션을 멈췄습니다')}${SP}${T(c, 12, 16, 400, 'ink3', '10:42')}</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'triangle-alert', 'warn', 16)}${T(c, 14, 20, 600, 'ink', '작업이 중간에 멈췄습니다')}${SP}${T(c, 12, 16, 400, 'ink3', '10:42')}</Frame>
 ${T(c, 13, 20, 400, 'ink2', '실행 중이던 도구 호출 1개를 aborted로 기록했습니다. 작업 폴더의 변경은 그대로 있습니다.', 'w="fill" textAutoResize="height"')}
 <Frame w="fill" h="hug" flex="col" gap={4} px={12} py={10} rounded={10} bg="${c.window}">
 <Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 500, 'ink3', '재개 지점')}${T(c, 13, 18, 500, 'ink', 't2 README 예제 출력을 확인한다')}</Frame>
@@ -258,13 +273,7 @@ ${T(c, 12, 16, 400, 'ink3', '마지막 검증 증거가 있는 t1 다음부터 �
 <Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '기록만 보기')}${button(c, 'primary', 't2부터 재개', { icon: 'rotate-ccw' })}</Frame>
 </Frame>`;
   const main =
-    header(c, {
-      title: 'README 설치 절차 갱신',
-      repo: 'math-demo',
-      stage: 5,
-      diff: [12, 3],
-      badge,
-    }) +
+    header(c, { title, repo: 'math-demo · docs/readme-pnpm', stage: 5, diff: [12, 3], badge }) +
     thread(
       c,
       [
@@ -307,34 +316,76 @@ ${T(c, 12, 16, 400, 'ink3', '마지막 검증 증거가 있는 t1 다음부터 �
   });
 }
 
-function themeScreen() {
-  const c = palette('Light');
-  const menu = `<Frame name="ThemeMenu" w="fill" h="hug" flex="col" gap={10} p={12} rounded={12} bg="${c.window}" shadow="0 8 24 #00000024">
-${T(c, 12, 16, 500, 'ink3', '테마')}
-${segmented(
-  c,
-  [
-    ['라이트', 'sun'],
-    ['다크', 'moon'],
-    ['시스템', 'monitor'],
-  ],
-  2,
-).replace('w="hug" h={32}', 'w="fill" h={32}')}
-${T(c, 12, 16, 400, 'ink3', '시스템은 OS 설정을 따르고, OS 설정이 바뀌면 바로 반영합니다.', 'w={224} textAutoResize="height"')}
+/** 모드 미리보기. 창 하나를 줄여 그린다. 시스템은 왼쪽 절반을 라이트, 오른쪽 절반을 다크로 그린다. */
+function modeThumb(c, mode, selected) {
+  const half = (p, w, withSidebar) =>
+    `<Frame w={${w}} h="fill" flex="row" bg="${p.window}">${withSidebar ? `<Frame w={20} h="fill" bg="${p.sidebar}" />` : ''}<Frame w="fill" h="fill" flex="col" gap={5} p={8}><Frame w={40} h={4} rounded={2} bg="${p.ink3}" /><Frame w={28} h={4} rounded={2} bg="${p.line}" /><Frame w="fill" h="fill" /><Frame w="fill" h={10} rounded={4} bg="${p.raised}" /></Frame></Frame>`;
+  const L = palette('Light');
+  const D = palette('Dark');
+  const body = {
+    system: half(L, 48, true) + half(D, 48, false),
+    light: half(L, 96, true),
+    dark: half(D, 96, true),
+  }[mode];
+  const label = { system: '시스템', light: '라이트', dark: '다크' }[mode];
+  return `<Frame w="hug" h="hug" flex="col" items="center" gap={8}>
+<Frame w={96} h={60} flex="row" rounded={8} overflow="hidden" ${selected ? `stroke="${c.ink}" strokeWidth={2} strokeAlign="outside"` : `stroke="${c.line}" strokeWidth={1} strokeAlign="inside"`}>${body}</Frame>
+${T(c, 12, 16, selected ? 600 : 500, selected ? 'ink' : 'ink3', label)}</Frame>`;
+}
+
+function settingsNav(c, current) {
+  const lights = ['#FF5F57', '#FEBC2E', '#28C840']
+    .map((x) => `<Ellipse w={12} h={12} bg="${x}" />`)
+    .join('');
+  const item = ([icon, label]) => {
+    const on = label === current;
+    return `<Frame w="fill" h={32} flex="row" items="center" gap={10} px={10} rounded={8} bg="${on ? c.hover : c.sidebar}">${I(c, icon, on ? 'ink' : 'ink2', 15)}${T(c, 13, 18, on ? 500 : 400, on ? 'ink' : 'ink2', label)}</Frame>`;
+  };
+  const section = (title, items) =>
+    `<Frame w="fill" h="hug" flex="col" gap={1}><Frame w="fill" h={28} flex="row" items="center" px={10}>${T(c, 12, 16, 500, 'ink3', title)}</Frame>${items.map(item).join('')}</Frame>`;
+  return `<Frame name="SettingsNav" w={264} h="fill" flex="col" gap={16} pt={16} pb={12} px={8} bg="${c.sidebar}">
+<Frame w="fill" h={20} flex="row" items="center" gap={8} px={10}>${lights}${SP}</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8} px={6} pt={6}>${I(c, 'arrow-left', 'ink2', 16)}${T(c, 18, 26, 600, 'ink', '설정')}</Frame>
+<Frame w="fill" h={32} flex="row" items="center" gap={8} px={10} rounded={8} bg="${c.raised}">${I(c, 'search', 'ink3', 14)}${T(c, 13, 18, 400, 'ink3', '검색')}</Frame>
+${section('앱', [
+  ['settings', '일반'],
+  ['palette', '모양'],
+  ['keyboard', '키보드 단축키'],
+  ['bell', '알림'],
+])}
+${section('엔진', [
+  ['cpu', '모델'],
+  ['shield', '권한'],
+  ['box', '격리'],
+  ['gauge', '비용 상한'],
+  ['plug', 'MCP'],
+  ['sparkles', '스킬'],
+  ['brain', '기억'],
+])}
 </Frame>`;
-  return windowFrame(c, '07 Theme · Light', {
-    side: sidebar(c, { groups: GROUPS, popover: menu }),
-    main: sessionMain(c),
-    panel: evidence(c, { todos: SESSION_TODOS, current: 't1' }),
-  });
+}
+
+function settingsScreen() {
+  const c = palette('Light');
+  const content = `<Frame name="Appearance" w="fill" h="fill" flex="col" items="center" pt={72}>
+<Frame w={640} h="hug" flex="col" gap={24}>
+${T(c, 24, 32, 600, 'ink', '모양')}
+<Frame w="fill" h="hug" flex="col" gap={10}>${T(c, 13, 18, 500, 'ink2', '화면 스타일')}
+<Frame w="fill" h="hug" flex="row" items="center" gap={16} px={16} py={14} rounded={14} bg="${c.raised}">
+<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 14, 20, 500, 'ink', '모드')}${T(c, 12, 16, 400, 'ink3', '시스템은 OS 설정을 따르고, OS 설정이 바뀌면 바로 반영합니다.', 'w={260} textAutoResize="height"')}</Frame>
+${modeThumb(c, 'system', true)}${modeThumb(c, 'light', false)}${modeThumb(c, 'dark', false)}
+</Frame></Frame>
+</Frame>
+</Frame>`;
+  return windowFrame(c, '07 Settings · Light', { side: settingsNav(c, '모양'), main: content });
 }
 
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
-  { file: 'session-dark', jsx: () => sessionScreen('Dark') },
+  { file: 'session-dark', jsx: sessionScreen },
   { file: 'question-dark', jsx: questionScreen },
   { file: 'new-session-dark', jsx: newSessionScreen },
   { file: 'empty-dark', jsx: emptyScreen },
   { file: 'crashed-dark', jsx: crashedScreen },
-  { file: 'theme-light', jsx: themeScreen },
+  { file: 'settings-light', jsx: settingsScreen },
 ];

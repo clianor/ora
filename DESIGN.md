@@ -217,9 +217,9 @@ components:
 
 **Creative North Star: "The Quiet Workbench"**
 
-Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 글이 주인공이고, 색은 상태를 알릴 때만 나타납니다. 이 방향은 Paseo, ChatGPT, Claude, Orca가 공유하는 문법을 따릅니다. 승인된 시안은 `design/previews/session-dark.png`와 `theme-light.png`이고, 컴포넌트 상태는 `components-dark.png`에 있습니다. 시안 원본은 `design/src/`의 생성 코드입니다. OpenPencil 0.16은 저장한 `.fig`를 다시 열면 글자를 다른 글리프로 그리므로, 시안을 고칠 때는 생성 코드를 고쳐 다시 그립니다.
+Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 글이 주인공이고, 색은 상태를 알릴 때만 나타납니다. 이 방향은 Paseo, ChatGPT, Claude, Orca가 공유하는 문법을 따릅니다. 승인된 시안은 `design/previews/session-dark.png`이고, 컴포넌트 상태는 `components-dark.png`에 있습니다. 시안 원본은 `design/src/`의 생성 코드입니다. OpenPencil 0.16은 저장한 `.fig`를 다시 열면 글자를 다른 글리프로 그리므로, 시안을 고칠 때는 생성 코드를 고쳐 다시 그립니다.
 
-영역은 테두리 대신 배경 밝기로 나눕니다. 응답 글에는 상자를 두르지 않고, 도구 호출은 한 줄로 줄입니다. 화면 구성은 왼쪽 사이드바(264px), 가운데 대화(본문 너비 720px), 오른쪽 todo·증거 패널(340px)입니다. 창은 1440 × 900 시안 기준이고 모서리 반경은 12px입니다.
+영역은 테두리 대신 배경 밝기로 나눕니다. 응답 글에는 상자를 두르지 않고, 도구 호출은 한 줄로 줄입니다. 화면 구성은 왼쪽 사이드바(264px), 가운데 대화(본문 너비 720px), 오른쪽 할 일 패널(340px)입니다. 창은 1440 × 900 시안 기준이고 모서리 반경은 12px입니다.
 
 테마는 `light`, `dark`, `system` 셋이고 기본값은 `system`입니다. 다크 값을 먼저 정했고, 라이트는 같은 토큰 이름에 다른 값을 줍니다. 아래 색 이름은 토큰 파일의 이름과 같습니다.
 
@@ -242,7 +242,7 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 ### Neutral
 
 - **Window** (`background`): 대화 영역과 앱 창의 바탕입니다. 승인 카드 안의 명령 상자도 이 색을 씁니다.
-- **Sidebar** (`sidebar`): 사이드바와 오른쪽 todo·증거 패널의 바탕입니다.
+- **Sidebar** (`sidebar`): 사이드바와 오른쪽 할 일 패널의 바탕입니다.
 - **Raised** (`surface`): 사용자 말풍선, 승인 카드, 입력창, 헤더 칩처럼 한 단계 올라온 면입니다.
 - **Sunken** (`surface-sunken`): diff 블록처럼 한 단계 들어간 면입니다.
 - **Hover** (`surface-hover`): 선택된 세션 행, 선택된 todo 행, 보조 버튼의 배경입니다.
@@ -373,9 +373,9 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 - **전송·중지 버튼:** 지름 30px 원, 배경 `primary`입니다. 대기 중에는 위쪽 화살표 16px, 실행 중에는 정사각형 12px(`primary-foreground`)을 그립니다.
 - **실행 중 안내문:** "조향 메시지를 입력합니다. 현재 스텝이 끝난 뒤 반영합니다"입니다. 실행 중에 보낸 입력은 조향 메시지입니다(SPEC 2.9절).
 
-### todo·증거 행
+### 할 일 행
 
-- 오른쪽 패널은 너비 340px, 배경 `sidebar`입니다. 상단 탭 줄은 높이 48px, 좌우 16px이고, 선택된 탭 "todo와 증거"는 Label 600 `foreground`, 나머지 탭(변경, 파일)은 Label 500 `foreground-subtle`입니다. 오른쪽에 `완료/전체`(Code Stat 크기, `foreground-muted`)를 놓습니다.
+- 오른쪽 패널은 너비 340px, 배경 `sidebar`입니다. 상단 탭 줄은 높이 48px, 좌우 16px이고, 선택된 탭 "할 일"은 Label 600 `foreground`, 나머지 탭(변경, 파일)은 Label 500 `foreground-subtle`입니다. 오른쪽에 `완료/전체`(Code Stat 크기, `foreground-muted`)를 놓습니다. 각 할 일의 증거(검증 명령, 종료 코드, 출처)는 행 안에 보입니다.
 - 진행 막대: 높이 3px, 좌우 16px, 트랙 `border`, 채움 `success`입니다.
 - 행: 반경 `md`, 안쪽 여백 10px, 간격 10px. 활성 행은 배경 `surface-hover`, 나머지는 `sidebar`입니다. 행 사이 간격은 2px입니다.
 - 행 구성: 상태 아이콘 16px, 제목(13/19, 500, `foreground`), 상태 라벨(Caption)과 "출처 user·repo·model"(Meta, `foreground-subtle`), 검증 명령(Code 12px 크기, `foreground-muted`)과 결과(Code Stat 크기)를 놓습니다.

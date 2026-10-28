@@ -57,18 +57,20 @@ export const mono = M;
 
 const STATUS_DOT = { ok: 'ok', warn: 'warn', del: 'del', none: null };
 
-function sessionRow(
-  c,
-  { title, add = null, del = null, meta = null, selected = false, dot = 'none' },
-) {
-  const stat =
-    add === null
-      ? ''
-      : T(c, 12, 16, 500, 'add', '+' + add, '', M) + T(c, 12, 16, 500, 'del', '−' + del, '', M);
+function stat(c, add, del) {
+  return T(c, 12, 16, 500, 'add', '+' + add, '', M) + T(c, 12, 16, 500, 'del', '−' + del, '', M);
+}
+
+function sessionRow(c, { title, meta = null, selected = false, dot = 'none' }) {
   const dotColor = STATUS_DOT[dot];
-  return `<Frame w="fill" h="hug" flex="col" gap={2} pl={32} pr={10} py={6} rounded={8} bg="${selected ? c.hover : c.sidebar}">
-<Frame w="fill" h="hug" flex="row" items="center" gap={6}>${dotColor ? `<Ellipse w={6} h={6} bg="${c[dotColor]}" />` : ''}${T(c, 13, 18, selected ? 500 : 400, selected ? 'ink' : 'ink2', title, 'grow={1} maxLines={1} truncate')}${stat}</Frame>
+  return `<Frame w="fill" h="hug" flex="col" gap={2} pl={42} pr={10} py={6} rounded={8} bg="${selected ? c.hover : c.sidebar}">
+<Frame w="fill" h="hug" flex="row" items="center" gap={6}>${dotColor ? `<Ellipse w={6} h={6} bg="${c[dotColor]}" />` : ''}${T(c, 13, 18, selected ? 500 : 400, selected ? 'ink' : 'ink2', title, 'grow={1} maxLines={1} truncate')}</Frame>
 ${meta ? T(c, 12, 16, 400, 'ink3', meta) : ''}</Frame>`;
+}
+
+/** 워크트리 행. 워크트리를 고르면 그 워크트리의 새 세션 화면이 열린다. 변경 통계는 세션이 아니라 워크트리에 붙는다. */
+function worktreeRow(c, { name, add, del, selected = false }) {
+  return `<Frame w="fill" h={28} flex="row" items="center" gap={8} pl={20} pr={10} rounded={8} bg="${selected ? c.hover : c.sidebar}">${I(c, 'git-branch', selected ? 'ink' : 'ink3', 13)}${T(c, 13, 18, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'grow={1} maxLines={1} truncate', M)}${stat(c, add, del)}${selected ? I(c, 'plus', 'ink2', 14) : ''}</Frame>`;
 }
 
 function searchBox(c, { query, filters, filter, summary }) {
@@ -83,13 +85,12 @@ function searchBox(c, { query, filters, filter, summary }) {
 </Frame>`;
 }
 
-/** popover는 설정 버튼 위에 펼친 메뉴의 JSX다. 사이드바 아래쪽 흐름 안에 놓는다. */
-export function sidebar(c, { groups = [], empty = false, search = null, popover = '' } = {}) {
+export function sidebar(c, { groups = [], empty = false, search = null } = {}) {
   const lights = ['#FF5F57', '#FEBC2E', '#28C840']
     .map((x) => `<Ellipse w={12} h={12} bg="${x}" />`)
     .join('');
-  const group = ({ repo, rows }) => `<Frame w="fill" h="hug" flex="col" gap={1}>
-<Frame w="fill" h={28} flex="row" items="center" gap={8} px={10}>${I(c, 'folder', 'ink3', 14)}${T(c, 13, 18, 500, 'ink2', repo)}</Frame>${rows.map((r) => sessionRow(c, r)).join('')}</Frame>`;
+  const group = ({ repo, worktrees }) => `<Frame w="fill" h="hug" flex="col" gap={1}>
+<Frame w="fill" h={28} flex="row" items="center" gap={8} px={10}>${I(c, 'folder', 'ink3', 14)}${T(c, 13, 18, 500, 'ink2', repo)}</Frame>${worktrees.map((wt) => worktreeRow(c, wt) + (wt.sessions ?? []).map((s) => sessionRow(c, s)).join('')).join('')}</Frame>`;
   const body = empty
     ? `<Frame w="fill" h="hug" flex="col" gap={4} px={10} pt={4}>${T(c, 13, 18, 500, 'ink2', '아직 세션이 없습니다')}${T(c, 12, 16, 400, 'ink3', '오른쪽 입력창에 첫 작업을 적으면 세션이 생깁니다.', 'w={220} textAutoResize="height"')}</Frame>`
     : groups.map(group).join('');
@@ -99,8 +100,7 @@ export function sidebar(c, { groups = [], empty = false, search = null, popover 
 ${search ? searchBox(c, search) : ''}
 ${body}
 <Frame w="fill" h="fill" />
-${popover}
-<Frame w="fill" h={32} flex="row" items="center" gap={8} px={10}><Ellipse w={8} h={8} bg="${c.ok}" />${T(c, 13, 18, 400, 'ink2', 'MacBook-Pro', 'grow={1}')}${I(c, 'plus', 'ink3', 16)}${I(c, 'settings', popover ? 'ink' : 'ink3', 16)}</Frame>
+<Frame w="fill" h={32} flex="row" items="center" gap={8} px={10}><Ellipse w={8} h={8} bg="${c.ok}" />${T(c, 13, 18, 400, 'ink2', 'MacBook-Pro', 'grow={1}')}${I(c, 'plus', 'ink3', 16)}${I(c, 'settings', 'ink3', 16)}</Frame>
 </Frame>`;
 }
 
@@ -142,11 +142,7 @@ export function reply(c, html) {
 }
 
 export function toolLine(c, { icon, verb, target, add = null, del = null, status = '' }) {
-  const stat =
-    add === null
-      ? ''
-      : T(c, 12, 16, 500, 'add', '+' + add, '', M) + T(c, 12, 16, 500, 'del', '−' + del, '', M);
-  return `<Frame w="fill" h={28} flex="row" items="center" gap={8}>${I(c, icon, 'ink3', 15)}${T(c, 13, 18, 500, 'ink2', verb)}${T(c, 13, 18, 400, 'ink2', target, '', M)}${stat}${status ? SP + status : ''}</Frame>`;
+  return `<Frame w="fill" h={28} flex="row" items="center" gap={8}>${I(c, icon, 'ink3', 15)}${T(c, 13, 18, 500, 'ink2', verb)}${T(c, 13, 18, 400, 'ink2', target, '', M)}${add === null ? '' : stat(c, add, del)}${status ? SP + status : ''}</Frame>`;
 }
 
 const DIFF_BG = { '+': 'addBg', '-': 'delBg', ' ': 'sunken' };
@@ -222,9 +218,9 @@ ${cmdRow}</Frame></Frame>`;
   };
   const body = total
     ? `<Frame w="fill" h="hug" flex="col" gap={2} px={8}>${todos.map(row).join('')}</Frame>`
-    : `<Frame w="fill" h="hug" flex="col" gap={4} px={16} pt={8}>${T(c, 13, 18, 500, 'ink2', 'todo가 아직 없습니다')}${T(c, 12, 16, 400, 'ink3', 'Plan 단계에서 Ora가 todo와 검증 명령을 선언하면 여기에 쌓입니다.', 'w={300} textAutoResize="height"')}</Frame>`;
+    : `<Frame w="fill" h="hug" flex="col" gap={4} px={16} pt={8}>${T(c, 13, 18, 500, 'ink2', '할 일이 아직 없습니다')}${T(c, 12, 16, 400, 'ink3', 'Plan 단계에서 Ora가 할 일과 검증 명령을 정하면 여기에 쌓입니다.', 'w={300} textAutoResize="height"')}</Frame>`;
   return `<Frame name="Evidence" w={340} h="fill" flex="col" bg="${c.sidebar}">
-<Frame w="fill" h={48} flex="row" items="center" gap={16} px={16}>${T(c, 13, 18, 600, 'ink', 'todo와 증거')}${T(c, 13, 18, 500, 'ink3', '변경')}${T(c, 13, 18, 500, 'ink3', '파일')}${SP}${T(c, 12, 16, 500, 'ink2', `${verified}/${total}`, '', M)}</Frame>
+<Frame w="fill" h={48} flex="row" items="center" gap={16} px={16}>${T(c, 13, 18, 600, 'ink', '할 일')}${T(c, 13, 18, 500, 'ink3', '변경')}${T(c, 13, 18, 500, 'ink3', '파일')}${SP}${T(c, 12, 16, 500, 'ink2', `${verified}/${total}`, '', M)}</Frame>
 <Frame w="fill" h="hug" px={16} pb={8}><Frame w="fill" h={3} flex="row" rounded={2} bg="${c.line}">${bar ? `<Frame w={${bar}} h={3} rounded={2} bg="${c.ok}" />` : ''}</Frame></Frame>
 ${body}
 </Frame>`;

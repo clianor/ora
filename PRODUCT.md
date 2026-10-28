@@ -39,7 +39,7 @@ Ora는 특정 모델에 의존하지 않는 에이전트 엔진과, 그 위에�
 ## Capabilities and Constraints
 
 - 세션 화면에서 대화, 입력, 중지를 합니다. 입력창에서 모델, 추론 강도, 권한 모드를 고릅니다(SPEC 8.2.1절).
-- todo·증거 패널에서 todo별 상태, 검증 명령, 종료 코드, 증거 출처(`user`, `repo`, `model`)를 봅니다. `claimed_verified`와 `verified`를 구분합니다(SPEC 8.2.1절, 2.3.4절).
+- 할 일 패널에서 할 일별 상태, 검증 명령, 종료 코드, 증거 출처(`user`, `repo`, `model`)를 봅니다. `claimed_verified`와 `verified`를 구분합니다(SPEC 8.2.1절, 2.3.4절).
 - 도구 호출은 접고 펴는 타임라인으로, 변경은 읽기 쉬운 diff로 봅니다(SPEC 8.2절).
 - 테마는 `light`, `dark`, `system` 셋이고 기본값은 `system`입니다(SPEC 8.5절).
 - UI 언어는 한국어가 기본입니다. 영어 병행 여부는 미정입니다(SPEC 8.4절, 12장 26번).
@@ -58,7 +58,7 @@ Ora는 특정 모델에 의존하지 않는 에이전트 엔진과, 그 위에�
 
 ## Evidence on Hand
 
-- 승인된 시안은 `design/previews/`에 있습니다. 세션 화면은 `session-dark.png`이고, 라이트 모드 예시는 `theme-light.png`입니다. 시안을 그리는 생성 코드는 `design/src/`에 있습니다.
+- 승인된 시안은 `design/previews/`에 있습니다. 세션 화면은 `session-dark.png`입니다. 시안을 그리는 생성 코드는 `design/src/`에 있습니다.
 - 시안의 세션 이름, 저장소 이름, 검증 결과는 화면을 그리려고 만든 예시 데이터입니다. 실제 사용 기록이 아닙니다.
 - 고객 사례, 후기, 벤치마크, 가격, 배포 수치는 없습니다. 지어내지 않습니다.
 - 성능 목표 수치는 제안값만 있고 확정하지 않았습니다(SPEC 12장 7번).
