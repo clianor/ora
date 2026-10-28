@@ -10,7 +10,8 @@
 
 - 환경 준비: `mise install && mise exec -- pnpm install`
 - 전체 검사: `pnpm check`. 종료 코드 0이 완료 조건이다.
-- 개별 검사: `pnpm check:format`, `check:types`, `check:lint`, `check:test`, `check:arch`, `check:unused`, `check:paths`, `check:licenses`, `check:secrets`
+- 개별 검사: `pnpm check:format`, `check:types`, `check:lint`, `check:test`, `check:arch`, `check:unused`, `check:paths`, `check:licenses`, `check:secrets`, `check:agents`, `check:claude-md`
+- 지시 파일과 스킬을 고친 뒤: `pnpm check:agents && pnpm check:claude-md`. 채점과 승격은 `claude-md-management` 스킬로 한다.
 - 포맷 자동 수정: `pnpm format`
 - 테스트 파일 하나: `pnpm exec vitest run <경로>`
 - 패키지 하나의 타입 검사: `pnpm --filter @ora/core run typecheck`
@@ -44,6 +45,11 @@
 - 비밀 값은 환경변수에서만 읽는다. 설정 파일, 이벤트, 로그에는 쓰지 않는다.
 - `~/.agents`, `~/.claude` 같은 기존 하네스 경로와 `process.env.HOME`, `homedir()`은 `isolation/` 디렉터리 밖에서 쓰지 않는다. `pnpm check:paths`와 린트가 막는다.
 - 식별자는 영어로 쓰고, 함수 이름은 동사로 시작한다.
+
+## 화면
+
+- 화면은 OpenPencil MCP로 `design/`에 먼저 디자인하고, 사용자 승인을 받은 뒤 구현한다. 승인 전에는 `apps/web` 코드를 만들지 않는다.
+- 색, 간격, 반경, 모션은 디자인 토큰 파일 하나에서만 정의한다. 테마는 `light`, `dark`, `system` 셋이다 (SPEC 8.5절).
 
 ## 테스트
 
