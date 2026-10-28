@@ -384,6 +384,7 @@ ${section('앱', [
   ['bell', '알림'],
 ])}
 ${section('엔진', [
+  ['key-round', '계정'],
   ['cpu', '모델'],
   ['shield', '권한'],
   ['box', '격리'],
@@ -408,6 +409,96 @@ ${modeThumb(c, 'system', true)}${modeThumb(c, 'light', false)}${modeThumb(c, 'da
 </Frame>
 </Frame>`;
   return windowFrame(c, '07 Settings · Light', { side: settingsNav(c, '모양'), main: content });
+}
+
+/** 설정 › 계정. 프로바이더별 로그인 계정, 남은 한도, 순위를 보고 로그인과 로그아웃을 한다(SPEC 2.8절). */
+function accountsScreen() {
+  const c = palette('Dark');
+  const chip = (label) =>
+    `<Frame w="hug" h={20} flex="row" items="center" px={6} rounded={6} bg="${c.hover}">${T(c, 11, 14, 500, 'ink2', label)}</Frame>`;
+  const more = `<Frame w={28} h={28} flex="row" items="center" justify="center" rounded={8}>${I(c, 'ellipsis', 'ink3', 16)}</Frame>`;
+  const divider = `<Frame w="fill" h={1} bg="${c.line}" />`;
+  const account = ({
+    name,
+    detail,
+    kind,
+    usage,
+    state,
+    stateColor = 'ink2',
+    stateIcon = null,
+    rank,
+  }) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={12}>
+<Frame w="fill" h="hug" flex="col" gap={2}>
+<Frame w="hug" h="hug" flex="row" items="center" gap={8}>${T(c, 14, 20, 500, 'ink', name)}${chip(kind)}</Frame>
+${T(c, 12, 16, 400, 'ink3', detail, '', mono)}
+</Frame>
+<Frame w={150} h="hug" flex="col" gap={2}>${T(c, 12, 16, 400, 'ink3', '남은 한도')}${T(c, 12, 16, 500, 'ink2', usage, '', /\d/.test(usage) ? mono : undefined)}</Frame>
+<Frame w={150} h="hug" flex="row" items="center" gap={6}>${stateIcon ? I(c, stateIcon, stateColor, 14) : ''}${T(c, 12, 16, 500, stateColor, state)}</Frame>
+<Frame w={52} h="hug" flex="col" gap={2}>${T(c, 12, 16, 400, 'ink3', '우선순위')}${T(c, 12, 16, 500, 'ink2', rank, '', mono)}</Frame>
+${more}
+</Frame>`;
+  const footer = (extra = '') =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={8} px={16} py={12}>${button(c, 'secondary', '구독으로 로그인', { icon: 'log-in' })}${button(c, 'ghost', 'API 키 추가', { icon: 'key-round' })}${extra}</Frame>`;
+  const card = (rows) =>
+    `<Frame w="fill" h="hug" flex="col" rounded={14} bg="${c.raised}" overflow="hidden">${rows.join(divider)}</Frame>`;
+  const group = (title, note, rows) =>
+    `<Frame w="fill" h="hug" flex="col" gap={10}><Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 13, 18, 500, 'ink2', title)}${SP}${T(c, 12, 16, 400, 'ink3', note)}</Frame>${card(rows)}</Frame>`;
+  const waiting = (lines, actions) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={14}>${I(c, 'loader-circle', 'ink2', 16)}<Frame w="fill" h="hug" flex="col" gap={4}>${lines}</Frame>${actions}</Frame>`;
+  const content = `<Frame name="Accounts" w="fill" h="fill" flex="col" items="center" pt={72}>
+<Frame w={640} h="hug" flex="col" gap={24}>
+<Frame w="fill" h="hug" flex="col" gap={6}>${T(c, 24, 32, 600, 'ink', '계정')}${T(c, 13, 18, 400, 'ink3', '새 세션은 순위가 높은 계정부터 씁니다. 한도에 걸리거나 남은 한도가 예비분 아래로 내려가면 다음 계정으로 넘어갑니다.', 'w={640} textAutoResize="height"')}</Frame>
+${group('Claude', '계정 3개', [
+  account({
+    name: 'main',
+    detail: 'ejrgus94160@gmail.com',
+    kind: '구독',
+    usage: '5시간 94% · 7일 84%',
+    state: '사용 중',
+    stateColor: 'ok',
+    stateIcon: 'circle-check',
+    rank: '2',
+  }),
+  account({
+    name: 'second',
+    detail: 'second@example.com',
+    kind: '구독',
+    usage: '5시간 0% · 7일 61%',
+    state: '한도 · 15:00에 풀림',
+    stateColor: 'warn',
+    stateIcon: 'clock',
+    rank: '1',
+  }),
+  account({
+    name: 'credit',
+    detail: 'ANTHROPIC_API_KEY',
+    kind: 'API 키',
+    usage: '측정 안 함',
+    state: '대기',
+    stateIcon: 'circle-dashed',
+    rank: '0',
+  }),
+  footer(),
+])}
+${group('Codex', '로그인 중', [
+  waiting(
+    `${T(c, 14, 20, 500, 'ink', '브라우저에서 승인을 기다립니다')}${T(c, 12, 16, 400, 'ink3', '승인하면 이 화면에 계정이 나타납니다. 5분 안에 끝내야 합니다.', 'w={420} textAutoResize="height"')}`,
+    `${button(c, 'ghost', '주소 다시 열기', { icon: 'external-link' })}${button(c, 'ghost', '취소')}`,
+  ),
+])}
+${group('Grok', '코드 입력 대기', [
+  waiting(
+    `${T(c, 14, 20, 500, 'ink', 'x.ai에서 아래 코드를 입력합니다')}<Frame w="hug" h="hug" flex="row" items="center" gap={12}>${T(c, 22, 30, 600, 'ink', 'WDJB-MJHT', 'letterSpacing={2}', mono)}${T(c, 12, 16, 400, 'ink3', '14:21 남음', '', mono)}</Frame>`,
+    `${button(c, 'secondary', '주소 열기', { icon: 'external-link' })}${button(c, 'ghost', '취소')}`,
+  ),
+])}
+</Frame>
+</Frame>`;
+  return windowFrame(c, '10 Settings Accounts · Dark', {
+    side: settingsNav(c, '계정'),
+    main: content,
+  });
 }
 
 /** 명령 팔레트. 세션 전환, 명령 실행, 화면 이동을 키보드만으로 한다(SPEC 8.2절). 세션 화면 위에 막을 덮고 띄운다. */
@@ -466,4 +557,5 @@ export const SCREENS = [
   { file: 'settings-light', jsx: settingsScreen },
   { file: 'command-palette-dark', jsx: commandPaletteScreen },
   { file: 'cache-dark', jsx: cacheScreen },
+  { file: 'settings-accounts-dark', jsx: accountsScreen },
 ];
