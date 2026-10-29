@@ -16,6 +16,12 @@ import {
   sessionIdSchema,
   sseEventNames,
 } from '@ora/protocol';
+import {
+  accountProviderSchema,
+  addApiKeyBodySchema,
+  setPriorityBodySchema,
+  startLoginBodySchema,
+} from '@ora/protocol';
 import type {
   ApprovalRequest,
   InfoResponse,
@@ -32,6 +38,7 @@ import { UsageError, loadConfig, resolveSessionsDir, selectProvider } from './co
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { launchSession, listSessions } from './supervisor.ts';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
+import { AccountApiError, createAccountApi } from './account-api.ts';
 
 const COOKIE_NAME = 'ora_token';
 const MAX_BODY_BYTES = 1_048_576;
@@ -64,6 +71,10 @@ export interface LocalServerOptions {
   readonly webDir?: string;
   /** 생략하면 운영체제가 빈 포트를 고른다. */
   readonly port?: number;
+  /** 사용량 조회, 토큰 갱신, 로그인에 쓰는 fetch다. 테스트가 가짜 서버로 바꿔 끼운다. */
+  readonly fetch?: typeof fetch;
+  /** Claude와 Codex 로그인 콜백 서버의 포트다. 생략하면 각 프로바이더의 기본 포트다. */
+  readonly loginPort?: number;
 }
 
 export interface LocalServer {
@@ -188,6 +199,22 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
   // 재개를 시작하는 중이라 아직 `live`에 들지 않은 세션이다.
   const resuming = new Set<string>();
   let closing = false;
+  const accountApi = createAccountApi({
+    env: options.env,
+    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    ...(options.loginPort === undefined ? {} : { loginPort: options.loginPort }),
+    listPinnedAccounts: async () => {
+      const records = await Promise.all(
+        [...live.keys()].map((id) =>
+          readSessionRecord(join(sessionsDir, id)).catch(() => undefined),
+        ),
+      );
+      return records.flatMap((record) =>
+        record?.accountPin === undefined ? [] : [record.accountPin],
+      );
+    },
+  });
 
   const publish = (sessionId: string, name: string | undefined, data: unknown, id?: number) => {
     for (const subscriber of subscribers.get(sessionId) ?? []) subscriber.send(name, data, id);
@@ -400,6 +427,64 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     res.end(body);
   };
 
+  const routeAccounts = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    method: string,
+    segments: string[],
+  ) => {
+    const [, , rawProvider, rawName, action] = segments;
+    if (rawProvider === undefined) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      reply(res, 200, await accountApi.list());
+      return;
+    }
+    const provider = accountProviderSchema.safeParse(rawProvider);
+    if (!provider.success)
+      throw new HttpError(404, `지원하지 않는 프로바이더입니다: ${rawProvider}`);
+    if (rawName === 'login' && action === undefined) {
+      if (method === 'GET') {
+        const state = accountApi.getLogin(provider.data);
+        if (state === undefined) throw new HttpError(404, '진행한 로그인이 없습니다.');
+        reply(res, 200, state);
+        return;
+      }
+      if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const body = parseBody(startLoginBodySchema, await readJson(req));
+      reply(res, 201, await accountApi.startLogin(provider.data, body));
+      return;
+    }
+    if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+    if (rawName === 'login' && action === 'cancel') {
+      reply(res, 200, await accountApi.cancelLogin(provider.data));
+      return;
+    }
+    if (rawName === 'api-key' && action === undefined) {
+      const body = parseBody(addApiKeyBodySchema, await readJson(req));
+      reply(res, 201, await accountApi.addApiKey(provider.data, body));
+      return;
+    }
+    if (rawName === undefined) throw new HttpError(404, '알 수 없는 API입니다.');
+    let name: string;
+    try {
+      name = decodeURIComponent(rawName);
+    } catch {
+      throw new HttpError(400, '계정 이름을 해석할 수 없습니다.');
+    }
+    if (action === 'logout') {
+      await accountApi.logout(provider.data, name);
+      reply(res, 200, { ok: true });
+      return;
+    }
+    if (action === 'priority') {
+      const body = parseBody(setPriorityBodySchema, await readJson(req));
+      await accountApi.setPriority(provider.data, name, body.priority);
+      reply(res, 200, { ok: true });
+      return;
+    }
+    throw new HttpError(404, '알 수 없는 API입니다.');
+  };
+
   const route = async (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const method = req.method ?? 'GET';
     const segments = url.pathname.split('/').filter((part) => part !== '');
@@ -419,6 +504,10 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         maxSteps: config.limits.maxSteps,
       };
       reply(res, 200, info);
+      return;
+    }
+    if (segments[1] === 'accounts') {
+      await routeAccounts(req, res, method, segments);
       return;
     }
     if (segments[1] !== 'sessions') throw new HttpError(404, '알 수 없는 API입니다.');
@@ -585,6 +674,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         });
         fail(413, error.message, { connection: 'close' });
       } else if (error instanceof HttpError) fail(error.status, error.message);
+      else if (error instanceof AccountApiError) fail(error.status, error.message);
       else if (error instanceof UsageError) fail(409, error.message);
       else fail(500, error instanceof Error ? error.message : String(error));
     });
@@ -602,6 +692,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     origin,
     port,
     async close() {
+      await accountApi.close();
       closing = true;
       for (const session of live.values()) session.handle.cancel('soft');
       await Promise.allSettled([...live.values()].map((session) => session.handle.result));

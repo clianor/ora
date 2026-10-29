@@ -6,6 +6,7 @@ import {
   Cpu,
   Gauge,
   Keyboard,
+  KeyRound,
   Palette,
   Plug,
   Search,
@@ -17,11 +18,14 @@ import {
 import { RadioGroup } from 'radix-ui';
 import { useState } from 'react';
 import { cn } from '../lib/cn.ts';
+import type { SettingsPage } from '../lib/route.ts';
 import { setThemeMode, useThemeMode, type ThemeMode } from '../lib/theme.ts';
 
 interface NavItem {
   icon: LucideIcon;
   label: string;
+  /** 이동할 수 있는 페이지입니다. 없으면 아직 만들지 않은 항목입니다. */
+  page?: SettingsPage;
 }
 
 const navSections: { title: string; items: NavItem[] }[] = [
@@ -29,7 +33,7 @@ const navSections: { title: string; items: NavItem[] }[] = [
     title: '앱',
     items: [
       { icon: SettingsIcon, label: '일반' },
-      { icon: Palette, label: '모양' },
+      { icon: Palette, label: '모양', page: 'appearance' },
       { icon: Keyboard, label: '키보드 단축키' },
       { icon: Bell, label: '알림' },
     ],
@@ -37,6 +41,7 @@ const navSections: { title: string; items: NavItem[] }[] = [
   {
     title: '엔진',
     items: [
+      { icon: KeyRound, label: '계정', page: 'accounts' },
       { icon: Cpu, label: '모델' },
       { icon: Shield, label: '권한' },
       { icon: Box, label: '격리' },
@@ -48,10 +53,8 @@ const navSections: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-const currentPage = '모양';
-
-/** 설정 항목 목록입니다. M1에는 모양 페이지만 있어서 나머지 항목은 이동하지 않는 이름만 보여 줍니다. */
-export function SettingsNav() {
+/** 설정 항목 목록입니다. 모양과 계정 페이지만 이동할 수 있고, 나머지 항목은 이름만 보여 줍니다. */
+export function SettingsNav({ current }: { current: SettingsPage }) {
   const [query, setQuery] = useState('');
   return (
     <nav
@@ -90,24 +93,37 @@ export function SettingsNav() {
               {section.title}
             </h3>
             <ul className="flex flex-col gap-px">
-              {items.map(({ icon: Icon, label }) => {
-                const isCurrent = label === currentPage;
-                return (
-                  <li
-                    key={label}
-                    aria-current={isCurrent ? 'page' : undefined}
-                    className={cn(
-                      'flex h-8 items-center gap-2.5 rounded-sm px-2.5 text-[13px] leading-[18px]',
-                      isCurrent
-                        ? 'bg-surface-hover font-medium text-foreground'
-                        : 'text-foreground-muted',
-                    )}
-                  >
+              {items.map(({ icon: Icon, label, page }) => {
+                const isCurrent = page === current;
+                const rowClass = cn(
+                  'flex h-8 items-center gap-2.5 rounded-sm px-2.5 text-[13px] leading-[18px]',
+                  isCurrent
+                    ? 'bg-surface-hover font-medium text-foreground'
+                    : 'text-foreground-muted',
+                  page !== undefined && !isCurrent && 'hover:bg-surface-hover',
+                );
+                const content = (
+                  <>
                     <Icon
                       aria-hidden
                       className={cn('size-[15px]', !isCurrent && 'text-foreground-muted')}
                     />
                     {label}
+                  </>
+                );
+                return (
+                  <li key={label}>
+                    {page === undefined ? (
+                      <span className={rowClass}>{content}</span>
+                    ) : (
+                      <a
+                        href={`#/settings/${page}`}
+                        aria-current={isCurrent ? 'page' : undefined}
+                        className={rowClass}
+                      >
+                        {content}
+                      </a>
+                    )}
                   </li>
                 );
               })}

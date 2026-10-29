@@ -2,12 +2,16 @@ import { useSyncExternalStore } from 'react';
 
 export type Route = 'session' | 'new' | 'empty' | 'settings';
 
+export type SettingsPage = 'appearance' | 'accounts';
+
 export interface RouteState {
   route: Route;
   /** `#/session/<세션 ID>`의 세션 ID입니다. 없으면 저장소가 정한 기본 세션을 엽니다. */
   sessionId?: string;
   /** `#/new?cwd=<경로>`의 작업 폴더입니다. 없으면 서버 기본 폴더입니다. */
   cwd?: string;
+  /** `#/settings/accounts`는 계정 페이지이고, 그 밖의 `#/settings`는 모양 페이지입니다. */
+  settingsPage?: SettingsPage;
   isPaletteOpen: boolean;
   paletteQuery: string;
 }
@@ -29,6 +33,7 @@ function parseHash(hash: string): RouteState {
     return {
       route: first as Route,
       cwd: params.get('cwd') ?? undefined,
+      settingsPage: first === 'settings' && second === 'accounts' ? 'accounts' : 'appearance',
       isPaletteOpen,
       paletteQuery,
     };

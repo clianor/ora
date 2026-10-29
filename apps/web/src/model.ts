@@ -1,8 +1,11 @@
 import type {
+  AccountProvider,
   ApprovalDecision,
+  LoginState,
   OraEvent,
   PendingApproval,
   PendingQuestion,
+  ProviderAccounts,
   QuestionAnswer,
   SessionRecord,
   Todo,
@@ -103,7 +106,23 @@ export interface OraActions {
     answers: QuestionAnswer[],
   ) => Promise<void>;
   resumeSession: (sessionId: string) => Promise<void>;
+  /** 계정 목록과 진행 중인 로그인을 서버에서 다시 읽습니다. */
+  refreshAccounts: () => Promise<void>;
+  /** 로그인을 시작하고 서버가 돌려준 상태(로그인 주소나 디바이스 코드)를 줍니다. 실패하면 거부합니다. */
+  startLogin: (provider: AccountProvider) => Promise<LoginState>;
+  cancelLogin: (provider: AccountProvider) => Promise<void>;
+  /** 환경변수 이름만 보냅니다. 키 값은 화면도 서버 응답도 다루지 않습니다. */
+  addApiKey: (provider: AccountProvider, envName: string) => Promise<void>;
+  logoutAccount: (provider: AccountProvider, name: string) => Promise<void>;
+  setAccountPriority: (provider: AccountProvider, name: string, priority: number) => Promise<void>;
   dismissError: (sessionId: string) => void;
+}
+
+/** 설정 › 계정 페이지가 그리는 데이터입니다. */
+export interface AccountsData {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  providers: ProviderAccounts[];
 }
 
 /**
@@ -124,6 +143,7 @@ export interface OraStore {
   /** 세션의 실시간 이벤트를 받기 시작합니다. 돌려주는 함수로 멈춥니다. */
   watchSession: (sessionId: string) => () => void;
   actions: OraActions;
+  accounts: AccountsData;
 }
 
 export interface OraStoreSource {

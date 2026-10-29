@@ -6,6 +6,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { scrubText } from '@ora/core';
 import { z } from 'zod';
+import { sendLoginResult } from './login-page.ts';
 import type { OAuthTokens, ProviderDef } from './wire.ts';
 
 const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
@@ -28,7 +29,27 @@ const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),
   expires_in: z.number().positive(),
+  id_token: z.string().optional(),
 });
+
+const PROFILE_CLAIM = 'https://api.openai.com/profile';
+
+/** 서명을 검증하지 않고 id_token에서 이메일을 읽는다. 계정 이름을 정할 때만 쓴다. */
+function readCodexEmail(idToken: string | undefined): string | undefined {
+  const payload = idToken?.split('.')[1];
+  if (payload === undefined) return undefined;
+  try {
+    const claims = z
+      .looseObject({
+        email: z.string().min(1).optional(),
+        [PROFILE_CLAIM]: z.looseObject({ email: z.string().min(1).optional() }).optional(),
+      })
+      .parse(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')));
+    return claims.email ?? claims[PROFILE_CLAIM]?.email;
+  } catch {
+    return undefined;
+  }
+}
 
 /** 서명을 검증하지 않고 액세스 토큰 payload에서 ChatGPT 계정 id를 읽는다. */
 function readCodexAccountId(accessToken: string): string {
@@ -74,11 +95,13 @@ async function requestToken(
   }
   const parsed = tokenResponseSchema.safeParse(await response.json().catch(() => undefined));
   if (!parsed.success) throw new Error('Codex 토큰 응답의 형식이 올바르지 않습니다.');
+  const email = readCodexEmail(parsed.data.id_token);
   return {
     accessToken: parsed.data.access_token,
     refreshToken: parsed.data.refresh_token,
     expiresAt: now() + parsed.data.expires_in * 1000,
     accountUuid: readCodexAccountId(parsed.data.access_token),
+    ...(email === undefined ? {} : { email }),
   };
 }
 
@@ -128,8 +151,7 @@ async function loginWithBrowser(io: CodexLoginIo): Promise<OAuthTokens> {
       res.end('올바르지 않은 요청입니다.');
       return;
     }
-    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('로그인이 끝났습니다. 터미널로 돌아갑니다.');
+    sendLoginResult(res, true);
     callback.resolve(code);
   });
   const requestedPort = io.port ?? CALLBACK_PORT;

@@ -45,6 +45,18 @@ export interface OAuthTokens {
   readonly email?: string;
 }
 
+/** 사용량 창 하나의 남은 비율(0~100 %)과 프로바이더가 창의 한도를 초기화하는 시각(epoch ms)이다. 시각을 읽지 못하면 없다. */
+export interface LimitWindow {
+  readonly remainingPct: number;
+  readonly resetsAtMs?: number;
+}
+
+/** 프로바이더가 알려 주는 창별 사용량이다. 읽지 못한 창은 없다. */
+export interface UsageLimits {
+  readonly fiveHour?: LimitWindow;
+  readonly sevenDay?: LimitWindow;
+}
+
 /** 프로바이더 하나를 붙이려면 구현하는 것이다. 새 프로바이더는 파일 하나와 `providers.ts`의 한 줄이다. */
 export interface ProviderDef {
   readonly id: string;
@@ -53,14 +65,14 @@ export interface ProviderDef {
   /** refresh token이 회전하는 프로바이더는 새 refresh token을 돌려줘야 한다. */
   refresh(refreshToken: string, fetchImpl?: typeof fetch, now?: () => number): Promise<OAuthTokens>;
   /**
-   * 계정의 남은 사용량(0~100 %)을 읽는다. 읽을 수 없으면 `undefined`를 돌려주거나 예외를 던진다.
+   * 계정의 사용량 창별 남은 비율을 읽는다. 읽을 수 없으면 `undefined`를 돌려주거나 예외를 던진다.
    * 조회 방법을 확인하지 못한 프로바이더는 구현하지 않으며, 그 계정은 측정하지 못한 계정으로 다룬다.
    */
-  readRemainingPct?(
+  readLimits?(
     credential: WireCredential,
     fetchImpl: typeof fetch,
     signal: AbortSignal,
-  ): Promise<number | undefined>;
+  ): Promise<UsageLimits | undefined>;
 }
 
 /** 사용량 한도에 걸린 응답이다. 같은 계정으로 다시 보내지 않고 다음 계정으로 바꾼다. */

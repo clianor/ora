@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { Header } from './components/Header.tsx';
+import { AccountsPage } from './components/Accounts.tsx';
 import { AppearancePage, SettingsNav } from './components/Settings.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { focusTodoPanel } from './components/TodoPanel.tsx';
@@ -105,15 +106,17 @@ function Screen({ state }: { state: RouteState }) {
   switch (state.route) {
     case 'session':
       return <SessionScreen sessionId={state.sessionId} />;
-    case 'settings':
+    case 'settings': {
+      const page = state.settingsPage ?? 'appearance';
       return (
         <>
-          <SettingsNav />
+          <SettingsNav current={page} />
           <main className="flex min-w-0 flex-1 flex-col">
-            <AppearancePage />
+            {page === 'accounts' ? <AccountsPage /> : <AppearancePage />}
           </main>
         </>
       );
+    }
     case 'new':
       return <NewScreen cwd={state.cwd} />;
     case 'empty':

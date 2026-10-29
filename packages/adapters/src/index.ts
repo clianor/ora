@@ -82,3 +82,5 @@ export { getProvider } from './fetch/providers.ts';
 export { accountPolicySchema } from './fetch/select.ts';
 export type { AccountPolicy } from './fetch/select.ts';
 export { UsageLimitError } from './fetch/wire.ts';
+export type { LimitWindow, OAuthTokens, UsageLimits } from './fetch/wire.ts';
+export { withFileLock, writeFileAtomic } from './fetch/file-store.ts';

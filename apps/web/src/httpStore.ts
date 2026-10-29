@@ -1,4 +1,7 @@
 import {
+  accountListResponseSchema,
+  accountViewSchema,
+  loginStateSchema,
   approvalDecisionSchema,
   okResponseSchema,
   oraEventSchema,
@@ -27,6 +30,7 @@ import { buildCacheView } from './lib/cache.ts';
 import { basename } from './lib/path.ts';
 import { permissionLabel } from './lib/status.ts';
 import type {
+  AccountsData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -52,6 +56,7 @@ const createListRetries = 20;
 const createListRetryDelayMs = 100;
 const notifyDelayMs = 30;
 const refreshDelayMs = 100;
+const accountPollMs = 1500;
 
 interface SessionState {
   record: SessionRecord;
@@ -175,6 +180,8 @@ export function createHttpStore(): OraStoreSource {
   let notifyTimer: ReturnType<typeof setTimeout> | null = null;
   let listRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let steerFailureCount = 0;
+  let accounts: AccountsData = { status: 'loading', providers: [] };
+  let accountPollTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** 폴더를 고르지 않은 새 세션은 서버가 알려 준 기본 작업 폴더와 브랜치를 보여 줍니다. */
   function getNewSessionContext(cwd?: string): WorktreeContext {
@@ -234,6 +241,7 @@ export function createHttpStore(): OraStoreSource {
       getSession: (id) => views.get(id),
       watchSession,
       actions,
+      accounts,
     };
   };
 
@@ -434,6 +442,23 @@ export function createHttpStore(): OraStoreSource {
     scheduleDetailRefresh(id);
   };
 
+  /** 로그인이 진행 중인 동안에는 서버가 끝났는지 주기적으로 다시 읽습니다. */
+  const refreshAccounts = async (): Promise<void> => {
+    try {
+      const list = await requestJson('/api/accounts', accountListResponseSchema);
+      accounts = { status: 'ready', providers: list.providers };
+    } catch (error) {
+      accounts = { status: 'error', errorMessage: toMessage(error), providers: accounts.providers };
+    }
+    if (accounts.providers.some((entry) => entry.login?.status === 'pending')) {
+      accountPollTimer ??= setTimeout(() => {
+        accountPollTimer = null;
+        refreshAccounts().catch(() => undefined);
+      }, accountPollMs);
+    }
+    notifySoon();
+  };
+
   const post = async <T>(
     id: string,
     path: string,
@@ -492,6 +517,45 @@ export function createHttpStore(): OraStoreSource {
     resumeSession: async (id) => {
       await post(id, 'resume', {}, sessionIdResponseSchema);
     },
+    refreshAccounts,
+    startLogin: async (provider) => {
+      const state = await requestJson(`/api/accounts/${provider}/login`, loginStateSchema, {
+        method: 'POST',
+        body: {},
+      });
+      await refreshAccounts();
+      return state;
+    },
+    cancelLogin: async (provider) => {
+      await requestJson(`/api/accounts/${provider}/login/cancel`, loginStateSchema, {
+        method: 'POST',
+        body: {},
+      });
+      await refreshAccounts();
+    },
+    addApiKey: async (provider, envName) => {
+      await requestJson(`/api/accounts/${provider}/api-key`, accountViewSchema, {
+        method: 'POST',
+        body: { envName },
+      });
+      await refreshAccounts();
+    },
+    logoutAccount: async (provider, name) => {
+      await requestJson(
+        `/api/accounts/${provider}/${encodeURIComponent(name)}/logout`,
+        okResponseSchema,
+        { method: 'POST', body: {} },
+      );
+      await refreshAccounts();
+    },
+    setAccountPriority: async (provider, name, priority) => {
+      await requestJson(
+        `/api/accounts/${provider}/${encodeURIComponent(name)}/priority`,
+        okResponseSchema,
+        { method: 'POST', body: { priority } },
+      );
+      await refreshAccounts();
+    },
     dismissError: (id) => {
       const state = sessions.get(id);
       if (!state) return;
@@ -509,9 +573,11 @@ export function createHttpStore(): OraStoreSource {
     getSession: () => undefined,
     watchSession,
     actions,
+    accounts,
   };
 
   refreshList().catch(() => undefined);
+  refreshAccounts().catch(() => undefined);
   requestJson('/api/info', infoResponseSchema)
     .then((result) => {
       info = result;

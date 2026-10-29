@@ -52,7 +52,7 @@ export function createFetchModel(options: FetchModelOptions): ModelPort {
     const hit = usageCache.get(account.name);
     if (hit !== undefined && now() - hit.at < USAGE_TTL_MS) return hit.value;
     const def = getProvider(catalog.provider);
-    const read = def?.readRemainingPct?.bind(def);
+    const read = def?.readLimits?.bind(def);
     const value =
       account.kind === 'apiKey' || read === undefined
         ? Promise.resolve(undefined)
@@ -61,6 +61,11 @@ export function createFetchModel(options: FetchModelOptions): ModelPort {
             .then((credential) =>
               read(credential, options.fetch ?? fetch, AbortSignal.timeout(USAGE_TIMEOUT_MS)),
             )
+            .then((limits) => {
+              const windows = [limits?.fiveHour?.remainingPct, limits?.sevenDay?.remainingPct];
+              const known = windows.filter((pct): pct is number => pct !== undefined);
+              return known.length === 0 ? undefined : Math.min(...known);
+            })
             .catch(() => undefined);
     usageCache.set(account.name, { at: now(), value });
     return value;

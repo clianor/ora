@@ -98,6 +98,8 @@ export const GROK_PROVIDER: ProviderDef = {
 
 export interface GrokLoginIo {
   print(line: string): void;
+  /** 인증 주소, 사용자 코드, 코드가 만료되는 시각(epoch ms)을 받는다. 웹 화면이 이 값을 직접 보여 준다. */
+  onDeviceCode?(info: { url: string; code: string; expiresAt: number }): void;
   fetch?: typeof fetch;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -126,6 +128,7 @@ export async function loginGrok(io: GrokLoginIo): Promise<OAuthTokens> {
   if (!uri.startsWith('https://')) throw new Error('xAI가 https가 아닌 인증 주소를 돌려줬습니다.');
   io.print(`브라우저에서 ${uri} 를 열고 코드 ${device.user_code} 를 입력합니다.`);
   const deadline = now() + (device.expires_in ?? 900) * 1000;
+  io.onDeviceCode?.({ url: uri, code: device.user_code, expiresAt: deadline });
   let intervalMs = (device.interval ?? DEFAULT_POLL_SECONDS) * 1000;
   for (;;) {
     await sleep(intervalMs);

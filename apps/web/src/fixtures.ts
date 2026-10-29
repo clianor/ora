@@ -1,5 +1,6 @@
 import { buildThread } from './events.ts';
 import { buildCacheView } from './lib/cache.ts';
+import type { AccountProvider, LoginState, ProviderAccounts } from '@ora/protocol';
 import type {
   Actor,
   EventOf,
@@ -13,6 +14,7 @@ import type {
   Todo,
 } from '@ora/protocol';
 import type {
+  AccountsData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -648,7 +650,15 @@ const plainViews = new Map<string, SessionView>(
     .map((node) => [node.record.id, createPlainView(node.record)]),
 );
 
-const fixtureActions: OraActions = {
+type AccountActionName =
+  | 'refreshAccounts'
+  | 'startLogin'
+  | 'cancelLogin'
+  | 'addApiKey'
+  | 'logoutAccount'
+  | 'setAccountPriority';
+
+const fixtureActions: Omit<OraActions, AccountActionName> = {
   createSession: () => Promise.resolve(sessionView.record.id),
   sendMessage: () => Promise.resolve(),
   cancelRun: () => Promise.resolve(),
@@ -658,27 +668,175 @@ const fixtureActions: OraActions = {
   dismissError: () => undefined,
 };
 
-const fixtureStore: OraStore = {
+const iso = (ms: number) => new Date(ms).toISOString();
+const fixtureNow = Date.now();
+
+const fixtureAccounts: AccountsData = {
   status: 'ready',
-  sidebar: { repos, deviceName: 'MacBook-Pro' },
-  getNewSessionContext: () => ({
-    path: '~/Desktop/ora',
-    branch: 'main',
-    add: 4,
-    del: 0,
-    chips: designChips,
-  }),
-  empty: { repos: ['math-demo', 'ora', 'notes'], branches: ['main'], chips: designChips },
-  defaultSessionId: sessionView.record.id,
-  getSession: (sessionId) => {
-    const id = devAliases.get(sessionId) ?? sessionId;
-    return detailedViews.get(id) ?? plainViews.get(id);
-  },
-  watchSession: () => () => undefined,
-  actions: fixtureActions,
+  providers: [
+    {
+      provider: 'claude',
+      accounts: [
+        {
+          name: 'main',
+          kind: 'oauth',
+          detail: 'me@example.com',
+          priority: 2,
+          fiveHour: { remainingPct: 94 },
+          sevenDay: { remainingPct: 84 },
+          status: 'inUse',
+        },
+        {
+          name: 'second',
+          kind: 'oauth',
+          detail: 'second@example.com',
+          priority: 1,
+          fiveHour: { remainingPct: 0, resetsAt: iso(fixtureNow + 3_600_000) },
+          sevenDay: { remainingPct: 61 },
+          status: 'limited',
+          limitedUntil: iso(fixtureNow + 3_600_000),
+        },
+        {
+          name: 'credit',
+          kind: 'apiKey',
+          detail: 'ANTHROPIC_API_KEY',
+          envPresent: true,
+          priority: 0,
+          status: 'idle',
+        },
+      ],
+    },
+    {
+      provider: 'codex',
+      accounts: [],
+      login: {
+        status: 'pending',
+        prompt: {
+          kind: 'url',
+          url: 'https://auth.openai.com/oauth/authorize',
+          expiresAt: iso(fixtureNow + 300_000),
+        },
+      },
+    },
+    {
+      provider: 'grok',
+      accounts: [],
+      login: {
+        status: 'pending',
+        prompt: {
+          kind: 'device',
+          url: 'https://auth.x.ai/device',
+          code: 'WDJB-MJHT',
+          expiresAt: iso(fixtureNow + 861_000),
+        },
+      },
+    },
+  ],
 };
 
-/** 엔진 연결 없이 고정 예시 데이터로 화면을 확인하는 저장소입니다. 엔진 요청은 받아도 아무 일도 하지 않습니다. */
+/** 엔진 연결 없이 고정 예시 데이터로 화면을 확인하는 저장소입니다. 계정 화면의 조작은 이 메모리 안에서만 바뀝니다. */
 export function createFixtureStore(): OraStoreSource {
-  return { subscribe: () => () => undefined, getSnapshot: () => fixtureStore };
+  const listeners = new Set<() => void>();
+  let accounts = fixtureAccounts;
+  let snapshot: OraStore;
+
+  const commit = (next: ProviderAccounts[]) => {
+    accounts = { ...accounts, providers: next };
+    snapshot = { ...snapshot, accounts };
+    listeners.forEach((listener) => {
+      listener();
+    });
+  };
+  const update = (
+    provider: AccountProvider,
+    change: (entry: ProviderAccounts) => ProviderAccounts,
+  ) => {
+    commit(
+      accounts.providers.map((entry) => (entry.provider === provider ? change(entry) : entry)),
+    );
+  };
+
+  const actions: OraActions = {
+    ...fixtureActions,
+    refreshAccounts: () => Promise.resolve(),
+    startLogin: (provider) => {
+      const expiresAt = iso(Date.now() + 300_000);
+      const login: LoginState = {
+        status: 'pending',
+        prompt:
+          provider === 'grok'
+            ? { kind: 'device', url: 'https://auth.x.ai/device', code: 'WDJB-MJHT', expiresAt }
+            : { kind: 'url', url: 'https://example.com/login', expiresAt },
+      };
+      update(provider, (entry) => ({ ...entry, login }));
+      return Promise.resolve(login);
+    },
+    cancelLogin: (provider) => {
+      update(provider, ({ provider: id, accounts: rows }) => ({ provider: id, accounts: rows }));
+      return Promise.resolve();
+    },
+    addApiKey: (provider, envName) => {
+      update(provider, (entry) => ({
+        ...entry,
+        accounts: [
+          ...entry.accounts,
+          {
+            name: envName,
+            kind: 'apiKey',
+            detail: envName,
+            envPresent: false,
+            priority: 0,
+            status: 'idle',
+          },
+        ],
+      }));
+      return Promise.resolve();
+    },
+    logoutAccount: (provider, name) => {
+      update(provider, (entry) => ({
+        ...entry,
+        accounts: entry.accounts.filter((account) => account.name !== name),
+      }));
+      return Promise.resolve();
+    },
+    setAccountPriority: (provider, name, priority) => {
+      update(provider, (entry) => ({
+        ...entry,
+        accounts: entry.accounts
+          .map((account) => (account.name === name ? { ...account, priority } : account))
+          .toSorted((a, b) => b.priority - a.priority),
+      }));
+      return Promise.resolve();
+    },
+  };
+
+  snapshot = {
+    status: 'ready',
+    sidebar: { repos, deviceName: 'MacBook-Pro' },
+    getNewSessionContext: () => ({
+      path: '~/Desktop/ora',
+      branch: 'main',
+      add: 4,
+      del: 0,
+      chips: designChips,
+    }),
+    empty: { repos: ['math-demo', 'ora', 'notes'], branches: ['main'], chips: designChips },
+    defaultSessionId: sessionView.record.id,
+    getSession: (sessionId) => {
+      const id = devAliases.get(sessionId) ?? sessionId;
+      return detailedViews.get(id) ?? plainViews.get(id);
+    },
+    watchSession: () => () => undefined,
+    actions,
+    accounts,
+  };
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getSnapshot: () => snapshot,
+  };
 }
