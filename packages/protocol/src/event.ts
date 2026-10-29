@@ -300,12 +300,12 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       afterSeq: z.number().int().nonnegative(),
     }),
   ),
-  // 컨텍스트 압축 결과다 (SPEC 4.3절). `prune`은 도구 출력 가지치기, `shake`는 모델 없이 큰 블록을 참조로 바꾼 것, `handoff`와 `summary`는 요약 파일이 앞 메시지를 대신한 것이다.
+  // 컨텍스트 압축 결과다 (SPEC 4.3절). `prune`은 도구 출력 가지치기, `shake`는 모델 없이 큰 블록을 참조로 바꾼 것, `handoff`와 `summary`는 요약 파일이 앞 메시지를 대신한 것이다. `remote`는 프로바이더 서버가 쓴 요약을 요약 파일에 담은 것이다.
   // 범위는 컨텍스트에서 바뀐 메시지의 seq 범위다. transcript 파일의 원본 이벤트는 그대로 남고, 재개는 이 이벤트들을 같은 순서로 다시 적용한다.
   defineEvent(
     'compaction',
     z.strictObject({
-      method: z.enum(['prune', 'shake', 'handoff', 'summary']).default('summary'),
+      method: z.enum(['prune', 'shake', 'handoff', 'summary', 'remote']).default('summary'),
       fromSeq: z.number().int().positive(),
       toSeq: z.number().int().positive(),
       /** `handoff`와 `summary`만 있다. */
@@ -314,6 +314,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       prunedCallIds: z.array(z.string().min(1)).default([]),
       /** `prune`과 `shake`가 줄인 어림 토큰 수다. 이전 기록에는 없다. */
       savedTokens: z.number().int().nonnegative().optional(),
+      /** 압축 시점 전에 미리 만들어 둔 요약을 쓴 압축이다. `ahead`는 기준선 바로 아래에서, `idle`은 사용자 입력을 기다리는 동안 만든 요약이다. 이전 기록에는 없다. */
+      prepared: z.enum(['ahead', 'idle']).optional(),
     }),
   ),
   // 재개할 때 모델 컨텍스트에서 뺀 seq 범위다. transcript 파일에는 그대로 남는다.

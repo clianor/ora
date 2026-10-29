@@ -206,9 +206,11 @@ const configSchema = z.object({
       protectToolTokens: z.number().int().nonnegative().default(40000),
       minPruneSavings: z.number().int().nonnegative().default(20000),
       methodOrder: z
-        .array(z.enum(['shake', 'handoff', 'summary']))
+        .array(z.enum(['remote', 'shake', 'handoff', 'summary']))
         .min(1)
-        .default(['handoff', 'shake', 'summary']),
+        .default(['remote', 'handoff', 'shake', 'summary']),
+      /** 사용자 입력을 기다린 지 이 시간(ms)이 지나면 다음 압축에 쓸 요약을 미리 만든다. 0이면 만들지 않는다. 기본 50분은 1시간 캐시가 끝나기 전이다. */
+      idleSummaryMs: z.number().int().nonnegative().default(3_000_000),
       keepRecentSteps: z
         .never({
           error:
@@ -221,7 +223,8 @@ const configSchema = z.object({
       keepRecentTokens: 20000,
       protectToolTokens: 40000,
       minPruneSavings: 20000,
-      methodOrder: ['handoff', 'shake', 'summary'],
+      methodOrder: ['remote', 'handoff', 'shake', 'summary'],
+      idleSummaryMs: 3_000_000,
     }),
   /** 외부 MCP 서버 목록이다 (SPEC 2.10절). 설정 › MCP 화면이 이 키를 고친다. */
   mcpServers: z

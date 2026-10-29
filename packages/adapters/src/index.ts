@@ -1,6 +1,6 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { ModelLimitError } from '@ora/core';
-import type { ModelPort, ModelStreamEvent } from '@ora/core';
+import type { ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import { contentBlockSchema } from '@ora/protocol';
 import { z } from 'zod';
 
@@ -28,6 +28,8 @@ const scriptSchema = z.object({
   contextWindow: z.number().int().positive().optional(),
   maxOutputTokens: z.number().int().positive().optional(),
   acceptsOutputCap: z.boolean().optional(),
+  /** 있으면 모델이 서버 압축(`compact`)을 지원하는 것처럼 이 요약을 돌려준다. 없으면 지원하지 않는다. */
+  remote: z.object({ text: z.string(), usage: usageSchema.optional() }).optional(),
 });
 
 /**
@@ -44,6 +46,31 @@ export async function loadScriptedModel(
     ...(script.contextWindow === undefined ? {} : { contextWindow: script.contextWindow }),
     ...(script.maxOutputTokens === undefined ? {} : { maxOutputTokens: script.maxOutputTokens }),
     ...(script.acceptsOutputCap === undefined ? {} : { acceptsOutputCap: script.acceptsOutputCap }),
+    ...(script.remote === undefined
+      ? {}
+      : {
+          async compact(request: ModelRequest) {
+            if (inputLogPath !== undefined) {
+              const record = {
+                remote: true,
+                system: request.system,
+                messages: request.messages,
+                tools: request.tools.map((tool) => tool.name),
+                maxOutputTokens: request.maxOutputTokens ?? null,
+              };
+              await appendFile(inputLogPath, `${JSON.stringify(record)}\n`, 'utf8');
+            }
+            return {
+              text: script.remote?.text ?? '',
+              usage: script.remote?.usage ?? {
+                uncachedInputTokens: 0,
+                cacheReadInputTokens: 0,
+                cacheCreationInputTokens: 0,
+                outputTokens: 0,
+              },
+            };
+          },
+        }),
     model: 'fake/scripted',
     adapter: 'fake',
     async *stream(request): AsyncGenerator<ModelStreamEvent> {

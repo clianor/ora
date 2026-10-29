@@ -22,7 +22,13 @@ function getLabel(mark: CompactionMarkData): string {
     case 'handoff':
       return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 인계 문서로 바꿨습니다`;
     case 'summary':
+      if (mark.prepared === 'ahead')
+        return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 미리 만들어 둔 요약으로 바꿨습니다`;
+      if (mark.prepared === 'idle')
+        return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 쉬는 동안 만든 요약으로 바꿨습니다`;
       return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 요약했습니다`;
+    case 'remote':
+      return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 서버가 쓴 요약으로 바꿨습니다`;
   }
 }
 
@@ -77,7 +83,8 @@ export function CompactionMark({ data }: DataMessagePartProps) {
   const bodyId = useId();
   const [isOpen, setIsOpen] = useState(false);
   const [summary, setSummary] = useState<SummaryState>({ status: 'idle' });
-  const isSummary = mark.method === 'handoff' || mark.method === 'summary';
+  const isSummary =
+    mark.method === 'handoff' || mark.method === 'summary' || mark.method === 'remote';
   const canExpand = mark.method === 'prune' ? mark.items.length > 0 : isSummary && !!mark.path;
 
   const toggle = () => {
@@ -85,7 +92,7 @@ export function CompactionMark({ data }: DataMessagePartProps) {
     setIsOpen(next);
     const { path, method } = mark;
     if (!next || !path || summary.status === 'ready') return;
-    if (method !== 'handoff' && method !== 'summary') return;
+    if (method !== 'handoff' && method !== 'summary' && method !== 'remote') return;
     setSummary({ status: 'loading' });
     runAction(
       actions
@@ -93,7 +100,9 @@ export function CompactionMark({ data }: DataMessagePartProps) {
         .then((text) => {
           setSummary({
             status: 'ready',
-            sections: sortSections(parseSummaryDocument(text, method)),
+            sections: sortSections(
+              parseSummaryDocument(text, method === 'handoff' ? 'handoff' : 'summary'),
+            ),
           });
         })
         .catch((error: unknown) => {

@@ -852,7 +852,7 @@ function firstText(input: { messages: unknown[] } | undefined): unknown {
 function compactionResponses(
   summary: string | { content: Block[] },
   tail: { content: Block[] }[],
-  extra: { content: Block[] }[] = [],
+  extra: { content: Block[]; usage?: object }[] = [],
 ) {
   return [
     ...setupResponses,
@@ -1109,6 +1109,89 @@ test(
     const { events } = readSession(project);
     const first = events.find((event) => event.type === 'compaction');
     expect(first?.payload.method).toBe('handoff');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'remote를 쓸 수 없는 모델은 그 방식을 건너뛰고 다음 방식으로 압축한다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(project, compactionResponses('ZZ-요약', [finalReport]), {
+      methodOrder: ['remote', 'summary'],
+    }).done;
+
+    const first = readSession(project).events.find((event) => event.type === 'compaction');
+    expect(first?.payload.method).toBe('summary');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'remote를 쓸 수 있는 모델은 서버가 쓴 요약을 요약 파일에 담고 비용 기록용 요청 이벤트를 남긴다',
+  async () => {
+    const project = createProject();
+    const responses: { content: Block[]; usage?: object }[] = compactionResponses(
+      'ZZ-쓰이지 않음',
+      [finalReport],
+    );
+    const bigAt = responses.findIndex((response) => response.usage !== undefined);
+    responses.splice(bigAt + 1, 1);
+    await startCompactionRun(
+      project,
+      responses,
+      { methodOrder: ['remote', 'summary'] },
+      '파일을 고친다',
+      COMPACTION_WINDOW,
+      { remote: { text: 'ZZ-서버 요약' } },
+    ).done;
+
+    const { dir, events } = readSession(project);
+    const first = events.find((event) => event.type === 'compaction');
+    expect(first?.payload).toMatchObject({ method: 'remote', path: 'compactions/1.md' });
+    expect(readFileSync(join(dir, 'compactions', '1.md'), 'utf8')).toContain('ZZ-서버 요약');
+    expect(
+      events.filter((event) => event.type === 'model_request' && event.payload.purpose),
+    ).toHaveLength(1);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '기준선 바로 아래에서 미리 만든 요약은 압축 때 쓰고, 그 뒤로 늘어난 부분만 이어서 요약한다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      compactionResponses(
+        'ZZ-이어 붙인 요약',
+        [finalReport],
+        [
+          {
+            ...respond(use('mid', 'file_read', { path: 'foo.js' })),
+            usage: {
+              uncachedInputTokens: 15_000,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              outputTokens: 0,
+            },
+          },
+          respond({ type: 'text', text: 'ZZ-미리 만든 요약' }),
+        ],
+      ),
+    ).done;
+
+    const { events } = readSession(project);
+    const compaction = events.find((event) => event.type === 'compaction');
+    expect(compaction?.payload).toMatchObject({ method: 'summary', prepared: 'ahead' });
+    expect(
+      events.filter((event) => event.type === 'model_request' && event.payload.purpose),
+    ).toHaveLength(2);
+    const inputs = readModelInputs(project, 'first');
+    const delta = inputs.find((input) =>
+      JSON.stringify(input.messages).includes('<previous-summary>'),
+    );
+    expect(JSON.stringify(delta?.messages)).toContain('ZZ-미리 만든 요약');
   },
   TEST_TIMEOUT_MS,
 );

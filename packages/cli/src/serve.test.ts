@@ -129,6 +129,7 @@ const DEMO_DIR = fileURLToPath(new URL('../demo/', import.meta.url));
 async function startServer(
   responses: { content: Block[] }[] | ((home: string) => { content: Block[] }[]) | 'demo',
   gitBranch?: string,
+  scenario?: { contextWindow: number; context: object },
 ): Promise<Running> {
   const root = mkdtempSync(join(tmpdir(), 'ora-serve-'));
   const dir = join(root, 'project');
@@ -145,7 +146,16 @@ async function startServer(
     script = join(home, 'script.json');
     writeFileSync(
       script,
-      JSON.stringify({ responses: typeof responses === 'function' ? responses(home) : responses }),
+      JSON.stringify({
+        responses: typeof responses === 'function' ? responses(home) : responses,
+        ...(scenario === undefined ? {} : { contextWindow: scenario.contextWindow }),
+      }),
+    );
+  }
+  if (scenario !== undefined) {
+    writeFileSync(
+      join(home, 'engine.config.json'),
+      JSON.stringify({ schemaVersion: 1, context: scenario.context }),
     );
   }
   if (gitBranch !== undefined)
@@ -160,6 +170,7 @@ async function startServer(
       '--web-dir',
       web,
       ...(responses === 'demo' ? ['--config', join(DEMO_DIR, 'engine.config.json')] : []),
+      ...(scenario === undefined ? [] : ['--config', join(home, 'engine.config.json')]),
     ],
     { cwd: dir, env: { ...process.env, ORA_HOME: home }, stdio: ['ignore', 'pipe', 'inherit'] },
   );
@@ -502,6 +513,63 @@ test(
       expect(repeated.status).toBe(409);
     } finally {
       await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+function idleScenario(usedTokens: number) {
+  return [
+    {
+      ...respond(
+        use('u1', 'ask_user', {
+          questions: [{ header: '방식', question: '어느 방식으로 하나요?', options: ['가', '나'] }],
+        }),
+      ),
+      usage: {
+        uncachedInputTokens: usedTokens,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        outputTokens: 0,
+      },
+    },
+    respond({ type: 'text', text: 'ZZ-쉴 때 요약' }),
+    finalText,
+  ];
+}
+
+const IDLE_SCENARIO = {
+  contextWindow: 20_000,
+  context: {
+    compactAtRatio: 0.8,
+    keepRecentTokens: 1,
+    methodOrder: ['summary'],
+    idleSummaryMs: 300,
+  },
+};
+
+const isCompactionRequest = (event: OraEvent) =>
+  event.type === 'model_request' && event.payload.purpose === 'compaction';
+
+test(
+  '사용자 입력을 기다리는 동안 설정한 시간이 지나면 요약을 미리 만들고, 컨텍스트가 작으면 만들지 않는다',
+  async () => {
+    const big = await startServer(idleScenario(9_000), undefined, IDLE_SCENARIO);
+    const small = await startServer(idleScenario(1_000), undefined, IDLE_SCENARIO);
+    try {
+      const bigId = await createSession(big);
+      await waitFor(() => readEvents(big, bigId).some(isCompactionRequest));
+      expect((await detail(big, bigId)).session.status).toBe('awaiting_user');
+      expect(readEvents(big, bigId).some((event) => event.type === 'compaction')).toBe(false);
+
+      const smallId = await createSession(small);
+      await waitFor(async () => (await detail(small, smallId)).session.status === 'awaiting_user');
+      // 별도 프로세스의 엔진 타이머가 돌지 않는다는 사실을 확인하므로 실제 시간이 지나야 한다.
+      await new Promise((done) => setTimeout(done, 1_000));
+      expect(readEvents(small, smallId).some(isCompactionRequest)).toBe(false);
+    } finally {
+      await stopServer(big);
+      await stopServer(small);
     }
   },
   TEST_TIMEOUT_MS,

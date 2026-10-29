@@ -14,6 +14,7 @@ export const methodLabel: Record<CompactionMethod, string> = {
   shake: '참조로 치환',
   handoff: '인계 문서',
   summary: '요약',
+  remote: '서버 요약',
 };
 
 export interface ContextView {

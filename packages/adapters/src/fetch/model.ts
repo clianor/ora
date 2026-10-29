@@ -1,3 +1,4 @@
+import { compactAnthropicMessages } from '../anthropic.ts';
 import type { ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import type { SessionRecord } from '@ora/protocol';
 import type { Account, AccountStore } from './accounts.ts';
@@ -113,6 +114,29 @@ export function createFetchModel(options: FetchModelOptions): ModelPort {
     contextWindow: catalog.contextWindow,
     maxOutputTokens: catalog.maxOutputTokens,
     acceptsOutputCap: catalog.wire !== 'openai-codex-responses',
+    ...(catalog.wire === 'anthropic-messages'
+      ? {
+          async compact(request: ModelRequest, signal: AbortSignal) {
+            const [account] = await rank(await store.list(catalog.provider), false);
+            if (account === undefined) return undefined;
+            const credential = await store.resolveCredential(catalog.provider, account.name);
+            const fetchImpl = options.wireOptions?.fetch;
+            return compactAnthropicMessages({
+              model: catalog,
+              credential,
+              request,
+              signal,
+              options: {
+                maxTokens: Math.min(
+                  request.maxOutputTokens ?? catalog.maxOutputTokens,
+                  catalog.maxOutputTokens,
+                ),
+                ...(fetchImpl === undefined ? {} : { fetch: fetchImpl }),
+              },
+            });
+          },
+        }
+      : {}),
     accountPin: () =>
       pinned === undefined || lastUsedAt === undefined
         ? undefined

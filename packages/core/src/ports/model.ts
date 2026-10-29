@@ -45,9 +45,19 @@ export interface ModelPort {
   readonly maxOutputTokens?: number;
   /** 전송 형식이 요청의 `maxOutputTokens`를 출력 상한으로 실을 수 있는지다. `true`가 아니면 상한은 프롬프트와 사후 검사로 지킨다. */
   readonly acceptsOutputCap?: boolean;
+  /**
+   * 프로바이더 서버가 요약을 쓰는 압축 요청이다. `undefined`를 돌려주면 이 모델과 자격으로는 쓸 수 없다는 뜻이며 엔진이 `remote` 방식을 건너뛴다.
+   * 서버가 요약을 쓰지 못했을 때도 `undefined`다. 요청 자체가 실패하면 예외를 던진다.
+   */
+  compact?(request: ModelRequest, signal: AbortSignal): Promise<ModelCompactResult | undefined>;
   stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelStreamEvent>;
   /** 마지막 요청을 보낸 계정이다. 엔진이 `session.json`에 적어 재개한 세션이 같은 계정을 이어 쓰게 한다. */
   accountPin?(): SessionRecord['accountPin'];
+}
+
+export interface ModelCompactResult {
+  readonly text: string;
+  readonly usage: ModelUsage;
 }
 
 /** 사용량 한도 때문에 요청을 보낼 수 없다는 오류다. 어댑터의 한도 오류가 이 클래스를 상속한다. */

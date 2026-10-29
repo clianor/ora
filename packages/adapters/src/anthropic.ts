@@ -1,6 +1,6 @@
 import { defaultSleep, readSse } from './fetch/http.ts';
 import { scrubText } from '@ora/core';
-import type { ModelRequest, ModelStreamEvent } from '@ora/core';
+import type { ModelCompactResult, ModelRequest, ModelStreamEvent } from '@ora/core';
 import { createFrameAssembler, toApiName } from './anthropic-frames.ts';
 import {
   ANTHROPIC_API_VERSION,
@@ -251,3 +251,89 @@ export const streamAnthropicMessages: WireStream = async function* ({
   if (!assembler.isDone()) throw new Error('Anthropic 스트림이 message_stop 없이 끝났습니다.');
   yield assembler.finish();
 };
+
+const COMPACT_BETA = 'compact-2026-09-04';
+
+interface CompactIteration {
+  type?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+/**
+ * Anthropic 온디맨드 압축(`compact-2026-09-04` 베타, 본문 `compaction: {type: "summarize"}`)이다.
+ * https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
+ * 서명된 compaction 블록은 다시 보내지 않고, 블록의 읽을 수 있는 요약 텍스트만 돌려준다.
+ * 구독 OAuth는 이 베타 헤더를 받는다는 근거를 확인하지 못했으므로 `undefined`를 돌려주고 호출자가 방식을 건너뛴다.
+ * 요약이 없으면(`stop_reason`이 `compaction`이 아니거나 블록이 없으면) 역시 `undefined`다.
+ */
+export async function compactAnthropicMessages({
+  model,
+  credential,
+  request,
+  signal,
+  options,
+}: {
+  model: CatalogModel;
+  credential: WireCredential;
+  request: ModelRequest;
+  signal: AbortSignal;
+  options: { maxTokens?: number; fetch?: typeof fetch };
+}): Promise<ModelCompactResult | undefined> {
+  if (credential.kind === 'oauth') return undefined;
+  const cacheControl = cacheControlFor(model.cacheTtl);
+  const response = await (options.fetch ?? fetch)(`${model.baseUrl}${ANTHROPIC_MESSAGES_PATH}`, {
+    method: 'POST',
+    signal,
+    headers: {
+      'x-api-key': credential.token,
+      'anthropic-version': ANTHROPIC_API_VERSION,
+      'content-type': 'application/json',
+      'anthropic-beta':
+        model.cacheTtl === '1h' ? `${EXTENDED_CACHE_TTL_BETA},${COMPACT_BETA}` : COMPACT_BETA,
+    },
+    body: JSON.stringify({
+      model: model.id,
+      max_tokens: options.maxTokens ?? model.maxOutputTokens,
+      system: [{ type: 'text', text: request.system, cache_control: cacheControl }],
+      messages: toApiMessages(request, cacheControl, toApiName),
+      ...(request.tools.length === 0
+        ? {}
+        : {
+            tools: request.tools.map((tool) => ({
+              name: toApiName(tool.name),
+              description: tool.description,
+              input_schema: tool.inputSchema,
+            })),
+          }),
+      compaction: { type: 'summarize' },
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(
+      `Anthropic 압축 응답 ${response.status}: ${scrubText(text.slice(0, ERROR_BODY_MAX_CHARS)).text}`,
+    );
+  }
+  const body = (await response.json()) as {
+    stop_reason?: string;
+    content?: { type?: string; content?: string }[];
+    usage?: { iterations?: CompactIteration[] };
+  };
+  const block = body.content?.find((candidate) => candidate.type === 'compaction');
+  if (body.stop_reason !== 'compaction' || typeof block?.content !== 'string') return undefined;
+  const calls = (body.usage?.iterations ?? []).filter((item) => item.type === 'compaction');
+  const sum = (pick: (item: CompactIteration) => number | undefined) =>
+    calls.reduce((total, item) => total + (pick(item) ?? 0), 0);
+  return {
+    text: block.content,
+    usage: {
+      uncachedInputTokens: sum((item) => item.input_tokens),
+      cacheReadInputTokens: sum((item) => item.cache_read_input_tokens),
+      cacheCreationInputTokens: sum((item) => item.cache_creation_input_tokens),
+      outputTokens: sum((item) => item.output_tokens),
+    },
+  };
+}

@@ -71,6 +71,8 @@ export interface CompactionMarkData {
   /** 압축이 바꾼 스텝 범위입니다. 스텝을 알 수 없으면 null입니다. */
   range: StepRange | null;
   path?: string;
+  /** 압축 시점 전에 미리 만들어 둔 요약을 쓴 압축입니다. `ahead`는 기준선 직전에, `idle`은 입력을 기다리는 동안 만든 요약입니다. */
+  prepared?: 'ahead' | 'idle';
   count: number;
   items: { tool: string; target: string }[];
 }
@@ -255,13 +257,14 @@ export function buildThread(
         });
       }
     } else if (event.type === 'compaction') {
-      const { method, fromSeq, toSeq, path, prunedCallIds } = event.payload;
+      const { method, fromSeq, toSeq, path, prunedCallIds, prepared } = event.payload;
       const data: CompactionMarkData = {
         sessionId: event.sessionId,
         ts: event.ts,
         method,
         range: getStepRange(events, fromSeq, toSeq),
         ...(path === undefined ? {} : { path }),
+        ...(prepared === undefined ? {} : { prepared }),
         count: prunedCallIds.length,
         items: prunedCallIds.flatMap((callId) => {
           const call = calls.get(callId);

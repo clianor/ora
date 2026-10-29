@@ -658,6 +658,7 @@ export async function executeSession(
         protectToolTokens: config.context.protectToolTokens,
         minPruneSavings: config.context.minPruneSavings,
         methodOrder: config.context.methodOrder,
+        idleSummaryMs: config.context.idleSummaryMs,
         ...(config.session.maxCost === null ? {} : { maxCost: config.session.maxCost }),
         ...(config.session.warnCost === null ? {} : { warnCost: config.session.warnCost }),
         pricing: config.pricing,
