@@ -878,6 +878,7 @@ function startCompactionRun(
   task = '파일을 고친다',
   window = COMPACTION_WINDOW,
   scriptExtra: object = {},
+  configExtra: object = {},
 ): RunningCli {
   const scriptPath = join(project.home, 'first.json');
   writeFileSync(scriptPath, JSON.stringify({ responses, contextWindow: window, ...scriptExtra }));
@@ -887,6 +888,7 @@ function startCompactionRun(
     JSON.stringify({
       schemaVersion: 1,
       context: { compactAtRatio: 0.8, keepRecentTokens: 1, methodOrder: ['summary'], ...context },
+      ...configExtra,
     }),
   );
   return startCli(project, [
@@ -925,6 +927,43 @@ function readModelInputs(
         },
     );
 }
+
+test(
+  '압축 요약 요청은 compaction 역할 체인의 모델로 가고, 스텝 요청은 default 체인의 모델로 간다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      compactionResponses('ZZ-결정: 덧셈으로 고친다.', [
+        respond(use('s1', 'shell', { command: 'echo done' })),
+      ]),
+      {},
+      '파일을 고친다',
+      COMPACTION_WINDOW,
+      {},
+      {
+        roles: {
+          default: { chain: ['claude/main-m'] },
+          compaction: { chain: ['claude/summary-m'] },
+        },
+      },
+    ).done;
+
+    const requests = readSession(project).events.flatMap((event) =>
+      event.type === 'model_request' ? [event.payload] : [],
+    );
+    expect(requests.filter((request) => request.purpose !== undefined)).toEqual([
+      expect.objectContaining({ model: 'summary-m', role: 'compaction', chainPosition: 0 }),
+    ]);
+    expect(
+      requests.filter((request) => request.purpose === undefined).map((request) => request.model),
+    ).toEqual(expect.arrayContaining(['main-m']));
+    expect(
+      requests.some((request) => request.purpose === undefined && request.model !== 'main-m'),
+    ).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test(
   '입력이 창의 80%에 닿으면 요약 파일을 만들고, 요약 모델이 빼먹은 todo·증거·사용자 지시도 요약에 넣으며, 이후 요청은 요약과 최근 스텝만 담는다',

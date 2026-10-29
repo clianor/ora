@@ -15,8 +15,27 @@ export const createSessionBodySchema = z.strictObject({
   task: z.string().min(1),
   cwd: z.string().min(1).optional(),
   permissionMode: permissionModeSchema.optional(),
+  /** `<프로바이더>/<모델>[:<추론 강도>]`다. 주면 이 세션의 `default` 체인 맨 앞에 넣는다. */
+  model: z.string().min(1).optional(),
 });
 export type CreateSessionBody = z.infer<typeof createSessionBodySchema>;
+
+/** `GET /api/routing`의 응답이다. 새 세션이 쓸 역할별 모델 체인을 실행 전에 보여 준다. */
+export const routingEntrySchema = z.strictObject({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  effort: z.enum(['low', 'medium', 'high']).optional(),
+  /** 그 프로바이더에 로그인한 계정이 하나 이상 있는지다. */
+  hasAccount: z.boolean(),
+});
+export const routingResponseSchema = z.strictObject({
+  roles: z.record(z.string(), z.array(routingEntrySchema)),
+  fallback: z.strictObject({
+    on: z.enum(['any', 'usage-limit', 'except-usage-limit']),
+    revertPolicy: z.enum(['cooldown-expiry', 'never']),
+  }),
+});
+export type RoutingResponse = z.infer<typeof routingResponseSchema>;
 
 export const resumeSessionBodySchema = z.strictObject({ steer: z.string().min(1).optional() });
 export type ResumeSessionBody = z.infer<typeof resumeSessionBodySchema>;

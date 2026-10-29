@@ -1,21 +1,29 @@
 import { appendFile, readFile } from 'node:fs/promises';
+import { ModelLimitError } from '@ora/core';
 import type { ModelPort, ModelStreamEvent } from '@ora/core';
 import { contentBlockSchema } from '@ora/protocol';
 import { z } from 'zod';
 
+const usageSchema = z.object({
+  uncachedInputTokens: z.number().int().nonnegative(),
+  cacheReadInputTokens: z.number().int().nonnegative(),
+  cacheCreationInputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+});
+
 const scriptSchema = z.object({
   responses: z.array(
-    z.object({
-      content: z.array(contentBlockSchema),
-      usage: z
-        .object({
-          uncachedInputTokens: z.number().int().nonnegative(),
-          cacheReadInputTokens: z.number().int().nonnegative(),
-          cacheCreationInputTokens: z.number().int().nonnegative(),
-          outputTokens: z.number().int().nonnegative(),
-        })
-        .optional(),
-    }),
+    z.union([
+      z.object({ content: z.array(contentBlockSchema), usage: usageSchema.optional() }),
+      // 요청을 실패시킨다. `limit`이면 사용량 한도 오류이고 `resetAfterMs`는 지금부터 해제까지의 시간이다.
+      z.object({
+        error: z.object({
+          kind: z.enum(['limit', 'error']),
+          message: z.string().default('가짜 모델 오류'),
+          resetAfterMs: z.number().int().nonnegative().optional(),
+        }),
+      }),
+    ]),
   ),
   contextWindow: z.number().int().positive().optional(),
   maxOutputTokens: z.number().int().positive().optional(),
@@ -53,6 +61,15 @@ export async function loadScriptedModel(
         throw new Error(`가짜 모델 스크립트의 응답 ${script.responses.length}개를 모두 썼습니다.`);
       }
       next += 1;
+      if ('error' in response) {
+        const { kind, message, resetAfterMs } = response.error;
+        throw kind === 'limit'
+          ? new ModelLimitError(
+              message,
+              resetAfterMs === undefined ? undefined : Date.now() + resetAfterMs,
+            )
+          : new Error(message);
+      }
       const hasToolUse = response.content.some((block) => block.type === 'tool_use');
       yield {
         type: 'completed',

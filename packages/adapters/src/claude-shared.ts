@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import { scrubText } from '@ora/core';
+import { ModelLimitError, scrubText } from '@ora/core';
 import type { ModelMessage, ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import type { ContentBlock } from '@ora/protocol';
 import { z } from 'zod';
@@ -37,7 +37,7 @@ export function toMcpToolList(tools: ModelRequest['tools']) {
 const LIMIT_TEXT = /usage limit|rate limit|limit reached|hit your limit|limit will reset/i;
 
 /** 한도 오류 때문에 현재 명령(계정)으로 더 진행할 수 없음을 뜻한다. */
-export class ClaudeLimitError extends Error {}
+export class ClaudeLimitError extends ModelLimitError {}
 
 /** 프로세스가 죽었거나 시작하지 못했거나 오류 결과를 냈다. */
 export class ClaudeProcessError extends Error {}

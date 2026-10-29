@@ -1,3 +1,4 @@
+import { ModelLimitError } from '@ora/core';
 import type { ModelRequest, ModelStreamEvent } from '@ora/core';
 import type { CatalogModel, WireFormat } from './catalog.ts';
 
@@ -76,12 +77,10 @@ export interface ProviderDef {
 }
 
 /** 사용량 한도에 걸린 응답이다. 같은 계정으로 다시 보내지 않고 다음 계정으로 바꾼다. */
-export class UsageLimitError extends Error {
-  readonly resetAtMs?: number;
+export class UsageLimitError extends ModelLimitError {
   constructor(message: string, resetAtMs?: number) {
-    super(message);
+    super(message, resetAtMs);
     this.name = 'UsageLimitError';
-    if (resetAtMs !== undefined) this.resetAtMs = resetAtMs;
   }
 }
 

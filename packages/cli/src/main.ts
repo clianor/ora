@@ -21,7 +21,7 @@ import type { LaunchRequest, SessionResult } from '@ora/host';
 const DEFAULT_WEB_DIR = fileURLToPath(new URL('../../../apps/web/dist', import.meta.url));
 
 const USAGE = `사용법:
-  ora run "<작업>" [--model-script <경로>] [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--isolation <none|harness|clean-home>] [--json]
+  ora run "<작업>" [--model <프로바이더/모델[:추론 강도]>] [--model-script <경로>] [--config <경로>] [--permission <always-ask|write|bypass-permissions>] [--isolation <none|harness|clean-home>] [--json]
   ora resume <세션 ID> [--model-script <경로>] [--steer "<조향 메시지>"] [--config <경로>] [--isolation <none|harness|clean-home>] [--json]
   ora sessions [--config <경로>] [--json]
   ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>] [--isolation <none|harness|clean-home>]
@@ -273,12 +273,16 @@ async function main(): Promise<number> {
     if (values.permission !== undefined && !permission.success) {
       return usageError(`--permission 값이 올바르지 않습니다: ${values.permission}`);
     }
+    if (values.model !== undefined && values.model.length > 1) {
+      return usageError('run의 --model은 하나만 줍니다.');
+    }
     return await runWorker(
       {
         type: 'createSession',
         task: argument,
         ...launch,
         ...(permission.success ? { permissionMode: permission.data } : {}),
+        ...(values.model?.[0] === undefined ? {} : { model: values.model[0] }),
       },
       values.json,
       process.env,

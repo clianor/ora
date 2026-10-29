@@ -1186,3 +1186,57 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+test(
+  'POST /api/sessions의 model은 default 체인 맨 앞에 들어가 source user로 남고, GET /api/routing은 역할별 체인을 돌려준다',
+  async () => {
+    const running = await startServer((home) => {
+      writeFileSync(
+        join(home, 'engine.config.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          roles: { default: { chain: ['claude/config-m', 'codex/user-m:high'] } },
+        }),
+      );
+      return [finalText];
+    });
+    try {
+      const routing = JSON.parse((await send(running, '/api/routing')).text) as {
+        roles: Record<string, unknown[]>;
+      };
+      expect(routing.roles.default).toEqual([
+        { provider: 'claude', model: 'config-m', hasAccount: false },
+        { provider: 'codex', model: 'user-m', effort: 'high', hasAccount: false },
+      ]);
+      expect(routing.roles.compaction).toEqual(routing.roles.default);
+
+      const bad = await post(running, '/api/sessions', { task: '일', model: 'nope' });
+      expect(bad.status).toBe(400);
+
+      const reply = await post(running, '/api/sessions', {
+        task: '일을 한다',
+        cwd: running.dir,
+        model: 'codex/user-m:high',
+      });
+      expect(reply.status).toBe(201);
+      const { sessionId } = JSON.parse(reply.text) as { sessionId: string };
+      await waitFor(() =>
+        readEvents(running, sessionId).some((event) => event.type === 'model_request'),
+      );
+      const session = JSON.parse(
+        readFileSync(join(sessionDirOf(running, sessionId), 'session.json'), 'utf8'),
+      ) as { models: unknown[] };
+      expect(session.models[0]).toEqual({
+        model: 'user-m',
+        provider: 'codex',
+        role: 'default',
+        chainPosition: 0,
+        effort: 'high',
+        source: 'user',
+      });
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);

@@ -75,7 +75,7 @@ test('--model-script 없이 API 키 계정(ora login --api-key-env)으로 세션
       JSON.stringify({
         schemaVersion: 1,
         limits: { maxSteps: 2 },
-        providers: { claude: { model: 'test-model' } },
+        roles: { default: { chain: ['claude/test-model'] } },
         models: [
           {
             id: 'test-model',
@@ -150,10 +150,9 @@ for await (const line of createInterface({ input: process.stdin })) {
       JSON.stringify({
         schemaVersion: 1,
         limits: { maxSteps: 2 },
+        roles: { default: { chain: ['claude/claude-haiku-5-5:low'] } },
         providers: {
           claude: {
-            model: 'claude-haiku-5-5',
-            effort: 'low',
             command: [[process.execPath, fake]],
             via,
           },
@@ -252,7 +251,7 @@ test('providers.claude 기본값(fetch)은 auth.json의 계정으로 가짜 /v1/
       JSON.stringify({
         schemaVersion: 1,
         limits: { maxSteps: 2 },
-        providers: { claude: { model: 'claude-haiku-5-5' } },
+        roles: { default: { chain: ['claude/claude-haiku-5-5'] } },
         models: [
           {
             id: 'claude-haiku-5-5',
@@ -364,7 +363,7 @@ test('providers.codex는 auth.json의 계정으로 가짜 /codex/responses를 �
       JSON.stringify({
         schemaVersion: 1,
         limits: { maxSteps: 2 },
-        providers: { codex: { model: 'gpt-5.5' } },
+        roles: { default: { chain: ['codex/gpt-5.5'] } },
         models: [
           {
             id: 'gpt-5.5',
@@ -398,21 +397,22 @@ test('providers.codex는 auth.json의 계정으로 가짜 /codex/responses를 �
   }
 }, 60_000);
 
-test('둘 이상의 프로바이더에 모델이 있으면 세션을 시작하지 않고 사용법 오류(종료 코드 2)로 멈춘다', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'ora-multi-'));
+test('옛 키 providers.*.model은 roles.default.chain으로 옮기라는 사용법 오류(종료 코드 2)로 멈춘다', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'ora-old-key-'));
   const config = join(home, 'config.json');
   writeFileSync(
     config,
     JSON.stringify({
       schemaVersion: 1,
-      providers: { codex: { model: 'gpt-5.5' }, grok: { model: 'grok-4.6' } },
+      providers: { codex: { model: 'gpt-5.5' }, grok: { effort: 'low' } },
     }),
   );
   const result = await runOra(['run', '작업', '--config', config], {}, home);
 
   expect(result.code).toBe(2);
   expect(result.output).toContain('providers.codex.model');
-  expect(result.output).toContain('providers.grok.model');
+  expect(result.output).toContain('providers.grok.effort');
+  expect(result.output).toContain('roles.default.chain');
 });
 
 test('모델 이름이나 계정이 없으면 세션을 시작하지 않고 사용법 오류(종료 코드 2)로 멈추며, 설정에 키 값을 적을 수 없다', async () => {
@@ -422,12 +422,15 @@ test('모델 이름이나 계정이 없으면 세션을 시작하지 않고 사�
   const withModel = join(home, 'with-model.json');
   writeFileSync(
     withModel,
-    JSON.stringify({ schemaVersion: 1, providers: { claude: { model: 'test-model' } } }),
+    JSON.stringify({
+      schemaVersion: 1,
+      roles: { default: { chain: ['claude/claude-haiku-5-5'] } },
+    }),
   );
 
   const missingModel = await runOra(['run', '작업', '--config', noModel], {}, home);
   expect(missingModel.code).toBe(2);
-  expect(missingModel.output).toContain('providers.claude.model');
+  expect(missingModel.output).toContain('roles.default.chain');
 
   const missingAccount = await runOra(['run', '작업', '--config', withModel], {}, home);
   expect(missingAccount.code).toBe(2);
@@ -447,7 +450,7 @@ test('모델 이름이나 계정이 없으면 세션을 시작하지 않고 사�
     valueInConfig,
     JSON.stringify({
       schemaVersion: 1,
-      providers: { claude: { model: 'm', credentialEnv: [TOKEN] } },
+      providers: { claude: { credentialEnv: [TOKEN] } },
     }),
   );
   const rejected = await runOra(['run', '작업', '--config', valueInConfig], {}, home);

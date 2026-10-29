@@ -19,7 +19,9 @@ import type {
   ApprovalPort,
   Clock,
   InstructionFile,
+  ModelChainEntry,
   ModelPort,
+  ModelRouter,
   PromptFile,
   QuestionPort,
   ResumeInput,
@@ -45,8 +47,8 @@ import {
   ENGINE_VERSION,
   UsageError,
   loadConfig,
+  resolveChains,
   resolveSessionsDir,
-  selectProvider,
 } from './config.ts';
 import type { Config } from './config.ts';
 import { createChildEnv, resolveIsolationRoot } from './isolation/child-env.ts';
@@ -208,101 +210,111 @@ export function createIpcPorts(send: (message: WorkerMessage) => void) {
   };
 }
 
-/** `--model-script`가 있으면 가짜 모델을, 없으면 설정이 고른 프로바이더의 모델을 만든다. */
-async function createModel(
-  command: LaunchCommand,
-  config: Config,
-  env: NodeJS.ProcessEnv,
-  claudeResume: ClaudeResumeState | undefined,
-  isolation: Isolation,
-  oraHome: string,
-  pin: SessionRecord['accountPin'],
-): Promise<ModelPort> {
-  if (command.modelScriptPath !== undefined) {
-    try {
-      return await loadScriptedModel(command.modelScriptPath, command.modelInputLogPath);
-    } catch (error) {
-      throw new UsageError(`가짜 모델 스크립트를 읽을 수 없습니다: ${String(error)}`);
-    }
-  }
-  const { claude } = config.providers;
-  const selected = selectProvider(config);
-  if (selected === 'claude' && claude.model !== undefined && claude.via === 'fetch') {
-    return createFetchProviderModel({
-      provider: 'claude',
-      modelId: claude.model,
-      settings: claude,
-      defaults: { wire: 'anthropic-messages', baseUrl: 'https://api.anthropic.com' },
-      loginHint: 'ora login claude를 실행하거나 providers.claude.via를 "sdk"로 설정합니다.',
-      config,
-      env,
-      oraHome,
-      pin,
-    });
-  }
-  if (selected === 'claude' && claude.model !== undefined) {
-    const createClaudeModel = claude.via === 'cli' ? createClaudeCliModel : createClaudeSdkModel;
-    return createClaudeModel({
-      model: claude.model,
-      cacheTtl: claude.cacheTtl,
-      commands: claude.command,
-      env,
-      cwd: command.cwd,
-      ...(claude.effort === undefined ? {} : { effort: claude.effort }),
-      ...(claudeResume === undefined ? {} : { resumeFrom: claudeResume }),
-      persistSession: isolation !== 'clean-home',
-    });
-  }
-  if (selected === 'codex' || selected === 'grok') {
-    const provider = config.providers[selected];
-    return createFetchProviderModel({
-      provider: selected,
-      modelId: provider.model ?? '',
-      settings: provider,
-      defaults:
-        selected === 'codex'
-          ? { wire: 'openai-codex-responses', baseUrl: 'https://chatgpt.com/backend-api' }
-          : { wire: 'openai-responses', baseUrl: 'https://api.x.ai/v1' },
-      loginHint: `ora login ${selected}를 실행합니다.`,
-      config,
-      env,
-      oraHome,
-      pin,
-    });
-  }
-
-  throw new UsageError(
-    '설정 providers.claude.model, providers.codex.model, providers.grok.model 중 하나가 필요합니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
-  );
+interface ModelRouterOptions {
+  readonly command: LaunchCommand;
+  readonly config: Config;
+  readonly chains: Record<string, ModelChainEntry[]>;
+  readonly env: NodeJS.ProcessEnv;
+  readonly claudeResume: ClaudeResumeState | undefined;
+  readonly isolation: Isolation;
+  readonly oraHome: string;
+  readonly pin: SessionRecord['accountPin'];
 }
 
-interface FetchProviderModelOptions {
-  readonly provider: 'claude' | 'codex' | 'grok';
-  readonly modelId: string;
+/** 가짜 모델 스크립트에 체인이 없을 때 쓰는 항목이다. */
+const SCRIPTED_ENTRY: ModelChainEntry = {
+  provider: 'fake',
+  model: 'fake/scripted',
+  source: 'config',
+};
+
+/** 역할의 체인을 내주고, 체인 항목으로 모델을 만든다. 같은 항목은 한 번만 만든다. `--model-script`가 있으면 모든 항목이 같은 스크립트를 재생한다. */
+function createModelRouter(options: ModelRouterOptions): ModelRouter {
+  const { command, config, chains } = options;
+  const catalog = createCatalog(config.models);
+  const opened = new Map<string, Promise<ModelPort>>();
+  let script: Promise<ModelPort> | undefined;
+  const create = async (entry: ModelChainEntry): Promise<ModelPort> => {
+    if (command.modelScriptPath !== undefined) {
+      const path = command.modelScriptPath;
+      script ??= loadScriptedModel(path, command.modelInputLogPath).catch((error: unknown) => {
+        throw new UsageError(`가짜 모델 스크립트를 읽을 수 없습니다: ${String(error)}`);
+      });
+      return { ...(await script), model: entry.model };
+    }
+    const { claude } = config.providers;
+    if (entry.provider === 'claude' && claude.via === 'fetch') {
+      return createFetchProviderModel({
+        entry,
+        settings: claude,
+        defaults: { wire: 'anthropic-messages', baseUrl: 'https://api.anthropic.com' },
+        loginHint: 'ora login claude를 실행하거나 providers.claude.via를 "sdk"로 설정합니다.',
+        ...options,
+      });
+    }
+    if (entry.provider === 'claude') {
+      const createClaudeModel = claude.via === 'cli' ? createClaudeCliModel : createClaudeSdkModel;
+      return createClaudeModel({
+        model: entry.model,
+        cacheTtl: claude.cacheTtl,
+        commands: claude.command,
+        env: options.env,
+        cwd: command.cwd,
+        ...(entry.effort === undefined ? {} : { effort: entry.effort }),
+        ...(options.claudeResume === undefined ? {} : { resumeFrom: options.claudeResume }),
+        persistSession: options.isolation !== 'clean-home',
+      });
+    }
+    const codex = entry.provider === 'codex';
+    return createFetchProviderModel({
+      entry,
+      settings: config.providers[codex ? 'codex' : 'grok'],
+      defaults: codex
+        ? { wire: 'openai-codex-responses', baseUrl: 'https://chatgpt.com/backend-api' }
+        : { wire: 'openai-responses', baseUrl: 'https://api.x.ai/v1' },
+      loginHint: `ora login ${entry.provider}를 실행합니다.`,
+      ...options,
+    });
+  };
+  return {
+    fallback: config.fallback,
+    chain: (role) => {
+      const own = chains[role];
+      const list = own !== undefined && own.length > 0 ? own : (chains.default ?? []);
+      return list.length > 0 ? list : [SCRIPTED_ENTRY];
+    },
+    open: (entry) => {
+      const key = `${entry.provider}/${entry.model}:${entry.effort ?? ''}`;
+      let port = opened.get(key);
+      if (port === undefined) {
+        port = create(entry).then((made) => {
+          const contextWindow = made.contextWindow ?? catalog(entry.model)?.contextWindow;
+          return contextWindow === undefined ? made : { ...made, contextWindow };
+        });
+        opened.set(key, port);
+      }
+      return port;
+    },
+  };
+}
+
+interface FetchProviderModelOptions extends ModelRouterOptions {
+  readonly entry: ModelChainEntry;
   readonly settings: {
     readonly account?: string;
-    readonly effort?: 'low' | 'medium' | 'high';
     readonly maxTokens: number;
     readonly cacheTtl?: '5m' | '1h';
   };
   /** 카탈로그에 없는 모델 id가 쓰는 전송 형식과 주소다. */
   readonly defaults: Pick<CatalogModel, 'wire' | 'baseUrl'>;
   readonly loginHint: string;
-  readonly config: Config;
-  readonly env: NodeJS.ProcessEnv;
-  readonly oraHome: string;
-  readonly pin: SessionRecord['accountPin'];
 }
 
-/** 로그인한 계정으로 직접 호출하는 모델을 만든다. 계정이나 카탈로그 항목이 선택한 프로바이더와 맞지 않으면 세션을 시작하지 않는다. */
+/** 로그인한 계정으로 직접 호출하는 모델을 만든다. 로그인한 계정이 없으면 세션을 시작하지 않는다. */
 async function createFetchProviderModel(options: FetchProviderModelOptions): Promise<ModelPort> {
-  const { provider, modelId, settings, config } = options;
-  const known = createCatalog(config.models)(modelId);
-  if (known !== undefined && known.provider !== provider) {
-    throw new UsageError(
-      `모델 ${modelId}의 카탈로그 프로바이더가 ${known.provider}입니다. providers.${provider}.model에는 ${provider} 모델을 적습니다.`,
-    );
-  }
+  const { entry, settings, config } = options;
+  const provider = entry.provider;
+  const known = createCatalog(config.models)(entry.model);
   const store = createAccountStore({ path: join(options.oraHome, AUTH_FILE), env: options.env });
   const accounts = await store.list(provider);
   if (
@@ -317,7 +329,7 @@ async function createFetchProviderModel(options: FetchProviderModelOptions): Pro
     );
   }
   const catalog: CatalogModel = {
-    id: modelId,
+    id: entry.model,
     provider,
     ...options.defaults,
     contextWindow: 200_000,
@@ -335,7 +347,7 @@ async function createFetchProviderModel(options: FetchProviderModelOptions): Pro
     ...(options.pin === undefined ? {} : { pin: options.pin }),
     wireOptions: {
       maxTokens: Math.min(settings.maxTokens, catalog.maxOutputTokens),
-      ...(settings.effort === undefined ? {} : { effort: settings.effort }),
+      ...(entry.effort === undefined ? {} : { effort: entry.effort }),
     },
   });
 }
@@ -512,16 +524,32 @@ export async function executeSession(
       `--isolation ${isolation}이 세션 기록의 ${resume.session.isolation}을 대체합니다. 새 값을 session.json에 기록합니다.\n`,
     );
   }
-  // clean-home에서는 Claude Code 세션을 남기지 않고 기록 재주입으로만 재개한다.
-  const model = await createModel(
+  let userModel = command.type === 'createSession' ? command.model : undefined;
+  // 재개하는 세션은 만들 때 사용자가 고른 모델을 기록에서 되살린다.
+  const chosen = resume?.session.models.find(
+    (used) => used.role === 'default' && used.source === 'user',
+  );
+  if (chosen !== undefined) {
+    userModel = `${chosen.provider}/${chosen.model}${chosen.effort === undefined ? '' : `:${chosen.effort}`}`;
+  }
+  const chains = resolveChains(config, {
+    scripted: command.modelScriptPath !== undefined,
+    ...(userModel === undefined ? {} : { userModel }),
+  });
+  const models = createModelRouter({
     command,
     config,
-    hooks.env,
+    chains,
+    env: hooks.env,
     claudeResume,
     isolation,
     oraHome,
-    resume?.session.accountPin,
-  );
+    pin: resume?.session.accountPin,
+  });
+  // 첫 모델은 세션을 시작하기 전에 만들어 계정이나 설정이 틀리면 사용 오류로 멈춘다. 나머지 체인은 필요할 때 만든다.
+  const [firstModel] = models.chain('default');
+  if (firstModel === undefined) throw new UsageError('default 체인에 모델이 없습니다.');
+  await models.open(firstModel);
 
   const storage = await createSessionStorage(sessionDir);
   // 워커가 죽으면 호스트가 이 파일의 셸 그룹을 종료한다. 셸은 워커와 다른 프로세스 그룹이라 워커 그룹 종료로는 닿지 않는다.
@@ -544,11 +572,9 @@ export async function executeSession(
       writeShellPids();
     },
   });
-  const contextWindow =
-    model.contextWindow ?? createCatalog(config.models)(model.model)?.contextWindow;
   const outcome = await runSession(
     {
-      model,
+      models,
       tools: createBuiltinTools({
         runner,
         shellTimeoutMs: config.tools.shellTimeoutMs,
@@ -608,7 +634,6 @@ export async function executeSession(
         protectToolTokens: config.context.protectToolTokens,
         minPruneSavings: config.context.minPruneSavings,
         methodOrder: config.context.methodOrder,
-        ...(contextWindow === undefined ? {} : { contextWindow }),
       },
       configSummary: {
         limits: config.limits,

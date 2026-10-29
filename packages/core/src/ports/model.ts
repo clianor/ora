@@ -49,3 +49,32 @@ export interface ModelPort {
   /** 마지막 요청을 보낸 계정이다. 엔진이 `session.json`에 적어 재개한 세션이 같은 계정을 이어 쓰게 한다. */
   accountPin?(): SessionRecord['accountPin'];
 }
+
+/** 사용량 한도 때문에 요청을 보낼 수 없다는 오류다. 어댑터의 한도 오류가 이 클래스를 상속한다. */
+export class ModelLimitError extends Error {
+  /** 한도가 해제되는 시각(epoch ms)이다. 프로바이더가 알려 주지 않으면 없다. */
+  readonly resetAtMs?: number;
+  constructor(message: string, resetAtMs?: number) {
+    super(message);
+    if (resetAtMs !== undefined) this.resetAtMs = resetAtMs;
+  }
+}
+
+export interface ModelChainEntry {
+  readonly provider: string;
+  readonly model: string;
+  readonly effort?: 'low' | 'medium' | 'high';
+  /** 설정 체인의 항목이면 `config`, 사용자가 세션을 만들 때 고른 모델이면 `user`다. */
+  readonly source: 'config' | 'user';
+}
+
+/** 역할마다 모델 체인을 내주고, 체인 항목으로 모델을 만든다. 모델은 요청이 필요할 때 만든다. */
+export interface ModelRouter {
+  /** 역할의 체인이다. 비어 있는 역할은 `default` 체인을 돌려주며, 항상 항목이 하나 이상이다. */
+  chain(role: string): readonly ModelChainEntry[];
+  open(entry: ModelChainEntry): Promise<ModelPort>;
+  readonly fallback: {
+    readonly on: 'any' | 'usage-limit' | 'except-usage-limit';
+    readonly revertPolicy: 'cooldown-expiry' | 'never';
+  };
+}

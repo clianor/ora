@@ -5,7 +5,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
-import { createCatalog } from '@ora/adapters';
+import { createAccountStore, createCatalog } from '@ora/adapters';
 import {
   answerBodySchema,
   approvalBodySchema,
@@ -32,11 +32,12 @@ import type {
   PendingApproval,
   PendingQuestion,
   QuestionRequest,
+  RoutingResponse,
   SessionDetailResponse,
 } from '@ora/protocol';
 import { readSessionRecord, readTodos, readTranscriptText } from '@ora/store';
 import { z } from 'zod';
-import { UsageError, loadConfig, resolveSessionsDir, selectProvider } from './config.ts';
+import { UsageError, loadConfig, resolveChains, resolveSessionsDir } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { applyTodoActionToStoppedSession, launchSession, listSessions } from './supervisor.ts';
 import type { UserTodoAction } from '@ora/core';
@@ -181,11 +182,7 @@ function parseBody<T extends z.ZodType>(schema: T, raw: unknown): z.infer<T> {
 export async function startLocalServer(options: LocalServerOptions): Promise<LocalServer> {
   const oraHome = resolveOraHome(options.env);
   const config = await loadConfig(options.configPath, oraHome);
-  if (options.modelScriptPath === undefined && selectProvider(config) === undefined) {
-    throw new UsageError(
-      '설정 providers.claude.model, providers.codex.model, providers.grok.model 중 하나가 필요합니다. 모델 이름을 설정하거나 --model-script를 줍니다.',
-    );
-  }
+  resolveChains(config, { scripted: options.modelScriptPath !== undefined });
   const sessionsDir = resolveSessionsDir(config, oraHome);
   const catalogOf = createCatalog(config.models);
   const token = randomBytes(32).toString('hex');
@@ -497,6 +494,25 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       await serveStatic(url.pathname, res);
       return;
     }
+    if (segments[1] === 'routing' && segments.length === 2) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const store = createAccountStore({ path: join(oraHome, 'auth.json'), env: options.env });
+      const chains = resolveChains(config, { scripted: options.modelScriptPath !== undefined });
+      const roles: RoutingResponse['roles'] = {};
+      for (const [role, chain] of Object.entries(chains)) {
+        roles[role] = await Promise.all(
+          chain.map(async ({ provider, model, effort }) => ({
+            provider,
+            model,
+            ...(effort === undefined ? {} : { effort }),
+            hasAccount: (await store.list(provider)).length > 0,
+          })),
+        );
+      }
+      const routing: RoutingResponse = { roles, fallback: config.fallback };
+      reply(res, 200, routing);
+      return;
+    }
     if (segments[1] === 'info' && segments.length === 2) {
       if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
       const branch = await readBranch(options.cwd);
@@ -524,6 +540,17 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       }
       if (method === 'POST') {
         const body = parseBody(createSessionBodySchema, await readJson(req));
+        if (body.model !== undefined) {
+          try {
+            resolveChains(config, {
+              userModel: body.model,
+              scripted: options.modelScriptPath !== undefined,
+            });
+          } catch (error) {
+            if (error instanceof UsageError) throw new HttpError(400, error.message);
+            throw error;
+          }
+        }
         const sessionId = await startSession({
           type: 'createSession',
           task: body.task,
@@ -532,6 +559,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
           ...configArgs,
           ...isolationArgs,
           ...(body.permissionMode === undefined ? {} : { permissionMode: body.permissionMode }),
+          ...(body.model === undefined ? {} : { model: body.model }),
         });
         reply(res, 201, { sessionId });
         return;

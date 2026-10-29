@@ -112,6 +112,25 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       durationMs: z.number().int().nonnegative(),
       /** 요약 요청이면 `compaction`이다. 스텝 요청에는 없다. 엔진은 이 값이 있는 요청을 입력 토큰 어림의 기준으로 쓰지 않는다. */
       purpose: z.literal('compaction').optional(),
+      /** 요청이 탄 모델 체인의 역할이다. 비어 있는 역할은 `default` 체인을 타므로 `default`로 남는다. */
+      role: z.string().min(1).optional(),
+    }),
+  ),
+  defineEvent(
+    'retry',
+    z.strictObject({
+      layer: z.enum(['transport', 'session']),
+      /** 같은 요청을 다시 보낸 횟수다. 첫 재시도가 1이다. */
+      attempt: z.number().int().positive(),
+      /** `revert`는 첫 모델의 한도 해제 시각이 지나 엔진이 첫 모델로 되돌아간 경우다. */
+      reason: z.enum(['usage-limit', 'error', 'revert']),
+      /** 실패한 요청의 오류 문구다. 토큰을 지운 뒤 적는다. */
+      message: z.string().optional(),
+      delayMs: z.number().int().nonnegative(),
+      /** 바뀐 모델의 id다. */
+      switchedTo: z.string().min(1),
+      chainPosition: z.number().int().nonnegative(),
+      role: z.string().min(1),
     }),
   ),
   defineEvent('intent', z.strictObject({ text: z.string().min(1) })),

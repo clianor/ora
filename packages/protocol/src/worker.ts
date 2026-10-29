@@ -35,6 +35,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     ...launchFields,
     task: z.string().min(1),
     permissionMode: permissionModeSchema.optional(),
+    /** `<프로바이더>/<모델>[:<추론 강도>]`다. 주면 이 세션의 `default` 체인 맨 앞에 넣는다. */
+    model: z.string().min(1).optional(),
   }),
   z.strictObject({
     type: z.literal('resumeSession'),

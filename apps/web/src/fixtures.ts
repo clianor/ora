@@ -44,7 +44,9 @@ function createRecord(
     actor: 'user',
     status,
     repo,
-    models: [{ model: 'default', role: 'main' }],
+    models: [
+      { model: 'default', provider: 'claude', role: 'default', chainPosition: 0, source: 'config' },
+    ],
     permissionMode: 'always-ask',
     isolation: 'harness',
     promptHash: 'p-demo',

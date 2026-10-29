@@ -33,7 +33,15 @@ import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
 import type { MemoryPort } from './ports/memory.ts';
-import type { ModelMessage, ModelPort, ModelRequest, ModelStreamEvent } from './ports/model.ts';
+import { ModelLimitError } from './ports/model.ts';
+import type {
+  ModelChainEntry,
+  ModelMessage,
+  ModelPort,
+  ModelRequest,
+  ModelRouter,
+  ModelStreamEvent,
+} from './ports/model.ts';
 import type { SessionStore } from './ports/session-store.ts';
 import type { Clock } from './ports/system.ts';
 import type { Tool, ToolOutput } from './ports/tool.ts';
@@ -92,12 +100,10 @@ export interface EngineSettings {
   readonly protectToolTokens: number;
   readonly minPruneSavings: number;
   readonly methodOrder: readonly ('shake' | 'handoff' | 'summary')[];
-  /** 모델 컨텍스트 창이다. 모르면 비워 두고, 그러면 압축도 넘침 검사도 하지 않는다. */
-  readonly contextWindow?: number;
 }
 
 export interface EngineDeps {
-  readonly model: ModelPort;
+  readonly models: ModelRouter;
   readonly tools: readonly Tool[];
   readonly runner: CommandRunner;
   readonly sink: TranscriptSink;
@@ -222,7 +228,7 @@ const STATUS_RANK: Record<TodoStatus, number> = {
 };
 
 export async function runSession(deps: EngineDeps, input: RunInput): Promise<RunOutcome> {
-  const { model, runner, store, workspace, memory, clock } = deps;
+  const { models: router, runner, store, workspace, memory, clock } = deps;
   const { settings, signal, softStop, resume } = input;
   const recorder = createRecorder(input.sessionId, deps.sink, clock, resume?.plan.lastSeq);
   const toolMap = new Map(deps.tools.map((tool) => [tool.name, tool]));
@@ -314,7 +320,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     actor: 'user',
     status: 'created',
     ...(input.repo === undefined ? {} : { repo: input.repo }),
-    models: [{ model: model.model, role: 'default' }],
+    models: [],
     permissionMode: settings.permissionMode,
     isolation: settings.isolation,
     promptHash,
@@ -325,6 +331,46 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     await store.saveSession(session);
   };
   const saveTodos = () => store.saveTodos(scrubValue([...todos.values()]));
+  const roleState = new Map<string, { position: number; resetAtMs?: number }>();
+  const stateOf = (role: string) => {
+    let state = roleState.get(role);
+    if (state === undefined) {
+      const last = resume?.session.models.findLast((used) => used.role === role);
+      const position = last?.chainPosition ?? 0;
+      state = { position: position < router.chain(role).length ? position : 0 };
+      roleState.set(role, state);
+    }
+    return state;
+  };
+  const entryAt = (role: string, position: number): ModelChainEntry => {
+    const entry = router.chain(role)[position];
+    if (entry === undefined)
+      throw new Error(`${role} 역할의 체인에 ${position}번 항목이 없습니다.`);
+    return entry;
+  };
+  const currentPort = (role: string): Promise<ModelPort> =>
+    router.open(entryAt(role, stateOf(role).position));
+  /** 세션 기록의 `models`에 이 역할이 지금 쓰는 모델을 남긴다. 같은 역할·위치는 한 항목이고 가장 나중에 쓴 항목이 맨 뒤에 온다. */
+  const noteUse = async (role: string) => {
+    const { position } = stateOf(role);
+    const entry = entryAt(role, position);
+    const last = session.models.findLast((used) => used.role === role);
+    if (last?.chainPosition === position && last.model === entry.model) return;
+    const used = {
+      model: entry.model,
+      provider: entry.provider,
+      role,
+      chainPosition: position,
+      ...(entry.effort === undefined ? {} : { effort: entry.effort }),
+      source: position === 0 ? entry.source : ('fallback' as const),
+    };
+    await saveSession({
+      models: [
+        ...session.models.filter((old) => !(old.role === role && old.chainPosition === position)),
+        used,
+      ],
+    });
+  };
 
   let taskSeq = 0;
   if (resume === undefined) {
@@ -344,6 +390,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     });
     await saveSession({});
     await saveSession({ status: 'running' });
+    await noteUse('default');
     await emit('user', {
       type: 'message',
       payload: {
@@ -1150,6 +1197,79 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     if (history.length > before) historySeqs.push(recorder.lastSeq());
     else historySeqs[historySeqs.length - 1] = recorder.lastSeq();
   };
+  const shouldFallback = (error: unknown) => {
+    const { on } = router.fallback;
+    if (on === 'any') return true;
+    return error instanceof ModelLimitError === (on === 'usage-limit');
+  };
+  /**
+   * 역할의 체인에서 지금 위치의 모델로 요청 한 번을 보낸다. 실패하면 `fallback.on`에 맞을 때 다음 모델로 같은 요청을 다시 보내고 `retry` 이벤트를 남긴다.
+   * 첫 모델이 한도 오류로 넘어갔고 그 해제 시각이 지났으면, 요청 전에 첫 모델로 되돌아간다. 취소는 폴백하지 않는다.
+   */
+  const requestModel = async (role: string, request: ModelRequest, modelSignal: AbortSignal) => {
+    const state = stateOf(role);
+    const chain = router.chain(role);
+    let attempt = 0;
+    const emitRetry = async (
+      reason: 'usage-limit' | 'error' | 'revert',
+      error: unknown,
+      delayMs: number,
+    ) => {
+      attempt += 1;
+      const target = entryAt(role, state.position);
+      await emit('engine', {
+        type: 'retry',
+        payload: {
+          layer: 'session',
+          attempt,
+          reason,
+          ...(error instanceof Error ? { message: scrubText(error.message).text } : {}),
+          delayMs,
+          switchedTo: target.model,
+          chainPosition: state.position,
+          role,
+        },
+      });
+    };
+    if (
+      state.position > 0 &&
+      router.fallback.revertPolicy === 'cooldown-expiry' &&
+      state.resetAtMs !== undefined &&
+      clock.now().getTime() >= state.resetAtMs
+    ) {
+      state.position = 0;
+      delete state.resetAtMs;
+      await emitRetry('revert', undefined, 0);
+    }
+    for (;;) {
+      const port = await currentPort(role);
+      const started = clock.now().getTime();
+      try {
+        let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
+        for await (const event of port.stream(request, modelSignal)) {
+          if (event.type === 'completed') completed = event;
+        }
+        if (completed === undefined) throw new Error('모델 스트림이 completed 없이 끝났습니다.');
+        await noteUse(role);
+        return {
+          completed,
+          port,
+          chainPosition: state.position,
+          durationMs: Math.max(0, clock.now().getTime() - started),
+        };
+      } catch (error) {
+        if (signal.aborted || softStop.aborted) throw error;
+        if (state.position + 1 >= chain.length || !shouldFallback(error)) throw error;
+        if (state.position === 0) {
+          if (error instanceof ModelLimitError && error.resetAtMs !== undefined) {
+            state.resetAtMs = error.resetAtMs;
+          } else delete state.resetAtMs;
+        }
+        state.position += 1;
+        await emitRetry(error instanceof ModelLimitError ? 'usage-limit' : 'error', error, 0);
+      }
+    }
+  };
   /**
    * 요약과 인계 문서 요청이다. 응답의 텍스트만 돌려주고 도구 호출은 무시한다. 사용량은 `purpose: 'compaction'`으로 남긴다.
    * 출력이 `cap`을 넘었거나 상한 때문에 잘렸으면 `undefined`다. 상한을 실을 수 없는 형식은 받은 문서의 어림으로 검사한다.
@@ -1159,21 +1279,21 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     modelSignal: AbortSignal,
     cap: number,
   ): Promise<string | undefined> => {
-    const started = clock.now().getTime();
-    let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
-    for await (const event of model.stream({ ...request, maxOutputTokens: cap }, modelSignal)) {
-      if (event.type === 'completed') completed = event;
-    }
-    if (completed === undefined) throw new Error('압축 요청 스트림이 completed 없이 끝났습니다.');
+    const { completed, port, chainPosition, durationMs } = await requestModel(
+      'compaction',
+      { ...request, maxOutputTokens: cap },
+      modelSignal,
+    );
     await emit('model', {
       type: 'model_request',
       payload: {
-        model: model.model,
-        adapter: model.adapter,
-        chainPosition: 0,
+        model: port.model,
+        adapter: port.adapter,
+        chainPosition,
+        role: 'compaction',
         nativeToolCalls: completed.nativeToolCalls,
         usage: completed.usage,
-        durationMs: Math.max(0, clock.now().getTime() - started),
+        durationMs,
         purpose: 'compaction',
       },
     });
@@ -1182,7 +1302,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       .join('\n')
       .trim();
     if (completed.stopReason === 'max_tokens') return undefined;
-    if (model.acceptsOutputCap !== true && estimateTokens(text) > cap) return undefined;
+    if (port.acceptsOutputCap !== true && estimateTokens(text) > cap) return undefined;
     return text;
   };
   /** 필수 절만 있는 요약 문서의 어림이다. */
@@ -1258,7 +1378,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
    * 압축 결과가 기준선의 80% 아래에 오도록 줄인 원문 유지 범위의 시작 위치와, 문서가 쓸 수 있는 출력 상한이다.
    * 상한은 min(기본 상한, 모델의 최대 출력, 남은 자리)이고, 남은 자리가 `MIN_OUTPUT_ROOM`보다 작으면 `undefined`다.
    */
-  const keepCut = (window: number, minimal = false): { cut: number; cap: number } | undefined => {
+  const keepCut = (
+    window: number,
+    maxOutput: number | undefined,
+    minimal = false,
+  ): { cut: number; cap: number } | undefined => {
     const base =
       window * settings.compactAtRatio * PROGRESS_RATIO -
       (estimateTokens(system) + estimateTokens(specs) + requiredTokens());
@@ -1271,9 +1395,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     if (room < MIN_OUTPUT_ROOM) return undefined;
     return {
       cut,
-      cap: Math.floor(
-        Math.min(COMPACTION_OUTPUT_CAP, model.maxOutputTokens ?? COMPACTION_OUTPUT_CAP, room),
-      ),
+      cap: Math.floor(Math.min(COMPACTION_OUTPUT_CAP, maxOutput ?? COMPACTION_OUTPUT_CAP, room)),
     };
   };
   const runShake = async (): Promise<boolean> => {
@@ -1290,11 +1412,12 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     modelSignal: AbortSignal,
     minimal = false,
   ): Promise<boolean> => {
-    const kept = keepCut(window, minimal);
+    const port = await currentPort('compaction');
+    const kept = keepCut(window, port.maxOutputTokens, minimal);
     if (kept === undefined) return false;
     const { cut, cap } = kept;
     const messages = [...history];
-    const prompt = model.acceptsOutputCap === true ? HANDOFF_PROMPT : withCap(HANDOFF_PROMPT, cap);
+    const prompt = port.acceptsOutputCap === true ? HANDOFF_PROMPT : withCap(HANDOFF_PROMPT, cap);
     appendMessage(messages, { role: 'user', content: [{ type: 'text', text: prompt }] });
     const narrative = await requestCompaction({ system, messages, tools: specs }, modelSignal, cap);
     if (narrative === undefined || narrative === '') return false;
@@ -1306,7 +1429,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     modelSignal: AbortSignal,
     minimal = false,
   ): Promise<boolean> => {
-    const kept = keepCut(window, minimal);
+    const port = await currentPort('compaction');
+    const kept = keepCut(window, port.maxOutputTokens, minimal);
     if (kept === undefined) return false;
     const { cut, cap } = kept;
     const start = firstEligible();
@@ -1329,7 +1453,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     ) =>
       requestCompaction(
         {
-          system: model.acceptsOutputCap === true ? askSystem : withCap(askSystem, askCap),
+          system: port.acceptsOutputCap === true ? askSystem : withCap(askSystem, askCap),
           messages: [
             { role: 'user', content: [{ type: 'text', text: buildSummaryInput(messages, prior) }] },
           ],
@@ -1489,7 +1613,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       stepId = `step-${step}`;
       toolSucceeded = false;
 
-      const window = settings.contextWindow;
+      const window = (await currentPort('default')).contextWindow;
       if (window !== undefined) {
         const threshold = window * settings.compactAtRatio;
         // 시스템 프롬프트, 도구 명세, 필수 절만으로 창을 넘으면 더 줄일 곳이 없다 (SPEC 4.3절 넘침).
@@ -1548,26 +1672,23 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           responsesSincePass = reached ? Number.POSITIVE_INFINITY : 0;
         }
       }
-      const started = clock.now().getTime();
-      let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
       const modelSignal = AbortSignal.any([signal, softStop]);
-      for await (const event of model.stream(
+      const { completed, port, chainPosition, durationMs } = await requestModel(
+        'default',
         { system, messages: history, tools: specs },
         modelSignal,
-      )) {
-        if (event.type === 'completed') completed = event;
-      }
-      if (completed === undefined) throw new Error('모델 스트림이 completed 없이 끝났습니다.');
+      );
       const content = [...completed.content];
       await emit('model', {
         type: 'model_request',
         payload: {
-          model: model.model,
-          adapter: model.adapter,
-          chainPosition: 0,
+          model: port.model,
+          adapter: port.adapter,
+          chainPosition,
+          role: 'default',
           nativeToolCalls: completed.nativeToolCalls,
           usage: completed.usage,
-          durationMs: Math.max(0, clock.now().getTime() - started),
+          durationMs,
         },
       });
       history.push({ role: 'assistant', content: scrubValue(content) });
@@ -1589,7 +1710,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         completed.usage.outputTokens;
       knownLength = history.length;
       responsesSincePass += 1;
-      const accountPin = model.accountPin?.();
+      const accountPin = port.accountPin?.();
       if (
         accountPin !== undefined &&
         JSON.stringify(accountPin) !== JSON.stringify(session.accountPin)

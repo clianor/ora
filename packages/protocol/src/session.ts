@@ -19,7 +19,18 @@ export const sessionRecordSchema = z.strictObject({
   status: sessionStatusSchema,
   endReason: endReasonSchema.optional(),
   repo: z.string().min(1).optional(),
-  models: z.array(z.strictObject({ model: z.string().min(1), role: z.string().min(1) })),
+  /** 세션이 실제로 쓴 모델이다. 역할과 체인 위치마다 하나이고, 가장 나중에 쓴 항목이 맨 뒤에 온다. */
+  models: z.array(
+    z.strictObject({
+      model: z.string().min(1),
+      provider: z.string().min(1),
+      role: z.string().min(1),
+      chainPosition: z.number().int().nonnegative(),
+      effort: z.enum(['low', 'medium', 'high']).optional(),
+      /** `config`는 설정 체인, `user`는 사용자가 세션을 만들 때 고른 모델, `fallback`은 앞 모델이 실패해 넘어간 모델이다. */
+      source: z.enum(['config', 'user', 'fallback']),
+    }),
+  ),
   permissionMode: permissionModeSchema,
   isolation: isolationSchema,
   promptHash: z.string().min(1),

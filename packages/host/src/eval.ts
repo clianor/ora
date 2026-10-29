@@ -137,13 +137,13 @@ async function loadTasks(setPath: string): Promise<EvalTask[]> {
 }
 
 const baseConfigSchema = z.looseObject({
-  providers: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
+  roles: z.record(z.string(), z.unknown()).default({}),
   paths: z.record(z.string(), z.unknown()).default({}),
   limits: z.record(z.string(), z.unknown()).default({}),
 });
 type BaseConfig = z.infer<typeof baseConfigSchema>;
 
-/** 설정 파일의 다른 값은 그대로 두고, 실행마다 바꿀 `providers`·`paths`·`limits`만 꺼낸다. 파일 형식은 `loadConfig`가 이미 검사했다. */
+/** 설정 파일의 다른 값은 그대로 두고, 실행마다 바꿀 `roles`·`paths`·`limits`만 꺼낸다. 파일 형식은 `loadConfig`가 이미 검사했다. */
 async function readBaseConfig(
   configPath: string | undefined,
   oraHome: string,
@@ -322,14 +322,10 @@ interface RunContext {
 /** 작업 × 모델 하나를 위한 설정 파일을 쓴다. 세션 기록과 기억은 결과 폴더 아래로 보내고, `auth.json`은 `ORA_HOME`에서 그대로 읽는다. */
 async function writeRunConfig(context: RunContext, task: EvalTask, model: string, id: string) {
   const { baseConfig, resultDir, options } = context;
-  const providers: Record<string, Record<string, unknown>> = { ...baseConfig.providers };
+  const roles: Record<string, unknown> = { ...baseConfig.roles };
   if (options.modelScriptPath === undefined) {
     const provider = context.catalog(model)?.provider;
-    for (const name of PROVIDERS) {
-      const rest = { ...providers[name] };
-      delete rest.model;
-      providers[name] = name === provider ? { ...rest, model } : rest;
-    }
+    roles.default = { chain: [`${provider ?? ''}/${model}`] };
   }
   const config = {
     ...baseConfig,
@@ -339,7 +335,7 @@ async function writeRunConfig(context: RunContext, task: EvalTask, model: string
       sessions: join(resultDir, 'sessions'),
       memory: join(resultDir, 'memory', id),
     },
-    providers,
+    roles,
     ...(task.spec.maxSteps === undefined
       ? {}
       : { limits: { ...baseConfig.limits, maxSteps: task.spec.maxSteps } }),
