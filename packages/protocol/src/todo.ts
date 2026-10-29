@@ -25,6 +25,16 @@ export const evidenceSchema = z.strictObject({
   scopeDigest: z.string().regex(/^sha256:[0-9a-f]+$/),
   outputRef: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
+  /** 게이트가 찾은 항목이다. 있으면 종료 코드 0이어도 `failed`로 기록했고, `verify.waive`는 이 값이 있는 todo만 받는다. */
+  gateFindings: z.array(z.string()).optional(),
+  /** 사용자가 게이트 예외를 승인한 기록이다. 있으면 화면이 "검증됨 · 예외 승인"으로 구분한다. */
+  waiver: z
+    .strictObject({
+      reason: z.string().min(1),
+      approvedBy: z.literal('user'),
+      at: timestampSchema,
+    })
+    .optional(),
 });
 export type Evidence = z.infer<typeof evidenceSchema>;
 

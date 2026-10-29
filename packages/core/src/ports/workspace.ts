@@ -20,4 +20,8 @@ export interface WorkspacePort {
   hashText(text: string): Promise<string>;
   /** 쓰기 범위 파일 내용의 해시다. `sha256:<16진수>` 형식이다. 없는 파일은 없다는 사실을 해시에 반영한다. */
   hashFiles(paths: readonly string[]): Promise<string>;
+  /** 쓰기 범위가 가리키는 파일의 절대 경로다. 디렉터리는 안쪽 파일로 펼친다. */
+  listScopeFiles(paths: readonly string[]): Promise<string[]>;
+  /** 절대 경로 파일의 텍스트다. 없으면 `undefined`다. */
+  readText(path: string): Promise<string | undefined>;
 }

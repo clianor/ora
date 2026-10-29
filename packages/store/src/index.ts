@@ -14,6 +14,8 @@ async function writeFileAtomic(path: string, content: string): Promise<void> {
 export interface SessionStorage {
   readonly transcript: TranscriptSink;
   readonly sessions: SessionStore;
+  /** 세션에서 `file_write`·`file_edit`이 처음 고치는 파일의 직전 내용을 남긴다. 이미 있으면 덮어쓰지 않는다. */
+  recordBaseline(path: string, before: string | undefined): Promise<void>;
 }
 
 /** 세션 디렉터리 하나의 transcript.jsonl, session.json, todos.json, artifacts/를 다룬다. */
@@ -46,7 +48,26 @@ export async function createSessionStorage(sessionDir: string): Promise<SessionS
     },
   };
 
+  const baselinesPath = join(sessionDir, 'baselines.json');
+  const readBaselines = async (): Promise<Record<string, string | null>> =>
+    JSON.parse(await readFile(baselinesPath, 'utf8').catch(() => '{}')) as Record<
+      string,
+      string | null
+    >;
+  let baselineQueue: Promise<void> = Promise.resolve();
+  const recordBaseline = (path: string, before: string | undefined): Promise<void> => {
+    const next = baselineQueue.then(async () => {
+      const all = await readBaselines();
+      if (Object.hasOwn(all, path)) return;
+      all[path] = before ?? null;
+      await writeFileAtomic(baselinesPath, JSON.stringify(all));
+    });
+    baselineQueue = next.catch(() => undefined);
+    return next;
+  };
+
   const sessions: SessionStore = {
+    readBaselines,
     async saveSession(session) {
       const parsed = sessionRecordSchema.parse(session);
       await writeFileAtomic(
@@ -93,7 +114,7 @@ export async function createSessionStorage(sessionDir: string): Promise<SessionS
     },
   };
 
-  return { transcript, sessions };
+  return { transcript, sessions, recordBaseline };
 }
 
 /** 세션 디렉터리의 transcript.jsonl 본문이다. 파일이 없으면 `undefined`다. */

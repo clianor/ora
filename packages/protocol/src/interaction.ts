@@ -14,6 +14,14 @@ export const approvalDetailSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({ kind: z.literal('file'), path: z.string(), content: z.string() }),
   z.strictObject({ kind: z.literal('arguments'), args: z.record(z.string(), z.unknown()) }),
+  /** `verify.waive` 승인 카드다. 게이트가 막은 todo를 예외로 `verified`로 바꿀지 사용자에게 묻는다. */
+  z.strictObject({
+    kind: z.literal('verify_waiver'),
+    reason: z.string(),
+    findings: z.array(z.string()),
+    command: z.string(),
+    exitCode: z.number().int().optional(),
+  }),
 ]);
 export type ApprovalDetail = z.infer<typeof approvalDetailSchema>;
 

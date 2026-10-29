@@ -13,6 +13,7 @@ const titles = {
   shell: '이 명령을 실행할까요?',
   file: '이 파일을 쓸까요?',
   arguments: '이 도구 호출을 실행할까요?',
+  verify_waiver: '검증 예외를 승인할까요?',
 } as const;
 
 interface ApprovalCardProps {

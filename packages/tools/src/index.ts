@@ -19,6 +19,8 @@ export interface BuiltinToolOptions {
   readonly secretPaths: readonly string[];
   /** 이 세션의 디렉터리다. `history.read`는 이 안의 `transcript.jsonl`과 `artifacts/`만 읽는다. */
   readonly sessionDir: string;
+  /** `file_write`·`file_edit`이 파일을 쓰기 직전에 부른다. 새 파일이면 `before`가 `undefined`다. */
+  readonly onBeforeWrite?: (path: string, before: string | undefined) => Promise<void>;
 }
 
 const FORBIDDEN_SEGMENTS = ['.ssh', '.aws'];
@@ -218,6 +220,7 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
       if (await isProtectedPath(path))
         return { status: 'error', text: `엔진이 관리하는 파일이라 쓸 수 없습니다: ${input.path}` };
       const before = await readFile(path, 'utf8').catch(() => undefined);
+      await options.onBeforeWrite?.(path, before);
       await writeAtomic(path, input.content);
       seenHashes.set(path, hashContent(input.content));
       const bytes = Buffer.byteLength(input.content, 'utf8');
@@ -256,6 +259,7 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
           text: `oldText의 일치가 ${matches}곳입니다. 정확히 한 곳이어야 합니다.`,
         };
       }
+      await options.onBeforeWrite?.(path, before);
       const after = before.replace(input.oldText, () => input.newText);
       await writeAtomic(path, after);
       seenHashes.set(path, hashContent(after));

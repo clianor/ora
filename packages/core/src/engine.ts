@@ -23,9 +23,12 @@ import {
   stageAdvanceSchema,
   todoUpdateSchema,
   verifyRunSchema,
+  verifyWaiveSchema,
 } from './control-tools.ts';
 import { assessRisk, decidePermission } from './permission.ts';
 import { findHarnessCliCall } from './harness-cli.ts';
+import { findStubs, judgeGate } from './gate.ts';
+import type { GateResult } from './gate.ts';
 import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
@@ -671,7 +674,24 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const scrubbedOutput = scrubText(formatCommandOutput(result));
     const output = scrubbedOutput.text;
     const outputRef = await store.writeArtifact(callId, output);
-    const passed = result.exitCode === 0 && !result.timedOut;
+    const exitedClean = result.exitCode === 0 && !result.timedOut;
+    let gate: GateResult | undefined;
+    if (exitedClean) {
+      const baselines = await store.readBaselines();
+      const cwdPrefix = `${input.cwd.replace(/\/$/, '')}/`;
+      const stubs: string[] = [];
+      const unchecked: string[] = [];
+      for (const path of await workspace.listScopeFiles(todo.writeScope)) {
+        const after = await workspace.readText(path);
+        if (after === undefined) continue;
+        const shown = path.startsWith(cwdPrefix) ? path.slice(cwdPrefix.length) : path;
+        const before = baselines[path];
+        if (before === undefined) unchecked.push(shown);
+        else stubs.push(...findStubs(shown, before ?? '', after));
+      }
+      gate = judgeGate({ command: todo.verify.command, output, stubs, unchecked });
+    }
+    const passed = exitedClean && gate?.passed !== false;
     const evidence: Evidence = {
       command: todo.verify.command,
       ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
@@ -681,8 +701,24 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       scopeDigest: await workspace.hashFiles(todo.writeScope),
       outputRef,
       ...(result.timedOut ? { error: '시간 초과로 끝까지 실행하지 못했습니다.' } : {}),
+      ...(gate === undefined || gate.passed ? {} : { gateFindings: [...gate.findings] }),
     };
-    await emit('engine', { type: 'verification', payload: { todoId: todo.id, evidence } });
+    await emit('engine', {
+      type: 'verification',
+      payload: {
+        todoId: todo.id,
+        evidence,
+        ...(gate === undefined
+          ? {}
+          : {
+              gate: {
+                passed: gate.passed,
+                findings: [...gate.findings],
+                ...(gate.unchecked.length === 0 ? {} : { unchecked: [...gate.unchecked] }),
+              },
+            }),
+      },
+    });
     const repairs = todo.attempts - 1;
     const exhausted = !passed && repairs >= settings.maxRepairsPerTodo;
     const updated: Todo = {
@@ -726,10 +762,106 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     if (!passed && stage === 'verify') await enterStage('execute');
     return {
       status: 'ok',
-      text: `${todo.id}: ${finalTodo.status} (${result.timedOut ? 'timeout' : `exit ${result.exitCode ?? 'signal'}`})\n${evidence.summary}`,
+      text: `${todo.id}: ${finalTodo.status} (${result.timedOut ? 'timeout' : `exit ${result.exitCode ?? 'signal'}`})\n${evidence.summary}${
+        gate === undefined || gate.passed
+          ? ''
+          : `\n완성 무결성 게이트가 걸렸습니다. 종료 코드는 0이지만 verified가 아닙니다:\n${gate.findings.map((finding) => `- ${finding}`).join('\n')}\n스텁을 구현하고 건너뜀을 없앤 뒤 다시 검증합니다. 사용자가 일부러 요청한 경우처럼 정당한 사유가 있을 때만 verify.waive로 예외를 요청합니다.`
+      }`,
       outputRef,
       scrubHits: scrubbedOutput.hits,
     };
+  };
+
+  const runWaive = async (
+    data: z.infer<typeof verifyWaiveSchema>,
+    call: ToolCall,
+  ): Promise<ControlOutput> => {
+    const todo = todos.get(data.todoId);
+    const findings = todo?.evidence?.gateFindings;
+    if (
+      todo?.evidence === undefined ||
+      todo.status !== 'failed' ||
+      findings === undefined ||
+      findings.length === 0
+    ) {
+      return {
+        status: 'error',
+        text: `예외를 요청할 수 없습니다. 마지막 검증이 완성 무결성 게이트 때문에 failed가 된 todo만 대상입니다 (${data.todoId}: ${todo?.status ?? '없음'}).`,
+      };
+    }
+    const evidence = todo.evidence;
+    const record = (decision: 'approved' | 'denied') =>
+      emit('engine', {
+        type: 'permission',
+        payload: { callId: call.callId, mode: settings.permissionMode, decision, scope: 'once' },
+      });
+    if (deps.approval === undefined) {
+      await record('denied');
+      return {
+        status: 'error',
+        text: `headless 실행은 예외 승인을 받을 수 없어 ${todo.id}는 failed 그대로입니다. 게이트가 찾은 항목을 고칩니다.`,
+      };
+    }
+    const intent = typeof call.input.intent === 'string' ? call.input.intent : data.reason;
+    const request: ApprovalRequest = {
+      callId: call.callId,
+      tool: 'verify.waive',
+      tier: 'exec',
+      reason: intent,
+      detail: {
+        kind: 'verify_waiver',
+        reason: data.reason,
+        findings: [...findings],
+        command: evidence.command,
+        ...(evidence.exitCode === undefined ? {} : { exitCode: evidence.exitCode }),
+      },
+      todo: { id: todo.id, content: todo.content },
+    };
+    await emit('engine', { type: 'approval_request', payload: request });
+    await saveSession({ status: 'awaiting_approval' });
+    waiting = 'awaiting_approval';
+    const decision = await deps.approval.request(request, AbortSignal.any([signal, softStop]));
+    const keepWaiting = (signal.aborted || softStop.aborted) && decision.outcome === 'denied';
+    const restoreRunning = async () => {
+      if (keepWaiting) return;
+      waiting = undefined;
+      await saveSession({
+        status: 'running',
+        ...(sessionRules.length === 0 ? {} : { approvals: sessionRules }),
+      });
+    };
+    if (decision.outcome === 'denied') {
+      await record('denied');
+      await restoreRunning();
+      const steer = decision.steer === undefined ? '' : ` 사용자 지시: ${decision.steer}`;
+      if (decision.steer !== undefined) pendingSteers.push(scrubText(decision.steer).text);
+      return {
+        status: 'error',
+        text: `사용자가 예외 요청을 거부했습니다. ${todo.id}는 failed 그대로입니다.${steer}`,
+      };
+    }
+    await record('approved');
+    await restoreRunning();
+    const at = now();
+    const waived: Todo = {
+      ...todo,
+      status: 'verified',
+      evidence: { ...evidence, waiver: { reason: data.reason, approvedBy: 'user', at } },
+      updatedAt: at,
+    };
+    todos.set(waived.id, waived);
+    await emit('engine', {
+      type: 'todo_update',
+      payload: {
+        todoId: waived.id,
+        from: 'failed',
+        to: 'verified',
+        todo: waived,
+        ...(reconcileCurrent() ?? {}),
+      },
+    });
+    await saveTodos();
+    return { status: 'ok', text: `${waived.id}: verified (사용자가 게이트 예외를 승인했습니다)` };
   };
 
   const advanceStage = async (data: z.infer<typeof stageAdvanceSchema>): Promise<ToolOutput> => {
@@ -795,6 +927,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       case 'verify.run': {
         const parsed = verifyRunSchema.safeParse(args);
         return parsed.success ? runVerify(parsed.data, call.callId) : invalid(parsed.error);
+      }
+      case 'verify.waive': {
+        const parsed = verifyWaiveSchema.safeParse(args);
+        return parsed.success ? runWaive(parsed.data, call) : invalid(parsed.error);
       }
       case 'stage.advance': {
         const parsed = stageAdvanceSchema.safeParse(args);

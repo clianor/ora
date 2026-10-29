@@ -1599,3 +1599,101 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+const gateEdit = [
+  respond(
+    use('g1', 'todo.update', {
+      todos: [
+        {
+          id: 't1',
+          content: 'add를 고친다',
+          writeScope: ['foo.js'],
+          verify: { command: 'node check.js', origin: 'repo' },
+        },
+      ],
+    }),
+  ),
+  respond(use('g2', 'file_read', { path: 'foo.js' })),
+  respond(
+    use('g3', 'file_edit', { path: 'foo.js', oldText: 'a - b', newText: 'a + b; // TODO later' }),
+  ),
+  respond(use('g4', 'todo.update', { todos: [{ id: 't1', status: 'attempted' }] })),
+  respond(use('g5', 'verify.run', { todoId: 't1' })),
+];
+
+test(
+  '더한 줄에 TODO가 남으면 종료 코드 0이어도 failed이고 원래 있던 TODO는 걸리지 않으며, 헤드리스에서는 예외 요청이 거부돼 failed 그대로다',
+  async () => {
+    const project = createProject();
+    writeFileSync(join(project.dir, 'foo.js'), '// TODO: old\nexports.add = (a, b) => a - b;\n');
+    await runCli(
+      project,
+      [
+        ...gateEdit,
+        respond(use('g6', 'verify.waive', { todoId: 't1', reason: '사용자가 TODO를 요청했다' })),
+      ],
+      ['--permission', 'bypass-permissions'],
+    );
+
+    const { events, todos } = readSession(project);
+    const verification = events.find((event) => event.type === 'verification');
+    expect(verification?.type === 'verification' ? verification.payload : undefined).toMatchObject({
+      evidence: { exitCode: 0 },
+      gate: { passed: false, findings: ['foo.js:2 TODO'] },
+    });
+    expect(todos[0]).toMatchObject({ status: 'failed' });
+    expect(findToolResult(events, 'g6')).toMatchObject({ status: 'error' });
+    expect(findToolResult(events, 'g6')?.summary).toContain('headless');
+    expect(events.some((event) => event.type === 'approval_request')).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '건너뜀 집계가 있거나 검증 명령이 true면 failed이고, 문제 없는 검사는 gate.passed다',
+  async () => {
+    const project = createProject();
+    const spec = (id: string, command: string) => ({
+      id,
+      content: `${id} 작업`,
+      verify: { command },
+    });
+    await runCli(
+      project,
+      [
+        respond(
+          use('s1', 'todo.update', {
+            todos: [
+              spec('t1', `node -e "console.log('Tests  1 passed | 2 skipped')"`),
+              spec('t2', 'true'),
+              spec('t3', 'node -e 0'),
+            ],
+          }),
+        ),
+        respond(
+          use('s2', 'todo.update', {
+            todos: ['t1', 't2', 't3'].map((id) => ({ id, status: 'attempted' })),
+          }),
+          ...['t1', 't2', 't3'].map((id) => use(`v${id}`, 'verify.run', { todoId: id })),
+        ),
+      ],
+      ['--permission', 'bypass-permissions'],
+    );
+
+    const { events, todos } = readSession(project);
+    expect(todos.map((todo) => todo.status)).toEqual(['failed', 'failed', 'verified']);
+    const gates = events.flatMap((event) =>
+      event.type === 'verification' ? [event.payload.gate] : [],
+    );
+    expect(gates[0]).toMatchObject({
+      passed: false,
+      findings: [expect.stringContaining('skipped')],
+    });
+    expect(gates[1]).toMatchObject({
+      passed: false,
+      findings: [expect.stringContaining('단언 없는 검사')],
+    });
+    expect(gates[2]).toEqual({ passed: true, findings: [] });
+  },
+  TEST_TIMEOUT_MS,
+);

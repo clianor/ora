@@ -1111,3 +1111,78 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+const waiveResponses = [
+  respond(
+    use('w1', 'todo.update', {
+      todos: [{ id: 't1', content: '검증 없는 작업', verify: { command: 'true' } }],
+    }),
+  ),
+  respond(
+    use('w2', 'todo.update', { todos: [{ id: 't1', status: 'attempted' }] }),
+    use('w3', 'verify.run', { todoId: 't1' }),
+  ),
+  respond(
+    use('w4', 'verify.waive', { todoId: 't1', reason: '사용자가 검증 없는 작업을 요청했다' }),
+  ),
+  finalText,
+];
+
+test(
+  'bypass-permissions에서도 verify.waive는 승인 카드를 띄우고, 승인하면 verified와 예외 증거가 남는다',
+  async () => {
+    const running = await startServer(waiveResponses);
+    try {
+      const sessionId = await createBypassSession(running);
+      const asked = await nextApproval(running, sessionId);
+      expect(asked.request).toMatchObject({
+        tool: 'verify.waive',
+        todo: { id: 't1' },
+        detail: {
+          kind: 'verify_waiver',
+          reason: '사용자가 검증 없는 작업을 요청했다',
+          command: 'true',
+          exitCode: 0,
+          findings: [expect.stringContaining('단언 없는 검사')],
+        },
+      });
+      expect(readTodoStatuses(running, sessionId)).toEqual({ t1: 'failed' });
+      await post(running, `/api/sessions/${sessionId}/approval`, {
+        requestId: asked.requestId,
+        decision: { outcome: 'approved', scope: 'once' },
+      });
+      await waitFor(() => readTodoStatuses(running, sessionId).t1 === 'verified');
+      const todos = JSON.parse(
+        readFileSync(join(sessionDirOf(running, sessionId), 'todos.json'), 'utf8'),
+      ) as { evidence: { waiver: unknown } }[];
+      expect(todos[0]?.evidence.waiver).toMatchObject({
+        reason: '사용자가 검증 없는 작업을 요청했다',
+        approvedBy: 'user',
+      });
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'verify.waive를 거부하면 todo는 failed 그대로이고 모델이 거부 사실을 받는다',
+  async () => {
+    const running = await startServer(waiveResponses);
+    try {
+      const sessionId = await createBypassSession(running);
+      const asked = await nextApproval(running, sessionId);
+      await post(running, `/api/sessions/${sessionId}/approval`, {
+        requestId: asked.requestId,
+        decision: { outcome: 'denied' },
+      });
+      await waitFor(() => findResult(running, sessionId, 'w4') !== undefined);
+      expect(findResult(running, sessionId, 'w4')?.summary).toContain('거부');
+      expect(readTodoStatuses(running, sessionId)).toEqual({ t1: 'failed' });
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);

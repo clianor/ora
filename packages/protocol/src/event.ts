@@ -185,7 +185,14 @@ export const oraEventSchema = z.discriminatedUnion('type', [
     z.strictObject({
       todoId: z.string().min(1),
       evidence: evidenceSchema,
-      gate: z.strictObject({ passed: z.boolean(), findings: z.array(z.string()) }).optional(),
+      gate: z
+        .strictObject({
+          passed: z.boolean(),
+          findings: z.array(z.string()),
+          /** 기준선이 없어 스텁 검사를 하지 못한 쓰기 범위 파일이다. 실패 사유가 아니라 검사하지 못했다는 기록이다. */
+          unchecked: z.array(z.string()).optional(),
+        })
+        .optional(),
     }),
   ),
   defineEvent(

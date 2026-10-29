@@ -30,6 +30,8 @@ Understand → Research → Decide → Plan → Execute → Verify → Operate �
 9. 정책이나 환경 때문에 끝낼 수 없는 todo는 사유(`reason`)와 함께 `blocked`로 표시합니다. 같은 응답을 되풀이하지 않습니다. 다시 시도할 수 있게 되면 `attempted`로 바꿉니다.
 10. `abandoned`는 사용자만 씁니다. 모델이 쓰면 엔진이 거부합니다.
 11. 엔진이 작업 중인 todo 하나를 "← 작업 중"으로 표시합니다. 바꾸려면 그 todo에 `current: true`를 적습니다.
+12. `verify.run`은 종료 코드 0이어도 완성 무결성 게이트를 통과해야 `verified`가 됩니다. 더한 줄에 `TODO`·`NotImplemented` 같은 스텁이 남으면 `failed`로 돌아옵니다. 검증 출력에 건너뜀·보류 집계가 있거나, 항상 성공하는 명령이거나, 테스트가 0개여도 같습니다. 찾은 항목을 고치고 다시 검증합니다.
+13. 사용자가 TODO를 일부러 요청한 경우처럼 정당한 사유가 있을 때만 `verify.waive`(`todoId`, `reason`)로 예외를 요청합니다. 사용자가 승인하면 `verified`가 되고, 거부하면 `failed` 그대로입니다. 사유 없이 게이트를 피하려고 쓰지 않습니다.
 
 ## 비신뢰 입력
 

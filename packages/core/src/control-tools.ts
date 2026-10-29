@@ -37,6 +37,10 @@ export const todoUpdateSchema = z.object({
 });
 
 export const verifyRunSchema = z.object({ todoId: z.string().min(1) });
+export const verifyWaiveSchema = z.object({
+  todoId: z.string().min(1),
+  reason: z.string().min(1).max(300),
+});
 export const askUserSchema = z.object({
   questions: z.array(questionSchema).min(1).max(4),
 });
@@ -58,6 +62,11 @@ const CONTROL_TOOLS = {
   'verify.run': {
     description: '선언한 검증 명령을 엔진이 실행하고 증거를 기록한다.',
     schema: verifyRunSchema,
+  },
+  'verify.waive': {
+    description:
+      '완성 무결성 게이트 때문에 failed가 된 todo에 예외를 요청한다. 사용자가 승인해야 verified가 된다. 사용자가 TODO나 건너뜀을 일부러 요청한 것처럼 정당한 사유가 있을 때만 쓰고, reason에 사유를 적는다.',
+    schema: verifyWaiveSchema,
   },
   ask_user: {
     description:

@@ -127,6 +127,11 @@ function createWorkspace(
       }
       return `sha256:${hash.digest('hex')}`;
     },
+    async listScopeFiles(paths) {
+      const files = (await Promise.all(paths.map((path) => expandScope(cwd, path)))).flat();
+      return [...new Set(files.map((path) => resolve(cwd, path)))].sort();
+    },
+    readText: (path) => readFile(path, 'utf8').catch(() => undefined),
   };
 }
 
@@ -535,6 +540,7 @@ export async function executeSession(
         maxFileBytes: config.tools.maxFileBytes,
         secretPaths: [join(oraHome, AUTH_FILE)],
         sessionDir,
+        onBeforeWrite: (path, before) => storage.recordBaseline(path, before),
         protectedPaths: [
           join(oraHome, PERMISSIONS_FILE),
           join(oraHome, 'engine.config.json'),
