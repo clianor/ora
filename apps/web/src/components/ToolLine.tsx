@@ -6,6 +6,7 @@ import {
   History,
   LoaderCircle,
   Plug,
+  Sparkles,
   Search,
   Terminal,
   type LucideIcon,
@@ -32,6 +33,7 @@ const toolIcons: Record<string, LucideIcon> = {
   shell: Terminal,
   'verify.run': Terminal,
   'history.read': History,
+  skill: Sparkles,
 };
 
 const shellTools = new Set(['bash', 'shell', 'verify.run']);
@@ -118,6 +120,11 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
                 ? firstLine(outcome.summary)
                 : `${outcome.status} ${firstLine(outcome.summary)}`}
             </span>
+          </span>
+        )}
+        {toolName === 'skill' && (
+          <span className="ml-auto shrink-0 text-xs leading-4 text-foreground-subtle">
+            {input.scope === 'global' ? '전역' : '프로젝트'}
           </span>
         )}
       </div>

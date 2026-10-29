@@ -2,9 +2,9 @@ import { useSyncExternalStore } from 'react';
 
 export type Route = 'worktree' | 'history' | 'empty' | 'settings';
 
-export type SettingsPage = 'appearance' | 'accounts' | 'cost' | 'notifications' | 'mcp';
+export type SettingsPage = 'appearance' | 'accounts' | 'cost' | 'notifications' | 'mcp' | 'skills';
 
-const settingsPages: readonly string[] = ['accounts', 'cost', 'notifications', 'mcp'];
+const settingsPages: readonly string[] = ['accounts', 'cost', 'notifications', 'mcp', 'skills'];
 
 export interface RouteState {
   route: Route;
@@ -45,6 +45,7 @@ function parseHash(hash: string): RouteState {
         first === 'settings' && second !== undefined && settingsPages.includes(second)
           ? (second as SettingsPage)
           : 'appearance',
+      cwd: params.get('cwd') ?? undefined,
       isPaletteOpen,
       paletteQuery,
     };

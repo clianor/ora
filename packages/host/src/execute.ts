@@ -49,11 +49,13 @@ import {
   loadConfig,
   resolveChains,
   resolveSessionsDir,
+  resolveSkillsDir,
 } from './config.ts';
 import type { Config } from './config.ts';
 import { createChildEnv, resolveIsolationRoot } from './isolation/child-env.ts';
 import { findHarnessFiles, listSearchDirs } from './isolation/harness-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
+import { mergeSkills, readAllSkills } from './isolation/skill-files.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
 
 const PROMPTS_DIR = fileURLToPath(new URL('../../../prompts/', import.meta.url));
@@ -613,6 +615,15 @@ export async function executeSession(
       },
       store: storage.sessions,
       workspace: createWorkspace(command.cwd, gitRoot, config.tools.maxFileBytes),
+      skills: {
+        list: async () =>
+          mergeSkills(
+            await readAllSkills({
+              projectDir: join(command.cwd, '.ora', 'skills'),
+              globalDir: resolveSkillsDir(config, oraHome),
+            }),
+          ),
+      },
       memory: createFileMemory({
         memoryDir,
         projectId: config.projectId ?? (gitRoot ?? command.cwd).split('/').pop() ?? 'project',

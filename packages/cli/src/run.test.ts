@@ -123,6 +123,7 @@ function runCli(
   extraArgs: string[] = [],
   config?: object,
   task = '파일을 고친다',
+  extraEnv: Record<string, string> = {},
 ): Promise<CliResult> {
   const scriptPath = join(project.home, 'script.json');
   writeFileSync(scriptPath, JSON.stringify({ responses }));
@@ -146,7 +147,7 @@ function runCli(
       ...configArgs,
       ...extraArgs,
     ],
-    { cwd: project.dir, env: { ...process.env, ORA_HOME: project.home } },
+    { cwd: project.dir, env: { ...process.env, ORA_HOME: project.home, ...extraEnv } },
     (error, stdout, stderr) => {
       resolve({ code: typeof error?.code === 'number' ? error.code : 0, stdout, stderr });
     },
@@ -2016,4 +2017,201 @@ test(
     ]);
   },
   TEST_TIMEOUT_MS,
+);
+
+function writeSkill(
+  dir: string,
+  name: string,
+  description: string,
+  body: string,
+  triggers = '버그, 재현',
+): void {
+  mkdirSync(join(dir, name), { recursive: true });
+  writeFileSync(
+    join(dir, name, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: ${description}\ntriggers: ${triggers}\n---\n${body}\n`,
+  );
+}
+
+const skillTask = '버그 재현 명령을 만들고 파일을 고친다';
+
+test(
+  '같은 이름이면 프로젝트 스킬 본문만 회상 팩에 넣고, 목록에는 이름과 설명만 두며, recall 이벤트에 남긴다',
+  async () => {
+    const project = createProject();
+    writeSkill(join(project.dir, '.ora', 'skills'), 'bugfix', '버그 재현 절차', 'PROJECT-BODY-77');
+    writeSkill(join(project.home, 'skills'), 'bugfix', '버그 재현 절차 전역판', 'GLOBAL-BODY-55');
+    writeSkill(join(project.home, 'skills'), 'unrelated', 'zzz qqq', 'UNRELATED-BODY-33', 'xyz');
+
+    await runCli(project, [finalReport], [], undefined, skillTask);
+
+    const [input] = readModelInputs(project, 'model');
+    expect(input?.system).toContain('PROJECT-BODY-77');
+    expect(input?.system).not.toContain('GLOBAL-BODY-55');
+    expect(input?.system).not.toContain('UNRELATED-BODY-33');
+    expect(input?.system).toContain('- unrelated: zzz qqq');
+
+    const recall = readSession(project).events.find((event) => event.type === 'recall');
+    expect(recall?.payload).toMatchObject({
+      skills: [{ name: 'bugfix', scope: 'project' }],
+      candidateSkills: [],
+    });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '토큰 예산을 넘는 스킬은 본문을 넣지 않고 후보로만 기록한다',
+  async () => {
+    const project = createProject();
+    writeSkill(
+      join(project.dir, '.ora', 'skills'),
+      'bugfix',
+      '버그 재현 절차',
+      `BIG-BODY ${'긴 본문 '.repeat(400)}`,
+    );
+
+    await runCli(project, [finalReport], [], { recall: { tokenBudget: 50 } }, skillTask);
+
+    const [input] = readModelInputs(project, 'model');
+    expect(input?.system).not.toContain('BIG-BODY');
+    const recall = readSession(project).events.find((event) => event.type === 'recall');
+    expect(recall?.payload).toMatchObject({
+      skills: [],
+      candidateSkills: [{ name: 'bugfix', scope: 'project' }],
+    });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '하네스 폴더 안의 스킬 디렉터리와 스킬 폴더 밖을 가리키는 심링크는 읽지 않는다',
+  async () => {
+    const project = createProject();
+    const fakeHome = join(project.home, 'fake-user-home');
+    const harnessSkills = join(fakeHome, '.claude', 'skills');
+    writeSkill(harnessSkills, 'harness-skill', '버그 재현 절차', 'HARNESS-BODY-11');
+    const outside = join(project.home, 'outside');
+    writeSkill(outside, 'escape', '버그 재현 절차', 'ESCAPE-BODY-22');
+    const ownSkills = join(project.home, 'own-skills');
+    mkdirSync(ownSkills, { recursive: true });
+    symlinkSync(join(outside, 'escape'), join(ownSkills, 'escape'));
+
+    await runCli(project, [finalReport], [], { paths: { skillsDir: harnessSkills } }, skillTask, {
+      HOME: fakeHome,
+    });
+    const harnessInput = readModelInputs(project, 'model')[0]?.system ?? '';
+    expect(harnessInput).not.toContain('HARNESS-BODY-11');
+    expect(harnessInput).not.toContain('harness-skill');
+
+    rmSync(join(project.home, 'sessions'), { recursive: true });
+    await runCli(project, [finalReport], [], { paths: { skillsDir: ownSkills } }, skillTask);
+    const escapeInput = readModelInputs(project, 'model').at(-1)?.system ?? '';
+    expect(escapeInput).not.toContain('ESCAPE-BODY-22');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '세션 끝의 가벼운 유지보수 패스는 중복 교훈을 합치고 원본을 아카이브로 옮기며 로그 줄을 남긴다',
+  async () => {
+    const project = createProject();
+    const memoryDir = join(project.home, 'memory');
+    mkdirSync(memoryDir, { recursive: true });
+    writeFileSync(
+      join(memoryDir, 'LESSONS.md'),
+      '## L-20200101-001 · 2020-01-01 · [project:project] · lesson · retention:default\nadd는 두 수를 더한다.\n근거: 이전 세션\n\n',
+    );
+
+    const result = await runCli(
+      project,
+      [...setupResponses, ...repairResponses('f', 'a - b', 'a + b', true), ...closingResponses],
+      ['--permission', 'bypass-permissions'],
+    );
+    expect(result.code).toBe(0);
+
+    const lessons = readFileSync(join(memoryDir, 'LESSONS.md'), 'utf8');
+    expect(lessons.match(/^## L-/gm)).toHaveLength(1);
+    expect(lessons).toContain('L-20200101-001');
+    const archived = readdirSync(join(memoryDir, 'archive'));
+    expect(archived).toHaveLength(1);
+    const archivedId = (archived[0] ?? '').replace('.md', '');
+    expect(readFileSync(join(memoryDir, 'archive', `${archivedId}.md`), 'utf8')).toContain(
+      '유지: L-20200101-001',
+    );
+    const log = readFileSync(join(memoryDir, 'maintenance-log.md'), 'utf8');
+    expect(log).toMatch(
+      new RegExp(` · merge · L-20200101-001,${archivedId} · 같은 사실 중복 · pass-s-`),
+    );
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '유지보수 패스의 충돌 판정: 확신하면 기존 교훈을 아카이브하고, 확신이 없으면 리뷰 큐로 보내고, 형식이 두 번 틀리면 건드리지 않는다',
+  async () => {
+    const seed =
+      '## L-20200101-001 · 2020-01-01 · [project:project] · lesson · retention:default\nadd는 두 수를 더한다.\n근거: 이전 세션\n\n';
+    const judgeReply = (confident: boolean) =>
+      respond({
+        type: 'text',
+        text: JSON.stringify({
+          relation: 'contradicts',
+          confident,
+          targetId: 'L-20200101-001',
+          reason: '더하는지 빼는지가 다르다',
+        }),
+      });
+    const runCase = async (judgeReplies: { content: Block[] }[]) => {
+      const project = createProject();
+      const memoryDir = join(project.home, 'memory');
+      mkdirSync(memoryDir, { recursive: true });
+      writeFileSync(join(memoryDir, 'LESSONS.md'), seed);
+      const result = await runCli(
+        project,
+        [
+          ...setupResponses,
+          ...repairResponses('f', 'a - b', 'a + b', true),
+          respond(use('k1', 'stage.advance', { to: 'operate' })),
+          respond(use('k2', 'stage.advance', { to: 'learn' })),
+          respond(
+            use('k3', 'memory.propose', {
+              text: 'add는 두 수를 뺀다.',
+              source: 'packages/foo/foo.js',
+            }),
+          ),
+          finalReport,
+          ...judgeReplies,
+        ],
+        ['--permission', 'bypass-permissions'],
+      );
+      expect(result.code).toBe(0);
+      const read = (name: string) => readFileSync(join(memoryDir, name), 'utf8');
+      return { memoryDir, lessons: read('LESSONS.md'), log: read('maintenance-log.md'), read };
+    };
+
+    const confident = await runCase([judgeReply(true)]);
+    expect(confident.lessons).not.toContain('L-20200101-001');
+    expect(confident.lessons).toContain('add는 두 수를 뺀다.');
+    const newId = /^## (L-\d{8}-\d{3})/m.exec(confident.lessons)?.[1] ?? '';
+    expect(confident.read('archive/L-20200101-001.md')).toContain(`대체: ${newId}`);
+    expect(confident.log).toContain(` · invalidate · L-20200101-001,${newId} · `);
+
+    const unsure = await runCase([judgeReply(false)]);
+    expect(unsure.lessons.match(/^## L-/gm)).toHaveLength(1);
+    expect(unsure.lessons).toContain('L-20200101-001');
+    expect(unsure.read('review-queue.md')).toContain(
+      '사유: 기존 교훈 L-20200101-001와 충돌할 수 있음',
+    );
+    expect(unsure.log).toMatch(/ · defer · L-\d{8}-\d{3},Q-\d{8}-001 · /);
+
+    const broken = await runCase([
+      respond({ type: 'text', text: '모르겠습니다' }),
+      respond({ type: 'text', text: '{"relation":"maybe"}' }),
+    ]);
+    expect(broken.lessons.match(/^## L-/gm)).toHaveLength(2);
+    expect(existsSync(join(broken.memoryDir, 'archive'))).toBe(false);
+    expect(broken.log).toMatch(/ · skip · L-\d{8}-\d{3} · 충돌 판정 응답 형식 오류 · /);
+  },
+  TEST_TIMEOUT_MS * 2,
 );

@@ -4,6 +4,7 @@ import type {
   CostSettings,
   McpServerAddBody,
   McpServerStatus,
+  SkillListResponse,
   LoginState,
   OraEvent,
   PendingApproval,
@@ -162,6 +163,8 @@ export interface OraActions {
   saveCostSettings: (next: CostSettings) => Promise<void>;
   /** MCP 서버 목록과 상태를 서버에서 다시 읽습니다. */
   refreshMcpServers: () => Promise<void>;
+  /** 스킬 목록과 최근 회상을 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 스킬도 읽습니다. */
+  refreshSkills: (cwd?: string) => Promise<void>;
   /** 서버를 설정에 더하고 연결합니다. 환경변수는 이름만 보냅니다. 서버가 거부하면 거부합니다. */
   addMcpServer: (body: McpServerAddBody) => Promise<void>;
   /** 서버를 켜거나 끕니다. 끄면 연결을 닫습니다. */
@@ -206,6 +209,13 @@ export interface McpServersData {
   servers: McpServerStatus[];
 }
 
+/** 설정 › 스킬 페이지가 그리는 데이터입니다. */
+export interface SkillsData {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  list?: SkillListResponse;
+}
+
 /**
  * 앱이 하나의 Provider로 받는 저장소의 한 시점입니다. 데이터 읽기와 엔진 요청을 함께 담습니다.
  * 고정 예시 데이터 구현과 서버 구현이 모두 이 모양을 채우고, 바뀔 때마다 새 객체를 돌려줍니다.
@@ -241,6 +251,7 @@ export interface OraStore {
   accounts: AccountsData;
   costSettings: CostSettingsData;
   mcpServers: McpServersData;
+  skills: SkillsData;
 }
 
 export interface OraStoreSource {

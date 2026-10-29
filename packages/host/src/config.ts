@@ -108,9 +108,10 @@ const configSchema = z.object({
     .object({
       sessions: z.string().nullable().default(null),
       memory: z.string().nullable().default(null),
+      skillsDir: z.string().nullable().default(null),
       isolationRoot: z.string().nullable().default(null),
     })
-    .default({ sessions: null, memory: null, isolationRoot: null }),
+    .default({ sessions: null, memory: null, skillsDir: null, isolationRoot: null }),
   permissions: z
     .object({
       mode: permissionModeSchema.default('bypass-permissions'),
@@ -266,6 +267,10 @@ export async function loadConfig(configPath: string | undefined, oraHome: string
 }
 export function resolveSessionsDir(config: Config, oraHome: string): string {
   return config.paths.sessions ?? join(oraHome, 'sessions');
+}
+
+export function resolveSkillsDir(config: Config, oraHome: string): string {
+  return config.paths.skillsDir ?? join(oraHome, 'skills');
 }
 
 const BASE_ROLES = ['default', 'compaction', 'memory', 'review', 'fast'];

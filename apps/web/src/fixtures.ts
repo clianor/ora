@@ -27,6 +27,7 @@ import type {
   AccountsData,
   CostSettingsData,
   McpServersData,
+  SkillsData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -1415,6 +1416,88 @@ const mcpView: SessionView = finishView({
   statusLine: ['스텝 4/50', '격리 harness'],
 });
 
+// 스킬 본문을 회상 팩에 넣은 대화와 설정 › 스킬 시안입니다. 주소는 `#/session/skills`, `#/settings/skills`입니다.
+const skillsSessionId = 's-20261030-skl0e1';
+const makeSkills = createEventFactory(skillsSessionId);
+const skillsView: SessionView = finishView({
+  record: createRecord(skillsSessionId, 'add 함수 버그 수정', 'running', 'math-demo'),
+  events: [
+    sessionStart(makeSkills),
+    ...createStageEvents(makeSkills, 'research', stageOrder),
+    makeSkills('message', '14:00', 'user', {
+      role: 'user',
+      content: [{ type: 'text', text: 'math.js의 add가 뺄셈을 하고 있어요. 고쳐 주세요.' }],
+    }),
+    makeSkills('recall', '14:00', 'engine', {
+      lessonIds: [],
+      skills: [{ name: 'bugfix-checklist', scope: 'project' }],
+      candidateSkills: [{ name: 'readme-examples', scope: 'project' }],
+      tokenCount: 180,
+    }),
+  ],
+  todos: mathTodos,
+  repoLabel: 'math-demo · main',
+  diff: null,
+  statusLine: ['스텝 1/50', '격리 harness'],
+});
+
+const fixtureSkills: SkillsData = {
+  status: 'ready',
+  list: {
+    projectName: 'math-demo',
+    project: [
+      {
+        name: 'bugfix-checklist',
+        description: '버그를 고치기 전에 재현 명령을 먼저 만들고, 고친 뒤 같은 명령으로 확인한다.',
+        scope: 'project',
+        isShadowed: false,
+        useCount: 3,
+        lastUsedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+      },
+      {
+        name: 'readme-examples',
+        description: 'README 예제를 바꾸면 실제 실행 출력과 대조한다.',
+        scope: 'project',
+        isShadowed: false,
+        useCount: 0,
+      },
+    ],
+    global: [
+      {
+        name: 'korean-commit',
+        description: '커밋 메시지를 한국어 한 줄 제목과 본문으로 쓴다.',
+        scope: 'global',
+        isShadowed: false,
+        useCount: 12,
+        lastUsedAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+      },
+      {
+        name: 'bugfix-checklist',
+        description: '버그 수정 절차의 전역 판입니다.',
+        scope: 'global',
+        isShadowed: true,
+        useCount: 0,
+      },
+    ],
+    recent: [
+      {
+        sessionId: skillsSessionId,
+        title: 'add 함수 버그 수정',
+        at: new Date(Date.now() - 2 * 60_000).toISOString(),
+        injected: [{ name: 'bugfix-checklist', scope: 'project' }],
+        candidates: [],
+      },
+      {
+        sessionId: 's-20261030-rdm0e1',
+        title: 'README 예제 출력 갱신',
+        at: new Date(Date.now() - 5 * 60_000).toISOString(),
+        injected: [],
+        candidates: [{ name: 'readme-examples', scope: 'project' }],
+      },
+    ],
+  },
+};
+
 const detailedViews = new Map<string, SessionView>(
   [
     sessionView,
@@ -1431,6 +1514,7 @@ const detailedViews = new Map<string, SessionView>(
     costWarnView,
     costStopView,
     mcpView,
+    skillsView,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -1449,6 +1533,7 @@ const devAliases = new Map<string, string>([
   ['cost-warn', costWarnView.record.id],
   ['cost-stop', costStopView.record.id],
   ['mcp', mcpView.record.id],
+  ['skills', skillsView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
@@ -1504,6 +1589,7 @@ const fixtureActions: Omit<OraActions, StatefulActionName> = {
   restoreTodo: () => Promise.resolve(true),
   readCompaction: () => Promise.resolve(compactionDocument),
   dismissError: () => undefined,
+  refreshSkills: () => Promise.resolve(),
 };
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -1846,6 +1932,7 @@ export function createFixtureStore(): OraStoreSource {
     accounts,
     costSettings,
     mcpServers,
+    skills: fixtureSkills,
   };
   return {
     subscribe: (listener) => {

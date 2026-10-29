@@ -65,6 +65,7 @@ import type { LaunchRequest, SessionHandle } from './supervisor.ts';
 import { AccountApiError, createAccountApi } from './account-api.ts';
 import { createCostApi } from './cost-api.ts';
 import { createMcpApi } from './mcp-api.ts';
+import { createSkillsApi } from './skills-api.ts';
 import { createTerminalManager } from './terminal.ts';
 
 const COOKIE_NAME = 'ora_token';
@@ -305,6 +306,10 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
   });
   const costApi = createCostApi({
+    env: options.env,
+    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+  });
+  const skillsApi = createSkillsApi({
     env: options.env,
     ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
   });
@@ -801,6 +806,17 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         maxSteps: config.limits.maxSteps,
       };
       reply(res, 200, info);
+      return;
+    }
+    if (segments[1] === 'skills' && segments.length === 2) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const rawCwd = url.searchParams.get('cwd');
+      if (rawCwd === null) {
+        reply(res, 200, await skillsApi.list());
+        return;
+      }
+      await assertKnownWorktree(rawCwd);
+      reply(res, 200, await skillsApi.list(await canonicalPath(rawCwd)));
       return;
     }
     if (segments[1] === 'cost-settings' && segments.length === 2) {

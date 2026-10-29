@@ -33,7 +33,9 @@ import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { McpNoticePort } from './ports/mcp-notices.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
-import type { MemoryPort } from './ports/memory.ts';
+import type { ConflictJudge, MemoryPort } from './ports/memory.ts';
+import type { SkillEntry, SkillPort } from './ports/skills.ts';
+import { scoreBm25 } from './relevance.ts';
 import { CostStopError, ModelLimitError } from './ports/model.ts';
 import type {
   ModelChainEntry,
@@ -70,6 +72,7 @@ import {
   summaryMessage,
   withCap,
 } from './compaction.ts';
+import { CONFLICT_JUDGE_PROMPT, conflictJudgementSchema } from './conflict.ts';
 import { appendMessage } from './recovery.ts';
 import type { ResumePlan } from './recovery.ts';
 import { describeScrubHits, mergeScrubHits, scrubText, scrubValue } from './scrub.ts';
@@ -127,6 +130,8 @@ export interface EngineDeps {
   readonly alwaysApprovals?: AlwaysApprovalPort;
   /** MCP 서버 연결·장애 알림이다. 엔진이 스텝마다 꺼내 세션 기록에 남긴다. */
   readonly mcpNotices?: McpNoticePort;
+  /** 없으면 스킬을 쓰지 않는다. */
+  readonly skills?: SkillPort;
 }
 
 export interface RunInput {
@@ -300,7 +305,31 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   const recall = await memory.recall({
     query: input.task,
     tokenBudget: settings.recallTokenBudget,
+    sessionId: input.sessionId,
   });
+  const skills = (await deps.skills?.list()) ?? [];
+  const injectedSkills: SkillEntry[] = [];
+  const candidateSkills: SkillEntry[] = [];
+  let skillTokens = 0;
+  const skillScores = scoreBm25(
+    input.task,
+    skills.map(
+      (skill) => `${skill.name} ${skill.description} ${skill.triggers.join(' ')} ${skill.body}`,
+    ),
+  );
+  const ranked = skills
+    .map((skill, index) => ({ skill, score: skillScores[index] ?? 0 }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  for (const { skill } of ranked) {
+    const tokens = Math.ceil(skill.body.length / 4);
+    if (recall.tokenCount + skillTokens + tokens > settings.recallTokenBudget) {
+      candidateSkills.push(skill);
+      continue;
+    }
+    injectedSkills.push(skill);
+    skillTokens += tokens;
+  }
   const specs = buildToolSpecs(deps.tools);
   const system = scrubText(
     assembleSystemPrompt({
@@ -310,6 +339,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       isolation: settings.isolation,
       instructionFiles,
       recall,
+      skills,
+      skillBodies: injectedSkills,
       cwd: input.cwd,
     }),
   ).text;
@@ -470,6 +501,15 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         instructions: [input.task],
       },
     });
+    await emit('engine', {
+      type: 'recall',
+      payload: {
+        lessonIds: recall.lessons.map((lesson) => lesson.id),
+        skills: injectedSkills.map(({ name, scope }) => ({ name, scope })),
+        candidateSkills: candidateSkills.map(({ name, scope }) => ({ name, scope })),
+        tokenCount: recall.tokenCount + skillTokens,
+      },
+    });
     taskSeq = recorder.lastSeq();
     await emit('engine', { type: 'stage', payload: { outcome: 'entered', stage } });
   }
@@ -496,7 +536,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const eventHits = recorder.scrubbedHits();
     const hitNote =
       Object.keys(eventHits).length > 0 ? ` [scrubbed: ${describeScrubHits(eventHits)}]` : '';
-    const safeSummary = scrubText(summary).text + hitNote;
+    const canJudge = endReason !== 'cost_limit' && endReason !== 'user_cancel';
+    const maintenanceNote = await memory.maintain(canJudge ? judgeConflict : undefined).then(
+      () => '',
+      (error: unknown) =>
+        ` [기억 유지보수 실패: ${error instanceof Error ? error.message : String(error)}]`,
+    );
+    const safeSummary = scrubText(summary).text + hitNote + maintenanceNote;
     await emit('engine', {
       type: 'session_end',
       payload: { status, endReason, summary: safeSummary },
@@ -1388,6 +1434,50 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     if (completed.stopReason === 'max_tokens') return undefined;
     if (port.acceptsOutputCap !== true && estimateTokens(text) > cap) return undefined;
     return text;
+  };
+  /**
+   * 가벼운 유지보수 패스의 충돌 판정이다 (SPEC 3.4절). `memory` 역할 모델에 도구 없이 한 번 묻고, 형식이 틀리면 한 번 다시 묻는다.
+   * 응답이 두 번 틀리면 `undefined`다. 사용량은 `purpose: 'memory'`로 남기고 비용 합계에 더한다.
+   */
+  const judgeConflict: ConflictJudge = async ({ lessonId, text, candidates }) => {
+    const question = `새 교훈 ${lessonId}: ${text}\n\n기존 교훈 후보:\n${candidates.map((candidate) => `- ${candidate.id}: ${candidate.text}`).join('\n')}`;
+    const messages: ModelMessage[] = [
+      { role: 'user', content: [{ type: 'text', text: question }] },
+    ];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const { completed, port, chainPosition, durationMs } = await requestModel(
+        'memory',
+        { system: CONFLICT_JUDGE_PROMPT, messages, tools: [], maxOutputTokens: 400 },
+        AbortSignal.any([signal, softStop]),
+      );
+      await emit('model', {
+        type: 'model_request',
+        payload: {
+          model: port.model,
+          adapter: port.adapter,
+          chainPosition,
+          role: 'memory',
+          nativeToolCalls: completed.nativeToolCalls,
+          usage: completed.usage,
+          ...addSpend(port.model, completed.usage),
+          durationMs,
+          purpose: 'memory',
+        },
+      });
+      const reply = completed.content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n');
+      const json = /\{[\s\S]*\}/.exec(reply)?.[0];
+      let raw: unknown;
+      try {
+        raw = json === undefined ? undefined : JSON.parse(json);
+      } catch {
+        raw = undefined;
+      }
+      const parsed = conflictJudgementSchema.safeParse(raw);
+      if (parsed.success) return parsed.data;
+    }
+    return undefined;
   };
   /** 필수 절만 있는 요약 문서의 어림이다. */
   const requiredTokens = () =>

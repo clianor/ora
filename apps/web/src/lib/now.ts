@@ -24,3 +24,14 @@ export function formatShortElapsed(startedAt: string, now: number): string {
   if (minutes < 1440) return `${String(Math.floor(minutes / 60))}시간`;
   return `${String(Math.floor(minutes / 1440))}일`;
 }
+
+/** 마지막 갱신 뒤 지난 시간입니다. 1분 미만은 "방금", 하루는 "어제"로 적습니다. */
+export function formatElapsed(updatedAt: string, now: number): string {
+  const minutes = Math.floor((now - Date.parse(updatedAt)) / 60_000);
+  if (minutes < 1) return '방금';
+  if (minutes < 60) return `${String(minutes)}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${String(hours)}시간 전`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? '어제' : `${String(days)}일 전`;
+}

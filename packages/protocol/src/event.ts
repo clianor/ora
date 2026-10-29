@@ -17,6 +17,7 @@ import {
   questionAnswerSchema,
   questionRequestSchema,
 } from './interaction.ts';
+import { skillRefSchema } from './skills.ts';
 import { evidenceSchema, todoSchema, todoStatusSchema } from './todo.ts';
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
@@ -110,8 +111,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
         outputTokens: z.number().int().nonnegative(),
       }),
       durationMs: z.number().int().nonnegative(),
-      /** 요약 요청이면 `compaction`이다. 스텝 요청에는 없다. 엔진은 이 값이 있는 요청을 입력 토큰 어림의 기준으로 쓰지 않는다. */
-      purpose: z.literal('compaction').optional(),
+      /** 요약 요청이면 `compaction`, 기억 유지보수 충돌 판정 요청이면 `memory`다. 스텝 요청에는 없다. 엔진은 이 값이 있는 요청을 입력 토큰 어림의 기준으로 쓰지 않는다. */
+      purpose: z.enum(['compaction', 'memory']).optional(),
       /** 요청이 탄 모델 체인의 역할이다. 비어 있는 역할은 `default` 체인을 타므로 `default`로 남는다. */
       role: z.string().min(1).optional(),
       /** 비용 상한(`session.maxCost`)을 설정한 세션에서, 이 요청까지 쓴 지출이 상한의 몇 %인지 내림한 값이다. 금액은 기록하지 않는다. 상한이 없거나 이전 기록에는 없다. */
@@ -150,6 +151,16 @@ export const oraEventSchema = z.discriminatedUnion('type', [
   defineEvent(
     'memory',
     z.strictObject({ learnSkipped: z.literal(true), reason: z.literal('cost_limit') }),
+  ),
+  // 회상 팩 구성 기록이다 (SPEC 3.3절, 4.1.2절). 세션을 시작할 때 한 번 남긴다. 스킬 필드는 스킬 도입 전 기록에 없다.
+  defineEvent(
+    'recall',
+    z.strictObject({
+      lessonIds: z.array(z.string().min(1)),
+      skills: z.array(skillRefSchema).default([]),
+      candidateSkills: z.array(skillRefSchema).default([]),
+      tokenCount: z.number().int().nonnegative(),
+    }),
   ),
   // MCP 서버 연결 결과다 (SPEC 2.10절). 연결에 실패하거나 응답이 끊기면 `failed`로 남기고 그 서버의 도구만 끈다. 원인 문구에는 환경변수 이름만 나오고 값은 없다.
   defineEvent(

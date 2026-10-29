@@ -47,14 +47,14 @@ const navSections: { title: string; items: NavItem[] }[] = [
       { icon: Box, label: '격리' },
       { icon: Gauge, label: '비용 상한', page: 'cost' },
       { icon: Plug, label: 'MCP', page: 'mcp' },
-      { icon: Sparkles, label: '스킬' },
+      { icon: Sparkles, label: '스킬', page: 'skills' },
       { icon: Brain, label: '기억' },
     ],
   },
 ];
 
 /** 설정 항목 목록입니다. 모양, 알림, 계정, 비용 상한, MCP 페이지만 이동할 수 있고, 나머지 항목은 이름만 보여 줍니다. */
-export function SettingsNav({ current }: { current: SettingsPage }) {
+export function SettingsNav({ current, cwd }: { current: SettingsPage; cwd?: string }) {
   const [query, setQuery] = useState('');
   return (
     <nav
@@ -116,7 +116,7 @@ export function SettingsNav({ current }: { current: SettingsPage }) {
                       <span className={rowClass}>{content}</span>
                     ) : (
                       <a
-                        href={`#/settings/${page}`}
+                        href={`#/settings/${page}${cwd === undefined ? '' : `?cwd=${encodeURIComponent(cwd)}`}`}
                         aria-current={isCurrent ? 'page' : undefined}
                         className={rowClass}
                       >

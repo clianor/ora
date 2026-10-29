@@ -220,7 +220,11 @@ export function Sidebar({ data, selectedCwd, isHistorySelected = false }: Sideba
           <span className="sr-only"> 연결됨</span>
         </span>
         <a
-          href="#/settings"
+          href={
+            selectedCwd === undefined
+              ? '#/settings'
+              : `#/settings?cwd=${encodeURIComponent(selectedCwd)}`
+          }
           aria-label="설정"
           className="text-foreground-subtle hover:text-foreground"
         >

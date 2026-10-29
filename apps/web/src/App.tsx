@@ -5,6 +5,7 @@ import { AccountsPage } from './components/Accounts.tsx';
 import { HistoryScreen } from './components/History.tsx';
 import { AppearancePage, SettingsNav } from './components/Settings.tsx';
 import { McpPage } from './components/McpPage.tsx';
+import { SkillsPage } from './components/SkillsPage.tsx';
 import { CostPage, NotificationsPage } from './components/SettingsPages.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { focusTodoPanel } from './components/RightPanel.tsx';
@@ -58,12 +59,13 @@ function Screen({ state }: { state: RouteState }) {
       const page = state.settingsPage ?? 'appearance';
       return (
         <>
-          <SettingsNav current={page} />
+          <SettingsNav current={page} {...(state.cwd === undefined ? {} : { cwd: state.cwd })} />
           <main className="flex min-w-0 flex-1 flex-col">
             {page === 'accounts' && <AccountsPage />}
             {page === 'cost' && <CostPage />}
             {page === 'notifications' && <NotificationsPage />}
             {page === 'mcp' && <McpPage />}
+            {page === 'skills' && <SkillsPage cwd={state.cwd} />}
             {page === 'appearance' && <AppearancePage />}
           </main>
         </>

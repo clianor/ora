@@ -1,6 +1,7 @@
 import type { Isolation, PermissionMode, Todo } from '@ora/protocol';
 import type { ToolSpec } from './ports/model.ts';
 import type { RecallPack } from './ports/memory.ts';
+import type { SkillEntry } from './ports/skills.ts';
 import type { InstructionFile, PromptFile } from './ports/workspace.ts';
 import { phaseOf } from './todos.ts';
 
@@ -11,6 +12,9 @@ export interface PromptParts {
   readonly isolation: Isolation;
   readonly instructionFiles: readonly InstructionFile[];
   readonly recall: RecallPack;
+  /** 시스템 프롬프트에는 이름·설명·트리거만 넣는다. */
+  readonly skills: readonly SkillEntry[];
+  readonly skillBodies: readonly SkillEntry[];
   readonly cwd: string;
 }
 
@@ -31,6 +35,22 @@ export function assembleSystemPrompt(parts: PromptParts): string {
   if (parts.recall.lessons.length > 0) {
     const body = parts.recall.lessons.map((lesson) => `- ${lesson.id}: ${lesson.text}`).join('\n');
     sections.push(`## 회상한 교훈\n${body}`);
+  }
+  if (parts.skills.length > 0) {
+    const list = parts.skills
+      .map((skill) => {
+        const triggers =
+          skill.triggers.length === 0 ? '' : ` (트리거: ${skill.triggers.join(', ')})`;
+        return `- ${skill.name}: ${skill.description}${triggers}`;
+      })
+      .join('\n');
+    sections.push(`## 스킬 목록\n${list}`);
+  }
+  if (parts.skillBodies.length > 0) {
+    const bodies = parts.skillBodies
+      .map((skill) => `### ${skill.name}\n${skill.body.trim()}`)
+      .join('\n\n');
+    sections.push(`## 회상한 스킬\n${bodies}`);
   }
   return sections.join('\n\n');
 }

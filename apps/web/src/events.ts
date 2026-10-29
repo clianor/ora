@@ -36,6 +36,7 @@ export const toolVerbs: Record<string, string> = {
   shell: '실행',
   'verify.run': '검증',
   'history.read': '원문 보기',
+  skill: '스킬',
 };
 
 /** MCP 도구는 이름이 `서버:도구`입니다. 줄의 대상은 도구 이름 뒤에 인자 요약(`#12`, `key=값`)을 붙여 보입니다. */
@@ -233,6 +234,16 @@ export function buildThread(
         assistantContent.push({ type: 'data-mcp', data: { server, outcome } });
       } else if (failedMcpServers.delete(server)) {
         assistantContent.push({ type: 'data-mcp', data: { server, outcome: 'recovered' } });
+      }
+    } else if (event.type === 'recall') {
+      for (const skill of event.payload.skills) {
+        assistantContent.push({
+          type: 'tool-call',
+          toolCallId: `recall-${String(event.seq)}-${skill.scope}-${skill.name}`,
+          toolName: 'skill',
+          args: { label: skill.name, scope: skill.scope },
+          result: { status: 'ok', summary: skill.scope },
+        });
       }
     } else if (event.type === 'compaction') {
       const { method, fromSeq, toSeq, path, prunedCallIds } = event.payload;

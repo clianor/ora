@@ -53,7 +53,11 @@ interface Dimensions {
     todoCounts: Record<string, number>;
     blocked: string[];
   };
-  readonly memory: { proposals: number; recalledLessons: null };
+  readonly memory: {
+    proposals: number;
+    recalledLessons: number | null;
+    recalledSkills: number | null;
+  };
   readonly cost: {
     uncachedInputTokens: number;
     cacheReadInputTokens: number;
@@ -265,6 +269,7 @@ function summarizeSession(
     lastStage = index;
   }
 
+  const recallEvents = events.flatMap((event) => (event.type === 'recall' ? [event] : []));
   const askUserCalls = events.filter(
     (event) => event.type === 'tool_call' && event.payload.tool === 'ask_user',
   ).length;
@@ -291,8 +296,15 @@ function summarizeSession(
       proposals: events.filter(
         (event) => event.type === 'tool_call' && event.payload.tool === 'memory.propose',
       ).length,
-      // 엔진이 회상 팩을 기록에 남기지 않아 회상한 교훈 수는 세션 기록에서 구할 수 없다.
-      recalledLessons: null,
+      // 기록에 `recall` 이벤트가 없는 옛 세션은 null이다.
+      recalledLessons:
+        recallEvents.length === 0
+          ? null
+          : recallEvents.reduce((sum, event) => sum + event.payload.lessonIds.length, 0),
+      recalledSkills:
+        recallEvents.length === 0
+          ? null
+          : recallEvents.reduce((sum, event) => sum + event.payload.skills.length, 0),
     },
     cost: {
       uncachedInputTokens: sum((usage) => usage.uncachedInputTokens),
@@ -444,7 +456,7 @@ function formatRow(record: RunRecord): string {
     d.correctness.passed ? '통과' : `실패 (exit ${d.correctness.exitCode ?? '없음'})`,
     `verified ${d.verification.verifiedTodos}/${d.verification.totalTodos}${ratio === null ? '' : ` (${Math.round(ratio * 100)}%)`}, 게이트 실패 ${d.verification.gateFailures}, 모델 검사로만 통과 ${d.verification.modelOnlyVerifiedTodos}`,
     `${d.completion.status} (${d.completion.endReason})${record.timedOut === true ? ', 시간 상한 도달' : ''}; ${counts || 'todo 없음'}${blocked}`,
-    `제안 ${d.memory.proposals}, 회상 기록 없음`,
+    `제안 ${d.memory.proposals}, 회상 교훈 ${d.memory.recalledLessons ?? '기록 없음'}, 회상 스킬 ${d.memory.recalledSkills ?? '기록 없음'}`,
     `입력 ${cost.uncachedInputTokens}, 출력 ${cost.outputTokens}, 캐시 읽기 ${cost.cacheReadInputTokens}, 캐시 쓰기 ${cost.cacheCreationInputTokens}`,
     `${(d.speed.wallMs / 1000).toFixed(1)}초, ${d.speed.steps}스텝`,
     `폴백 ${d.fallbacks}, 단계 되돌림 ${d.stageRollbacks}`,

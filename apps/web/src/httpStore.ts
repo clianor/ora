@@ -2,6 +2,7 @@ import {
   accountListResponseSchema,
   costSettingsSchema,
   mcpServerListResponseSchema,
+  skillListResponseSchema,
   changesResponseSchema,
   branchResponseSchema,
   accountViewSchema,
@@ -53,6 +54,7 @@ import type {
   AccountsData,
   CostSettingsData,
   McpServersData,
+  SkillsData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -214,6 +216,8 @@ export function createHttpStore(): OraStoreSource {
   let costSettings: CostSettingsData = { status: 'loading' };
   let mcpPollTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpServers: McpServersData = { status: 'loading', servers: [] };
+  let skills: SkillsData = { status: 'loading' };
+  let skillsCwd: string | undefined;
   const tabs = new Map<string, WorktreeTabs>();
   const terminals = new Map<string, Terminal>();
   const branches = new Map<string, string>();
@@ -316,6 +320,7 @@ export function createHttpStore(): OraStoreSource {
       accounts,
       costSettings,
       mcpServers,
+      skills,
     };
   };
 
@@ -381,6 +386,7 @@ export function createHttpStore(): OraStoreSource {
     listRefreshTimer ??= setTimeout(() => {
       listRefreshTimer = null;
       refreshList().catch(() => undefined);
+      refreshSkills(skillsCwd).catch(() => undefined);
     }, refreshDelayMs);
   };
 
@@ -576,6 +582,19 @@ export function createHttpStore(): OraStoreSource {
       notifySoon();
     }
   };
+  const refreshSkills = async (cwd?: string): Promise<void> => {
+    skillsCwd = cwd;
+    const query = cwd === undefined ? '' : `?cwd=${encodeURIComponent(cwd)}`;
+    try {
+      skills = {
+        status: 'ready',
+        list: await requestJson(`/api/skills${query}`, skillListResponseSchema),
+      };
+    } catch (error) {
+      skills = { status: 'error', errorMessage: toMessage(error) };
+    }
+    notifySoon();
+  };
   const changeMcpServers = async (
     path: string,
     init: { method: 'POST' | 'PATCH' | 'DELETE'; body?: unknown },
@@ -697,6 +716,7 @@ export function createHttpStore(): OraStoreSource {
       await refreshCostSettings();
     },
     refreshMcpServers,
+    refreshSkills,
     addMcpServer: (body) => changeMcpServers('/api/mcp-servers', { method: 'POST', body }),
     setMcpServerEnabled: (name, enabled) =>
       changeMcpServers(`/api/mcp-servers/${encodeURIComponent(name)}`, {
@@ -820,12 +840,14 @@ export function createHttpStore(): OraStoreSource {
     accounts,
     costSettings,
     mcpServers,
+    skills,
   };
 
   refreshList().catch(() => undefined);
   refreshAccounts().catch(() => undefined);
   refreshCostSettings().catch(() => undefined);
   refreshMcpServers().catch(() => undefined);
+  refreshSkills().catch(() => undefined);
   requestJson('/api/routing', routingResponseSchema)
     .then((result) => {
       const chain = result.roles.default ?? [];
