@@ -1,5 +1,5 @@
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from '@ora/protocol';
-import { Pencil, ShieldCheck } from 'lucide-react';
+import { Pencil, ShieldCheck, ShieldQuestionMark } from 'lucide-react';
 import { useState } from 'react';
 import { Button, KeyHint } from '../ui/button.tsx';
 
@@ -31,6 +31,69 @@ export function ApprovalCard({ request, onDecide }: ApprovalCardProps) {
   const approve = (scope: 'once' | 'session' | 'always', editedCommand?: string) => {
     onDecide({ outcome: 'approved', scope, ...(editedCommand ? { editedCommand } : {}) });
   };
+
+  if (detail.kind === 'verify_waiver') {
+    return (
+      <section
+        aria-label="검증 예외 승인"
+        className="flex flex-col gap-3 rounded-lg bg-surface p-4"
+      >
+        <div className="flex items-center gap-2">
+          <ShieldQuestionMark aria-hidden className="size-4 text-warning" />
+          <h2 className="text-sm leading-5 font-semibold text-foreground">
+            {titles.verify_waiver}
+          </h2>
+          {request.todo && (
+            <span className="ml-auto text-xs leading-4 font-medium text-foreground-muted">
+              {request.todo.id}
+            </span>
+          )}
+        </div>
+        <p className="text-[13px] leading-5 text-foreground-muted">
+          {request.todo ? `${request.todo.content}. ` : ''}검증 명령은 통과했지만 완성 무결성
+          게이트가 아래 항목을 찾았습니다.
+        </p>
+        <div className="flex flex-col gap-1 rounded-md bg-background px-3 py-2.5">
+          <p className="font-mono text-xs leading-4 font-medium break-all text-foreground-subtle">
+            $ {detail.command}
+            {detail.exitCode === undefined ? '' : ` · exit ${detail.exitCode}`}
+          </p>
+          {detail.findings.map((finding) => (
+            <p key={finding} className="font-mono text-xs leading-[18px] break-all text-foreground">
+              {finding}
+            </p>
+          ))}
+        </div>
+        <div className="flex flex-col gap-1">
+          <p className="text-xs leading-4 font-medium text-foreground-subtle">모델이 적은 사유</p>
+          <p className="text-[13px] leading-5 text-foreground">{detail.reason}</p>
+        </div>
+        <p className="text-xs leading-[18px] text-foreground-subtle">
+          승인하면 이 할 일은 &quot;검증됨 · 예외 승인&quot;으로 남고, 증거에 사유를 기록합니다.
+          거부하면 실패로 남아 모델이 다시 고칩니다.
+        </p>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              onDecide({ outcome: 'denied' });
+            }}
+          >
+            거부
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              approve('once');
+            }}
+          >
+            예외 승인
+            <KeyHint>↵</KeyHint>
+          </Button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-label="실행 승인" className="flex flex-col gap-3 rounded-lg bg-surface p-4">

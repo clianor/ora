@@ -780,6 +780,7 @@ function createPhaseView(
   status: SessionStatus,
   endReason: SessionRecord['endReason'],
   run: (script: PhaseScript) => void,
+  approvals: PendingApproval[] = [],
 ): SessionView {
   const events: OraEvent[] = [];
   const latest: Record<string, Todo> = {};
@@ -809,11 +810,15 @@ function createPhaseView(
     phase: (name, criterion) => {
       emit(null, 'engine', 'phase', { name, criterion });
     },
-    verify: (step, def, exitCode) => {
+    verify: (step, def, exitCode, gate) => {
       emit(step, 'engine', 'verification', {
         todoId: def.id,
         evidence: evidence(def.command ?? '', exitCode),
+        ...(gate === undefined ? {} : { gate }),
       });
+    },
+    raw: (step, actor, type, payload) => {
+      emit(step, actor, type, payload);
     },
     update: (step, def, to, options = {}) => {
       const previous = latest[def.id];
@@ -821,6 +826,8 @@ function createPhaseView(
         options.exitCode === undefined
           ? previous?.evidence
           : evidence(def.command ?? '', options.exitCode);
+      const patched =
+        exitEvidence === undefined ? undefined : { ...exitEvidence, ...options.evidence };
       const todo: Todo = {
         id: def.id,
         content: def.content,
@@ -830,7 +837,7 @@ function createPhaseView(
         phase: def.phase,
         ...(def.command === undefined ? {} : { verify: { command: def.command, origin: 'model' } }),
         ...(options.reason === undefined ? {} : { blockedReason: options.reason }),
-        ...(exitEvidence === undefined ? {} : { evidence: exitEvidence }),
+        ...(patched === undefined ? {} : { evidence: patched }),
         updatedAt: `${day}T09:30:00+09:00`,
       };
       latest[def.id] = todo;
@@ -844,28 +851,43 @@ function createPhaseView(
     },
   });
   const todos = Object.values(latest);
-  return finishView({
-    record: {
-      ...createRecord(id, title, status, 'math-demo'),
-      ...(endReason ? { endReason } : {}),
+  return finishView(
+    {
+      record: {
+        ...createRecord(id, title, status, 'math-demo'),
+        ...(endReason ? { endReason } : {}),
+      },
+      events,
+      todos,
+      repoLabel: 'math-demo · main',
+      diff: { add: 1, del: 1 },
+      statusLine: ['스텝 12/50', '기본 모델 사용 중', '격리 harness'],
     },
-    events,
-    todos,
-    repoLabel: 'math-demo · main',
-    diff: { add: 1, del: 1 },
-    statusLine: ['스텝 12/50', '기본 모델 사용 중', '격리 harness'],
-  });
+    { approvals },
+  );
 }
 
 interface PhaseScript {
   objective: (text: string) => void;
   phase: (name: string, criterion: string | null) => void;
-  verify: (step: number, def: PhaseTodoDef, exitCode: number) => void;
+  verify: (
+    step: number,
+    def: PhaseTodoDef,
+    exitCode: number,
+    gate?: { passed: boolean; findings: string[] },
+  ) => void;
+  raw: (step: number, actor: Actor, type: OraEventType, payload: unknown) => void;
   update: (
     step: number,
     def: PhaseTodoDef,
     to: Todo['status'],
-    options?: { actor?: Actor; reason?: string; current?: string | null; exitCode?: number },
+    options?: {
+      actor?: Actor;
+      reason?: string;
+      current?: string | null;
+      exitCode?: number;
+      evidence?: Partial<NonNullable<Todo['evidence']>>;
+    },
   ) => void;
 }
 
@@ -992,6 +1014,93 @@ const phaseDoneView = createPhaseView(
   },
 );
 
+const gateDef: PhaseTodoDef = {
+  id: 't2',
+  content: 'add에 음수 처리 TODO 주석을 남기고 덧셈으로 고친다',
+  phase: '수정',
+  command: 'node check.js',
+};
+const gateFinding = 'math.js:2 TODO';
+const waiverReason =
+  '사용자가 음수 처리를 나중에 하겠다며 TODO 주석을 남기라고 지시했습니다. 구현을 빼먹은 것이 아닙니다.';
+const waiverRequest: PendingApproval = {
+  requestId: 'req-waiver-1',
+  request: {
+    callId: 'c-waive',
+    tool: 'verify.waive',
+    tier: 'exec',
+    reason: '게이트가 찾은 TODO는 사용자가 요청한 주석입니다.',
+    detail: {
+      kind: 'verify_waiver',
+      reason: waiverReason,
+      findings: ['math.js:2  // TODO: 음수 입력 처리'],
+      command: 'node check.js',
+      exitCode: 0,
+    },
+    todo: { id: gateDef.id, content: gateDef.content },
+  },
+};
+
+/** 게이트가 막은 할 일에 모델이 예외를 요청한 뒤, 사용자의 답(없음, 승인, 거부)까지의 기록을 만듭니다. */
+function runGate(script: PhaseScript, answer: 'none' | 'approved' | 'denied'): void {
+  script.objective('사용자 요청대로 음수 처리 TODO 주석을 남기고 add를 고친다');
+  runFindPhase(script);
+  script.phase('수정', 'node check.js가 exit 0으로 끝난다');
+  script.update(5, gateDef, 'pending');
+  script.update(6, gateDef, 'attempted', { current: 't2' });
+  script.verify(7, gateDef, 0, { passed: false, findings: [gateFinding] });
+  script.update(7, gateDef, 'failed', {
+    exitCode: 0,
+    evidence: { gateFindings: [gateFinding] },
+  });
+  script.raw(8, 'engine', 'approval_request', waiverRequest.request);
+  if (answer === 'none') return;
+  script.raw(8, 'engine', 'permission', {
+    callId: 'c-waive',
+    mode: 'always-ask',
+    decision: answer,
+    scope: 'once',
+  });
+  if (answer === 'denied') return;
+  script.update(8, gateDef, 'verified', {
+    evidence: {
+      waiver: { reason: waiverReason, approvedBy: 'user', at: `${day}T09:31:00+09:00` },
+    },
+    current: null,
+  });
+}
+
+// 예외 요청에 답을 기다리는 세션입니다. 주소는 `#/session/gate-waiver`입니다.
+const gateWaiverView = createPhaseView(
+  's-20261029-g4te01',
+  'add 함수 버그 수정',
+  'awaiting_approval',
+  undefined,
+  (s) => {
+    runGate(s, 'none');
+  },
+  [waiverRequest],
+);
+// 예외를 승인한 뒤입니다. 주소는 `#/session/gate-approved`입니다.
+const gateApprovedView = createPhaseView(
+  's-20261029-g4te02',
+  'add 함수 버그 수정',
+  'completed',
+  'passed',
+  (s) => {
+    runGate(s, 'approved');
+  },
+);
+// 예외를 거부한 뒤입니다. 주소는 `#/session/gate-denied`입니다.
+const gateDeniedView = createPhaseView(
+  's-20261029-g4te03',
+  'add 함수 버그 수정',
+  'running',
+  undefined,
+  (s) => {
+    runGate(s, 'denied');
+  },
+);
 const detailedViews = new Map<string, SessionView>(
   [
     sessionView,
@@ -1001,6 +1110,9 @@ const detailedViews = new Map<string, SessionView>(
     phasesView,
     phaseBlockedView,
     phaseDoneView,
+    gateWaiverView,
+    gateApprovedView,
+    gateDeniedView,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -1012,6 +1124,9 @@ const devAliases = new Map<string, string>([
   ['phases', phasesView.record.id],
   ['phase-blocked', phaseBlockedView.record.id],
   ['phase-done', phaseDoneView.record.id],
+  ['gate-waiver', gateWaiverView.record.id],
+  ['gate-approved', gateApprovedView.record.id],
+  ['gate-denied', gateDeniedView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */

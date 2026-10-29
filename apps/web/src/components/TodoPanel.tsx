@@ -20,6 +20,10 @@ import {
   OctagonPause,
   Play,
   RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestionMark,
+  ShieldX,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -40,7 +44,19 @@ const statusStyle: Record<TodoStatus, { label: string; icon: LucideIcon; color: 
   abandoned: { label: '포기함', icon: CircleSlash, color: 'text-foreground-subtle' },
 };
 
-type FlowKind = 'try' | 'repair' | 'claim' | 'pass' | 'fail' | 'block' | 'unblock' | 'abandon';
+type FlowKind =
+  | 'try'
+  | 'repair'
+  | 'claim'
+  | 'pass'
+  | 'fail'
+  | 'block'
+  | 'unblock'
+  | 'abandon'
+  | 'gate'
+  | 'waiveAsk'
+  | 'waive'
+  | 'waiveNo';
 
 /** 흐름 항목의 아이콘과 색입니다. 글자가 항상 함께 붙으므로 색만으로 구분하지 않습니다. */
 const flowStyle: Record<FlowKind, { icon: LucideIcon; color: string }> = {
@@ -52,6 +68,10 @@ const flowStyle: Record<FlowKind, { icon: LucideIcon; color: string }> = {
   block: { icon: OctagonPause, color: 'text-warning' },
   unblock: { icon: Play, color: 'text-foreground-muted' },
   abandon: { icon: CircleSlash, color: 'text-foreground-subtle' },
+  gate: { icon: ShieldAlert, color: 'text-danger' },
+  waiveAsk: { icon: ShieldQuestionMark, color: 'text-warning' },
+  waive: { icon: ShieldCheck, color: 'text-success' },
+  waiveNo: { icon: ShieldX, color: 'text-danger' },
 };
 
 /** 흐름이 이 개수를 넘으면 앞부분을 접고 마지막 `flowFoldLimit`개만 보입니다. */
@@ -93,6 +113,32 @@ function getStepSuffix(stepId: string | undefined): string {
   return match ? ` · 스텝 ${match[1]}` : '';
 }
 
+/**
+ * 게이트가 찾은 항목을 종류별로 세어 짧게 적습니다.
+ * 단언 없음과 건너뜀은 접두어로 가르고, 나머지는 스텁입니다. 스텁이 한 가지 패턴뿐이면 그 패턴 이름(예: TODO)을, 여러 가지면 "스텁"을 씁니다.
+ */
+function summarizeGateFindings(findings: readonly string[]): string {
+  const stubPatterns = new Set<string>();
+  let stubs = 0;
+  let skips = 0;
+  let noAssertions = 0;
+  for (const finding of findings) {
+    if (finding.startsWith('건너뜀:')) skips += 1;
+    else if (finding.startsWith('단언 없는 검사:')) noAssertions += 1;
+    else {
+      stubs += 1;
+      stubPatterns.add(finding.replace(/^\S+\s/, ''));
+    }
+  }
+  const stubName = stubPatterns.size === 1 ? [...stubPatterns][0] : '스텁';
+  const parts = [
+    stubs > 0 ? `${stubName} ${stubs}곳` : '',
+    skips > 0 ? `건너뜀 ${skips}곳` : '',
+    noAssertions > 0 ? `단언 없음 ${noAssertions}곳` : '',
+  ].filter((part) => part !== '');
+  return parts.join(' · ');
+}
+
 /** 이벤트 기록을 처음부터 읽어 패널이 그릴 값을 만듭니다. 작업 중 할 일은 화면이 추측하지 않고 기록한 값을 씁니다. */
 function readPanelData(events: readonly OraEvent[], todos: readonly Todo[]): PanelData {
   let objective = '';
@@ -102,6 +148,7 @@ function readPanelData(events: readonly OraEvent[], todos: readonly Todo[]): Pan
   const flows = new Map<string, FlowItem[]>();
   const stepIds = new Map<string, Set<string>>();
   const repairs = new Map<string, number>();
+  const waiverCalls = new Map<string, string>();
 
   const addPhase = (name: string): void => {
     if (!phaseNames.includes(name)) phaseNames.push(name);
@@ -145,12 +192,42 @@ function readPanelData(events: readonly OraEvent[], todos: readonly Todo[]): Pan
       } else if (to === 'abandoned') {
         push(todo.id, { kind: 'abandon', label: '포기 · 사용자', step });
       }
+    } else if (event.type === 'approval_request') {
+      const { callId, detail, todo } = event.payload;
+      if (detail.kind !== 'verify_waiver' || todo === undefined) continue;
+      waiverCalls.set(callId, todo.id);
+      push(todo.id, {
+        kind: 'waiveAsk',
+        label: '예외 요청 · 사용자 답 기다림',
+        step: getStepSuffix(event.stepId),
+      });
+    } else if (event.type === 'permission') {
+      const todoId = waiverCalls.get(event.payload.callId);
+      if (todoId === undefined || event.payload.decision === 'auto') continue;
+      const isApproved = event.payload.decision === 'approved';
+      const items = flows.get(todoId) ?? [];
+      const askedIndex = items.findLastIndex((item) => item.kind === 'waiveAsk');
+      flows.set(
+        todoId,
+        items.map((item, index) => (index === askedIndex ? { ...item, label: '예외 요청' } : item)),
+      );
+      push(todoId, {
+        kind: isApproved ? 'waive' : 'waiveNo',
+        label: isApproved ? '예외 승인 · 사용자' : '예외 거부 · 사용자',
+        step: getStepSuffix(event.stepId),
+      });
     } else if (event.type === 'verification') {
       const { todoId, evidence, gate } = event.payload;
       markStep(todoId, event.stepId);
       const step = getStepSuffix(event.stepId);
       const exit = evidence.exitCode === undefined ? '' : ` · exit ${evidence.exitCode}`;
-      if (evidence.exitCode === 0 && gate?.passed !== false) {
+      if (gate?.passed === false) {
+        push(todoId, {
+          kind: 'gate',
+          label: `게이트 실패 · ${summarizeGateFindings(gate.findings)}`,
+          step,
+        });
+      } else if (evidence.exitCode === 0) {
         push(todoId, { kind: 'pass', label: `검증 통과${exit}`, step });
       } else {
         push(todoId, { kind: 'fail', label: `검증 실패${exit}`, step });
@@ -203,6 +280,9 @@ function getResult(
     return { text: `exit ${exitCode}`, tone: 'ok' };
   }
   if (exitCode !== undefined && exitCode !== 0) return { text: `exit ${exitCode}`, tone: 'bad' };
+  if (exitCode !== undefined && todo.evidence?.gateFindings !== undefined) {
+    return { text: `exit ${exitCode}`, tone: 'muted' };
+  }
   if (todo.status === 'interrupted') return { text: 'aborted', tone: 'muted' };
   if (todo.status === 'attempted' && isAwaitingApproval)
     return { text: '승인 대기', tone: 'muted' };
@@ -416,7 +496,11 @@ function TodoRow({
           )}
         </div>
         <p className="flex items-center gap-1.5 text-xs leading-4">
-          <span className={cn('font-medium', style.color)}>{style.label}</span>
+          <span className={cn('font-medium', style.color)}>
+            {todo.status === 'verified' && todo.evidence?.waiver
+              ? '검증됨 · 예외 승인'
+              : style.label}
+          </span>
           {todo.verify && <span className="text-foreground-subtle">출처 {todo.verify.origin}</span>}
         </p>
         {todo.status === 'blocked' && todo.blockedReason && (
@@ -451,6 +535,9 @@ function PhaseSummary({ phase, steps }: { phase: Phase; steps: number }): ReactN
       </span>
     );
   }
+  const waived = phase.todos.filter(
+    (todo) => todo.status === 'verified' && todo.evidence?.waiver !== undefined,
+  ).length;
   let icon = <CircleCheck aria-hidden className="size-3.5 text-success" />;
   let label = '통과';
   let labelClass = 'text-success';
@@ -466,6 +553,9 @@ function PhaseSummary({ phase, steps }: { phase: Phase; steps: number }): ReactN
     <>
       {icon}
       <span className={cn('text-xs leading-4 font-medium', labelClass)}>{label}</span>
+      {waived > 0 && denominator > 0 && abandoned === 0 && (
+        <span className="text-xs leading-4 font-medium text-foreground-muted">· 예외 {waived}</span>
+      )}
       {steps > 0 && (
         <span className="text-xs leading-4 text-foreground-subtle">· 스텝 {steps}</span>
       )}
