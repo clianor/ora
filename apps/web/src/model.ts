@@ -9,6 +9,8 @@ import type {
   QuestionAnswer,
   RoutingResponse,
   SessionRecord,
+  Terminal,
+  WorktreeTabs,
   Todo,
 } from '@ora/protocol';
 import type { ThreadData } from './events.ts';
@@ -106,6 +108,18 @@ export interface SessionView {
   steerFailure: { id: number; error: string; texts: string[] } | null;
 }
 
+interface TerminalSize {
+  cols: number;
+  rows: number;
+}
+
+interface TerminalHandlers {
+  onOutput: (bytes: Uint8Array) => void;
+  onExit: (exitCode: number) => void;
+  /** 서버가 스트림을 다시 이으면 버퍼를 처음부터 다시 보내므로, 화면을 비우라는 신호입니다. */
+  onReset: () => void;
+}
+
 /** 화면이 엔진에 요청하는 동작입니다. */
 export interface OraActions {
   /** 새 세션을 만들고 세션 ID를 돌려줍니다. cwd가 없으면 서버의 기본 작업 폴더를 씁니다. model은 `<프로바이더>/<모델>[:<추론 강도>]`이고 체인 맨 앞에 들어갑니다. */
@@ -139,6 +153,17 @@ export interface OraActions {
   logoutAccount: (provider: AccountProvider, name: string) => Promise<void>;
   setAccountPriority: (provider: AccountProvider, name: string, priority: number) => Promise<void>;
   dismissError: (sessionId: string) => void;
+  /** 워크트리의 탭 목록과 그 워크트리의 터미널 목록을 서버에서 읽어 저장소에 채웁니다. */
+  loadTabs: (cwd: string) => Promise<void>;
+  /** 탭 목록을 저장소에 먼저 반영하고 서버 파일에 씁니다. */
+  saveTabs: (cwd: string, tabs: WorktreeTabs) => Promise<void>;
+  /** 워크트리 폴더에서 셸을 열고 터미널 ID를 돌려줍니다. */
+  createTerminal: (cwd: string, size: TerminalSize) => Promise<string>;
+  killTerminal: (terminalId: string) => Promise<void>;
+  sendTerminalInput: (terminalId: string, data: string) => Promise<void>;
+  resizeTerminal: (terminalId: string, size: TerminalSize) => Promise<void>;
+  /** 터미널 출력 스트림을 구독합니다. 돌려주는 함수로 멈춥니다. */
+  watchTerminal: (terminalId: string, handlers: TerminalHandlers) => () => void;
 }
 
 /** 설정 › 계정 페이지가 그리는 데이터입니다. */
@@ -164,6 +189,14 @@ export interface OraStore {
   routing: RoutingData | null;
   /** 경로에 세션 ID가 없을 때 여는 세션입니다. 세션이 없으면 undefined입니다. */
   defaultSessionId: string | undefined;
+  /** 탭 목록입니다. `loadTabs`가 끝나기 전에는 undefined입니다. */
+  getTabs: (cwd: string) => WorktreeTabs | undefined;
+  /** `loadTabs`가 읽은 터미널입니다. 서버가 다시 떠서 사라진 터미널은 undefined입니다. */
+  getTerminal: (terminalId: string) => Terminal | undefined;
+  /** `loadTabs`가 읽은 워크트리의 브랜치입니다. git 저장소가 아니거나 detached HEAD면 undefined입니다. */
+  getBranch: (cwd: string) => string | undefined;
+  /** 작업 폴더가 없는 옛 세션입니다. 사이드바에는 없고 기록 화면에만 보입니다. */
+  sessionsWithoutFolder: SessionNode[];
   getSession: (sessionId: string) => SessionView | undefined;
   /** 세션의 실시간 이벤트를 받기 시작합니다. 돌려주는 함수로 멈춥니다. */
   watchSession: (sessionId: string) => () => void;

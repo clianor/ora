@@ -5,7 +5,13 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
-import { BUILTIN_MODELS, createAccountStore, createCatalog } from '@ora/adapters';
+import {
+  BUILTIN_MODELS,
+  createAccountStore,
+  createCatalog,
+  withFileLock,
+  writeFileAtomic,
+} from '@ora/adapters';
 import {
   answerBodySchema,
   approvalBodySchema,
@@ -21,6 +27,9 @@ import {
   terminalInputBodySchema,
   terminalResizeBodySchema,
   terminalSseEventNames,
+  putTabsBodySchema,
+  tabsFileSchema,
+  tabsQuerySchema,
   todoActionBodySchema,
 } from '@ora/protocol';
 import {
@@ -31,6 +40,7 @@ import {
 } from '@ora/protocol';
 import type {
   ApprovalRequest,
+  TabsFile,
   InfoResponse,
   Isolation,
   OraEvent,
@@ -40,7 +50,7 @@ import type {
   RoutingResponse,
   SessionDetailResponse,
 } from '@ora/protocol';
-import { readSessionRecord, readTodos, readTranscriptText } from '@ora/store';
+import { readSessionRecordOrWarn, readTodos, readTranscriptText } from '@ora/store';
 import { z } from 'zod';
 import { UsageError, loadConfig, resolveChains, resolveSessionsDir } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
@@ -122,6 +132,9 @@ function readBranch(cwd: string): Promise<string | undefined> {
   });
   return promise;
 }
+
+/** 워크트리 키로 쓰는 경로의 단일 정규화 지점이다. `/tmp` 같은 심볼릭 링크를 풀어 한 폴더가 한 워크트리가 되게 하고, 풀지 못하면 받은 경로를 쓴다. */
+const canonicalPath = (path: string): Promise<string> => realpath(path).catch(() => path);
 
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
@@ -213,9 +226,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     ...(options.loginPort === undefined ? {} : { loginPort: options.loginPort }),
     listPinnedAccounts: async () => {
       const records = await Promise.all(
-        [...live.keys()].map((id) =>
-          readSessionRecord(join(sessionsDir, id)).catch(() => undefined),
-        ),
+        [...live.keys()].map((id) => readSessionRecordOrWarn(join(sessionsDir, id))),
       );
       return records.flatMap((record) =>
         record?.accountPin === undefined ? [] : [record.accountPin],
@@ -578,7 +589,8 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     const [, , rawId, action] = segments;
     if (rawId === undefined) {
       if (method === 'GET') {
-        const cwd = url.searchParams.get('cwd');
+        const rawCwd = url.searchParams.get('cwd');
+        const cwd = rawCwd === null ? null : await canonicalPath(rawCwd);
         reply(res, 200, {
           terminals: terminals.list().filter((terminal) => cwd === null || terminal.cwd === cwd),
         });
@@ -588,7 +600,9 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       const body = parseBody(createTerminalBodySchema, await readJson(req));
       if (closing) throw new HttpError(503, '서버를 닫는 중입니다.');
       await assertKnownWorktree(body.cwd);
-      reply(res, 201, { terminal: terminals.create(body) });
+      reply(res, 201, {
+        terminal: terminals.create({ ...body, cwd: await canonicalPath(body.cwd) }),
+      });
       return;
     }
     const parsedId = terminalIdSchema.safeParse(rawId);
@@ -653,11 +667,47 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       await routeTerminals(req, res, url, method, segments);
       return;
     }
+    if (segments[1] === 'tabs' && segments.length === 2) {
+      const tabsPath = join(oraHome, 'tabs.json');
+      const readTabsFile = async (): Promise<TabsFile> => {
+        const text = await readFile(tabsPath, 'utf8').catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+          throw error;
+        });
+        return text === undefined
+          ? { schemaVersion: 1, worktrees: {} }
+          : tabsFileSchema.parse(JSON.parse(text));
+      };
+      if (method === 'GET') {
+        const query = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('cwd') ?? '' });
+        const cwd = await canonicalPath(query.cwd);
+        const file = await readTabsFile();
+        reply(res, 200, { tabs: file.worktrees[cwd] ?? { tabs: [] } });
+        return;
+      }
+      if (method !== 'PUT') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const body = parseBody(putTabsBodySchema, await readJson(req));
+      await withFileLock(`${tabsPath}.lock`, async () => {
+        const file = await readTabsFile();
+        file.worktrees[await canonicalPath(body.cwd)] = body.tabs;
+        await writeFileAtomic(tabsPath, `${JSON.stringify(file, null, 2)}\n`);
+      });
+      reply(res, 200, { tabs: body.tabs });
+      return;
+    }
+    if (segments[1] === 'branch' && segments.length === 2) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const { cwd } = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('cwd') ?? '' });
+      await assertKnownWorktree(cwd);
+      const branch = await readBranch(cwd);
+      reply(res, 200, branch === undefined ? {} : { branch });
+      return;
+    }
     if (segments[1] === 'info' && segments.length === 2) {
       if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
       const branch = await readBranch(options.cwd);
       const info: InfoResponse = {
-        cwd: options.cwd,
+        cwd: await canonicalPath(options.cwd),
         ...(branch === undefined ? {} : { branch }),
         permissionMode: config.permissions.mode,
         isolation: options.isolation ?? config.isolation,
@@ -675,7 +725,16 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
 
     if (rawId === undefined) {
       if (method === 'GET') {
-        reply(res, 200, { sessions: await listSessions(options.env, options.configPath) });
+        const records = await listSessions(options.env, options.configPath);
+        reply(res, 200, {
+          sessions: await Promise.all(
+            records.map(async (record) =>
+              record.repo === undefined
+                ? record
+                : { ...record, repo: await canonicalPath(record.repo) },
+            ),
+          ),
+        });
         return;
       }
       if (method === 'POST') {
@@ -710,7 +769,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     const sessionDir = sessionDirOf(rawId);
     const id = rawId;
     if (action === undefined && method === 'GET') {
-      const session = await readSessionRecord(sessionDir).catch(() => undefined);
+      const session = await readSessionRecordOrWarn(sessionDir);
       if (session === undefined) throw new HttpError(404, `세션이 없습니다: ${id}`);
       const entry = live.get(id);
       const modelId = session.models[0]?.model;

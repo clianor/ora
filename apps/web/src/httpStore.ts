@@ -1,5 +1,6 @@
 import {
   accountListResponseSchema,
+  branchResponseSchema,
   accountViewSchema,
   loginStateSchema,
   approvalDecisionSchema,
@@ -17,6 +18,12 @@ import {
   sessionIdResponseSchema,
   sessionListResponseSchema,
   sseEventNames,
+  tabsResponseSchema,
+  terminalExitEventSchema,
+  terminalListResponseSchema,
+  terminalOutputEventSchema,
+  terminalResponseSchema,
+  terminalSseEventNames,
   steerFailedSchema,
   todoActionResponseSchema,
   type ApprovalDecision,
@@ -25,6 +32,8 @@ import {
   type PendingQuestion,
   type QuestionAnswer,
   type SessionRecord,
+  type Terminal,
+  type WorktreeTabs,
   type Todo,
 } from '@ora/protocol';
 import type { ThreadMessageLike } from '@assistant-ui/react';
@@ -101,7 +110,7 @@ interface SafeParser<T> {
 async function requestJson<T>(
   path: string,
   schema: Parser<T>,
-  init?: { method: 'POST'; body: unknown },
+  init?: { method: 'POST' | 'PUT'; body: unknown },
 ): Promise<T> {
   const response = await fetch(path, {
     method: init?.method ?? 'GET',
@@ -124,22 +133,26 @@ async function requestJson<T>(
   return schema.parse(body);
 }
 
-/** 세션의 `repo` 경로로 저장소 그룹을 만들고, 그룹마다 그 작업 폴더 하나를 워크트리 행으로 둡니다(SPEC 2.7절). */
-function buildRepos(records: readonly SessionRecord[]): RepoNode[] {
+/**
+ * 세션의 `repo` 경로마다 저장소 그룹과 워크트리 행 하나를 만듭니다(SPEC 2.7절).
+ * 서버 시작 폴더는 세션이 없어도 행으로 둡니다. 작업 폴더가 없는 세션은 여기에 넣지 않습니다.
+ */
+function buildRepos(records: readonly SessionRecord[], startCwd: string | undefined): RepoNode[] {
   const groups = new Map<string, SessionRecord[]>();
+  if (startCwd !== undefined) groups.set(startCwd, []);
   for (const record of records) {
-    const key = record.repo ?? '';
-    groups.set(key, [...(groups.get(key) ?? []), record]);
+    if (record.repo === undefined) continue;
+    groups.set(record.repo, [...(groups.get(record.repo) ?? []), record]);
   }
   return [...groups.entries()].map(([repo, list]) => {
     const worktree: WorktreeNode = {
-      name: repo === '' ? '작업 폴더 없음' : basename(repo),
-      cwd: repo === '' ? undefined : repo,
-      title: repo === '' ? undefined : repo,
+      name: basename(repo),
+      cwd: repo,
+      title: repo,
       sessions: list.map((record) => ({ record, todoTitles: [] })),
       stack: [],
     };
-    return { name: repo === '' ? '작업 폴더 없음' : basename(repo), worktrees: [worktree] };
+    return { name: basename(repo), worktrees: [worktree] };
   });
 }
 
@@ -195,6 +208,10 @@ export function createHttpStore(): OraStoreSource {
   let steerFailureCount = 0;
   let accounts: AccountsData = { status: 'loading', providers: [] };
   let accountPollTimer: ReturnType<typeof setTimeout> | null = null;
+  const tabs = new Map<string, WorktreeTabs>();
+  const terminals = new Map<string, Terminal>();
+  const branches = new Map<string, string>();
+  let terminalInputChain: Promise<unknown> = Promise.resolve();
 
   /** 폴더를 고르지 않은 새 세션은 서버가 알려 준 기본 작업 폴더와 브랜치를 보여 줍니다. */
   function getNewSessionContext(cwd?: string): WorktreeContext {
@@ -254,11 +271,17 @@ export function createHttpStore(): OraStoreSource {
       status: listLoaded,
       errorMessage: listError,
       infoError,
-      sidebar: { repos: buildRepos(records), deviceName: '이 컴퓨터' },
+      sidebar: { repos: buildRepos(records, info?.cwd), deviceName: '이 컴퓨터' },
+      sessionsWithoutFolder: records
+        .filter((record) => record.repo === undefined)
+        .map((record) => ({ record, todoTitles: [] })),
+      getBranch: (cwd) => branches.get(cwd),
       getNewSessionContext: getNewSessionContext,
       empty: { repos: [], branches: [] },
       routing,
       defaultSessionId: records[0]?.id,
+      getTabs: (cwd) => tabs.get(cwd),
+      getTerminal: (id) => terminals.get(id),
       getSession: (id) => views.get(id),
       watchSession,
       actions,
@@ -599,15 +622,99 @@ export function createHttpStore(): OraStoreSource {
       state.error = null;
       touch(state);
     },
+    loadTabs: async (cwd) => {
+      const query = `?cwd=${encodeURIComponent(cwd)}`;
+      const [saved, listed, head] = await Promise.all([
+        requestJson(`/api/tabs${query}`, tabsResponseSchema),
+        requestJson(`/api/terminals${query}`, terminalListResponseSchema),
+        requestJson(`/api/branch${query}`, branchResponseSchema).catch(() => ({
+          branch: undefined,
+        })),
+      ]);
+      if (head.branch !== undefined) branches.set(cwd, head.branch);
+      tabs.set(cwd, saved.tabs);
+      for (const terminal of listed.terminals) terminals.set(terminal.id, terminal);
+      notifyNow();
+    },
+    saveTabs: async (cwd, next) => {
+      tabs.set(cwd, next);
+      notifyNow();
+      await requestJson('/api/tabs', tabsResponseSchema, {
+        method: 'PUT',
+        body: { cwd, tabs: next },
+      });
+    },
+    createTerminal: async (cwd, size) => {
+      const created = await requestJson('/api/terminals', terminalResponseSchema, {
+        method: 'POST',
+        body: { cwd, ...size },
+      });
+      terminals.set(created.terminal.id, created.terminal);
+      notifyNow();
+      return created.terminal.id;
+    },
+    killTerminal: async (id) => {
+      await requestJson(`/api/terminals/${id}/kill`, okResponseSchema, {
+        method: 'POST',
+        body: {},
+      });
+    },
+    sendTerminalInput: (id, data) => {
+      // 키 입력이 서로 앞지르지 않도록 한 번에 하나씩 보냅니다.
+      const sent = terminalInputChain
+        .catch(() => undefined)
+        .then(() =>
+          requestJson(`/api/terminals/${id}/input`, okResponseSchema, {
+            method: 'POST',
+            body: { data },
+          }),
+        );
+      terminalInputChain = sent;
+      return sent.then(() => undefined);
+    },
+    resizeTerminal: async (id, size) => {
+      await requestJson(`/api/terminals/${id}/resize`, okResponseSchema, {
+        method: 'POST',
+        body: size,
+      });
+    },
+    watchTerminal: (id, handlers) => {
+      const source = new EventSource(`/api/terminals/${id}/output`);
+      let hasOpened = false;
+      source.addEventListener('open', () => {
+        if (hasOpened) handlers.onReset();
+        hasOpened = true;
+      });
+      source.addEventListener(terminalSseEventNames.output, (event) => {
+        const body = terminalOutputEventSchema.parse(
+          JSON.parse((event as MessageEvent<string>).data),
+        );
+        handlers.onOutput(Uint8Array.from(atob(body.data), (char) => char.charCodeAt(0)));
+      });
+      source.addEventListener(terminalSseEventNames.exit, (event) => {
+        const body = terminalExitEventSchema.parse(
+          JSON.parse((event as MessageEvent<string>).data),
+        );
+        handlers.onExit(body.exitCode);
+        source.close();
+      });
+      return () => {
+        source.close();
+      };
+    },
   };
 
   snapshot = {
     status: 'loading',
     sidebar: { repos: [], deviceName: '이 컴퓨터' },
+    sessionsWithoutFolder: [],
+    getBranch: () => undefined,
     getNewSessionContext: getNewSessionContext,
     empty: { repos: [], branches: [] },
     routing,
     defaultSessionId: undefined,
+    getTabs: () => undefined,
+    getTerminal: () => undefined,
     getSession: () => undefined,
     watchSession,
     actions,

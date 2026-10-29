@@ -1,5 +1,5 @@
 import { mkdir, open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { SessionStore, TranscriptSink } from '@ora/core';
 import { oraEventSchema, sessionRecordSchema, todoSchema } from '@ora/protocol';
 import type { SessionRecord, Todo } from '@ora/protocol';
@@ -133,11 +133,31 @@ export async function readTodos(sessionDir: string): Promise<Todo[]> {
   return text === undefined ? [] : z.array(todoSchema).parse(JSON.parse(text));
 }
 
-/** 세션 기록 목록이다. 최근에 만든 세션이 앞에 온다. session.json이 없거나 깨진 디렉터리는 건너뛴다. */
+const warnedBroken = new Set<string>();
+
+/** `readSessionRecord`와 같지만 형식이 틀린 기록은 예외 대신 stderr에 세션 디렉터리 이름을 경고하고 `undefined`를 돌려준다. 같은 기록은 한 번만 경고한다. */
+export async function readSessionRecordOrWarn(
+  sessionDir: string,
+): Promise<SessionRecord | undefined> {
+  try {
+    return await readSessionRecord(sessionDir);
+  } catch (error) {
+    if (!warnedBroken.has(sessionDir)) {
+      warnedBroken.add(sessionDir);
+      const reason = error instanceof Error ? error.message.slice(0, 300) : String(error);
+      process.stderr.write(
+        `경고: session.json을 읽을 수 없습니다: ${basename(sessionDir)}: ${reason}\n`,
+      );
+    }
+    return undefined;
+  }
+}
+
+/** 세션 기록 목록이다. 최근에 만든 세션이 앞에 온다. session.json이 없는 디렉터리는 건너뛰고, 형식이 틀린 기록은 경고하고 건너뛴다. */
 export async function listSessionRecords(sessionsDir: string): Promise<SessionRecord[]> {
   const names = await readdir(sessionsDir).catch(() => []);
   const records = await Promise.all(
-    names.map((name) => readSessionRecord(join(sessionsDir, name)).catch(() => undefined)),
+    names.map((name) => readSessionRecordOrWarn(join(sessionsDir, name))),
   );
   return records
     .filter((record) => record !== undefined)

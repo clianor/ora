@@ -34,6 +34,7 @@ import {
   createSessionStorage,
   listSessionRecords,
   readSessionRecord,
+  readSessionRecordOrWarn,
   readTodos,
   readTranscriptText,
 } from '@ora/store';
@@ -188,7 +189,7 @@ async function assertResumable(sessionDir: string, sessionId: string): Promise<v
   if ((await readTranscriptText(sessionDir)) === undefined) {
     throw new UsageError(`세션을 찾을 수 없습니다: ${sessionId}`);
   }
-  const session = await readSessionRecord(sessionDir).catch(() => undefined);
+  const session = await readSessionRecordOrWarn(sessionDir);
   if (session?.status === 'archived') {
     throw new UsageError(`archived 세션은 재개하지 않습니다: ${sessionId}`);
   }

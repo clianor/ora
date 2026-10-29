@@ -21,17 +21,19 @@ interface Picked {
   effort?: Effort;
 }
 
-/** 첫 입력으로 새 세션을 만들고 그 세션 화면으로 이동합니다. 사용자가 고른 모델은 세션을 만들 때 `model`로 보냅니다. */
+/** 첫 입력으로 새 세션을 만들고 만든 세션 ID를 `onCreated`로 알립니다. 사용자가 고른 모델은 세션을 만들 때 `model`로 보냅니다. */
 function Welcome({
   context,
   cwd,
   chips,
   isPickerOpen,
+  onCreated,
 }: {
   context: ReactNode;
   cwd?: string;
   chips?: ComposerChips;
   isPickerOpen?: boolean;
+  onCreated: (sessionId: string) => void;
 }) {
   const { actions, routing } = useStore();
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +61,7 @@ function Welcome({
           ? `${selected.provider}/${selected.model}${selected.effort ? `:${selected.effort}` : ''}`
           : undefined;
       const sessionId = await actions.createSession(task, cwd, model);
-      navigate('session', { sessionId });
+      onCreated(sessionId);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     }
@@ -119,14 +121,17 @@ export function NewSessionWelcome({
   context,
   cwd,
   isPickerOpen,
+  onCreated,
 }: {
   context: WorktreeContext;
   cwd?: string;
   isPickerOpen?: boolean;
+  onCreated: (sessionId: string) => void;
 }) {
   return (
     <Welcome
       cwd={cwd}
+      onCreated={onCreated}
       isPickerOpen={isPickerOpen}
       chips={context.chips}
       context={
@@ -198,6 +203,9 @@ export function EmptyWelcome({ empty }: { empty: OraStore['empty'] }) {
   return (
     <Welcome
       chips={empty.chips}
+      onCreated={(sessionId) => {
+        navigate('worktree', { sessionId });
+      }}
       context={
         <>
           <ContextSelect

@@ -6,7 +6,7 @@ import type { StopCause } from '@ora/core';
 import type { OraEvent, SessionRecord } from '@ora/protocol';
 import {
   createSessionStorage,
-  readSessionRecord,
+  readSessionRecordOrWarn,
   readTranscriptText,
   writeSessionRecord,
 } from '@ora/store';
@@ -113,7 +113,7 @@ export async function recoverSession(
       : parsed.events.findLast((event) => event.type === 'session_end')?.payload;
   if (end !== undefined) {
     const now = formatKst(clock.now());
-    const session = await readSessionRecord(sessionDir).catch(() => undefined);
+    const session = await readSessionRecordOrWarn(sessionDir);
     if (session?.status !== end.status || session.endReason !== end.endReason) {
       const base =
         session ??

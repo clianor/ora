@@ -1,14 +1,12 @@
-import { X } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { getStageIndex } from '../events.ts';
-import type { SessionView, SidebarData } from '../model.ts';
+import { TriangleAlert, X } from 'lucide-react';
+import { useEffect } from 'react';
+import { runningStatuses } from '../lib/status.ts';
+import type { SessionView } from '../model.ts';
 import { runAction, useStore } from '../store.tsx';
 import { ApprovalCard } from './ApprovalCard.tsx';
 import { ChatProvider, Composer, StatusLine, SteerRestore, ThreadView } from './Chat.tsx';
 import { CrashedNotice } from './CrashedNotice.tsx';
-import { Header } from './Header.tsx';
 import { QuestionCard } from './QuestionCard.tsx';
-import { Sidebar } from './Sidebar.tsx';
 import { TodoPanel } from './TodoPanel.tsx';
 
 const timeFormat = new Intl.DateTimeFormat('ko-KR', {
@@ -18,18 +16,16 @@ const timeFormat = new Intl.DateTimeFormat('ko-KR', {
   timeZone: 'Asia/Seoul',
 });
 
-const runningStatuses = new Set(['created', 'running', 'awaiting_approval', 'awaiting_user']);
-
 interface WorkbenchProps {
-  sidebar: SidebarData;
   view: SessionView;
+  /** 같은 워크트리에서 실행 중인 세션 수입니다. 2개 이상이면 입력창 위에 덮어쓰기 경고를 보입니다. */
+  sameFolderRunningCount: number;
 }
 
-/** 세션 화면입니다. 왼쪽 사이드바, 가운데 대화, 오른쪽 할 일 패널의 세 열입니다. */
-export function Workbench({ sidebar, view }: WorkbenchProps) {
+/** 세션 탭의 내용입니다. 가운데 대화와 오른쪽 할 일 패널의 두 열입니다. */
+export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
   const store = useStore();
   const { actions, watchSession } = store;
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const { record, thread } = view;
   const sessionId = record.id;
 
@@ -72,25 +68,7 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
 
   return (
     <>
-      {isSidebarOpen && (
-        <Sidebar
-          data={sidebar}
-          selectedSessionId={sessionId}
-          initialQuery={view.initialSearch?.query}
-        />
-      )}
       <main className="flex min-w-0 flex-1 flex-col">
-        <Header
-          title={record.title}
-          repoLabel={view.repoLabel}
-          repoTitle={view.repoTitle}
-          stageIndex={getStageIndex(view.events)}
-          diff={view.diff}
-          isCrashed={isCrashed}
-          onToggleSidebar={() => {
-            setIsSidebarOpen(!isSidebarOpen);
-          }}
-        />
         <ChatProvider
           messages={thread.messages}
           onSend={(text) => actions.sendMessage(sessionId, text)}
@@ -145,6 +123,13 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
                   </button>
                 )}
               </div>
+            )}
+            {isRunning && sameFolderRunningCount >= 2 && (
+              <p className="mb-2 flex w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
+                <TriangleAlert aria-hidden className="size-3.5 text-warning" />
+                같은 폴더에서 세션 {sameFolderRunningCount}개 실행 중 · 파일을 서로 덮어쓸 수
+                있습니다
+              </p>
             )}
             <Composer
               isRunning={isRunning}

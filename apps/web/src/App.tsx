@@ -2,29 +2,26 @@ import { useEffect, useState } from 'react';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { Header } from './components/Header.tsx';
 import { AccountsPage } from './components/Accounts.tsx';
+import { HistoryScreen } from './components/History.tsx';
 import { AppearancePage, SettingsNav } from './components/Settings.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { focusTodoPanel } from './components/TodoPanel.tsx';
-import { EmptyWelcome, NewSessionWelcome } from './components/Welcome.tsx';
-import { Workbench } from './components/Workbench.tsx';
-import { basename } from './lib/path.ts';
-import { navigate, useRouteState, type RouteState } from './lib/route.ts';
+import { EmptyWelcome } from './components/Welcome.tsx';
+import { WorktreeScreen } from './components/WorktreeScreen.tsx';
+import { navigate, setPaletteOpen, useRouteState, type RouteState } from './lib/route.ts';
 import { useStore } from './store.tsx';
 
 function useShortcuts(state: RouteState) {
-  /** 창 전체에서 키보드 단축키(⌘K, ⌘N, ⌘,, ⌘1)를 받으려면 window 이벤트를 구독해야 합니다. */
+  /** 창 전체에서 키보드 단축키(⌘K, ⌘Y, ⌘,, ⌘1)를 받으려면 window 이벤트를 구독해야 합니다. */
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!event.metaKey && !event.ctrlKey) return;
       if (event.key === 'k') {
         event.preventDefault();
-        navigate(state.route, {
-          sessionId: state.sessionId,
-          isPaletteOpen: !state.isPaletteOpen,
-        });
-      } else if (event.key === 'n') {
+        setPaletteOpen(!state.isPaletteOpen);
+      } else if (event.key === 'y') {
         event.preventDefault();
-        navigate('new');
+        navigate('history');
       } else if (event.key === ',') {
         event.preventDefault();
         navigate('settings');
@@ -37,75 +34,17 @@ function useShortcuts(state: RouteState) {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [state.route, state.sessionId, state.isPaletteOpen]);
-}
-
-function NewScreen({ cwd, isPickerOpen }: { cwd?: string; isPickerOpen?: boolean }) {
-  const store = useStore();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const context = store.getNewSessionContext(cwd);
-  return (
-    <>
-      {isSidebarOpen && <Sidebar data={store.sidebar} selectedCwd={context.path} />}
-      <main className="flex min-w-0 flex-1 flex-col">
-        <Header
-          title="새 세션"
-          repoLabel={context.path === undefined ? undefined : basename(context.path)}
-          repoTitle={context.path}
-          onToggleSidebar={() => {
-            setIsSidebarOpen(!isSidebarOpen);
-          }}
-        />
-        {store.infoError && (
-          <p
-            role="alert"
-            className="mx-5 rounded-md bg-danger-subtle px-3 py-2 text-xs leading-[18px] text-danger"
-          >
-            {store.infoError}
-          </p>
-        )}
-        <NewSessionWelcome context={context} cwd={cwd} isPickerOpen={isPickerOpen} />
-      </main>
-    </>
-  );
-}
-
-function Notice({ title, detail }: { title: string; detail: string }) {
-  const store = useStore();
-  return (
-    <>
-      <Sidebar data={store.sidebar} />
-      <main className="flex min-w-0 flex-1 flex-col items-center justify-center gap-1">
-        <h1 className="text-sm leading-5 font-semibold text-foreground">{title}</h1>
-        <p role="status" className="text-xs leading-4 text-foreground-subtle">
-          {detail}
-        </p>
-      </main>
-    </>
-  );
-}
-
-function SessionScreen({ sessionId }: { sessionId: string | undefined }) {
-  const store = useStore();
-  if (store.status === 'loading') return <Notice title="세션을 불러오는 중입니다" detail="" />;
-  if (store.status === 'error') {
-    return <Notice title="서버에 연결하지 못했습니다" detail={store.errorMessage ?? ''} />;
-  }
-  const id = sessionId ?? store.defaultSessionId;
-  if (id === undefined) return <NewScreen />;
-  const view = store.getSession(id);
-  if (!view) {
-    return <Notice title="세션을 찾지 못했습니다" detail="사이드바에서 다른 세션을 고릅니다." />;
-  }
-  return <Workbench sidebar={store.sidebar} view={view} />;
+  }, [state.isPaletteOpen]);
 }
 
 function Screen({ state }: { state: RouteState }) {
   const store = useStore();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   switch (state.route) {
-    case 'session':
-      return <SessionScreen sessionId={state.sessionId} />;
+    case 'worktree':
+      return <WorktreeScreen state={state} />;
+    case 'history':
+      return <HistoryScreen />;
     case 'settings': {
       const page = state.settingsPage ?? 'appearance';
       return (
@@ -117,10 +56,12 @@ function Screen({ state }: { state: RouteState }) {
         </>
       );
     }
-    case 'new':
-      return <NewScreen cwd={state.cwd} isPickerOpen={state.isModelPickerOpen} />;
     case 'empty':
-      if (store.empty.repos.length === 0) return <NewScreen />;
+      if (store.empty.repos.length === 0) {
+        return (
+          <WorktreeScreen state={{ route: 'worktree', isPaletteOpen: false, paletteQuery: '' }} />
+        );
+      }
       return (
         <>
           {isSidebarOpen && <Sidebar data={{ ...store.sidebar, repos: [] }} />}
@@ -143,13 +84,13 @@ export function App() {
   useShortcuts(state);
   return (
     <div className="flex h-full overflow-hidden bg-background">
-      <Screen key={`${state.route}/${state.sessionId ?? ''}`} state={state} />
+      <Screen key={state.route} state={state} />
       {state.isPaletteOpen && (
         <CommandPalette
           repos={store.sidebar.repos}
           initialQuery={state.paletteQuery}
           onClose={() => {
-            navigate(state.route, { sessionId: state.sessionId });
+            setPaletteOpen(false);
           }}
         />
       )}

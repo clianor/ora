@@ -13,7 +13,9 @@ import type {
   SessionRecord,
   SessionStatus,
   Stage,
+  Terminal,
   Todo,
+  WorktreeTabs,
 } from '@ora/protocol';
 import type {
   AccountsData,
@@ -336,7 +338,7 @@ function finishView(
 
 const sessionView: SessionView = finishView(
   {
-    record: createRecord(mathId, 'add 함수 버그 수정', 'awaiting_approval', 'math-demo'),
+    record: createRecord(mathId, 'README 예제 출력 갱신', 'awaiting_approval', 'math-demo'),
     events: mathEvents,
     todos: mathTodos,
     repoLabel: 'math-demo · main',
@@ -691,7 +693,7 @@ function createWorktree(
   return { name, add, del, sessions, stack };
 }
 
-const repos: RepoNode[] = [
+const rawRepos: RepoNode[] = [
   {
     name: 'ora',
     worktrees: [
@@ -1238,6 +1240,50 @@ const fallbackView: SessionView = {
   chips: { model: 'claude-haiku-5-5', effort: 'medium', permission: '승인 생략' },
 };
 
+/** 시안의 워크트리 탭 상태에 맞춰, 같은 폴더에서 도는 실행 중 세션 하나를 math-demo main에 더하고 워크트리마다 작업 폴더를 정합니다. */
+function withCwd(repoName: string, nodes: WorktreeNode[]): WorktreeNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    cwd:
+      node.cwd ??
+      (node.name === 'main' ? `~/projects/${repoName}` : `~/projects/${repoName}/${node.name}`),
+    stack: withCwd(repoName, node.stack),
+  }));
+}
+
+const repos: RepoNode[] = rawRepos.map((repo) => {
+  const [first, ...others] = repo.worktrees;
+  const worktrees =
+    repo.name === 'math-demo' && first
+      ? [{ ...first, sessions: [...first.sessions, createSession(phasesView.record)] }, ...others]
+      : repo.worktrees;
+  return { ...repo, worktrees: withCwd(repo.name, worktrees) };
+});
+
+const fixtureTerminal: Terminal = {
+  id: 't-fixtur1',
+  cwd: '~/projects/math-demo',
+  status: 'running',
+  cols: 100,
+  rows: 30,
+  createdAt: `${day}T09:30:00+09:00`,
+};
+
+const fixtureTabs: Record<string, WorktreeTabs> = {
+  '~/projects/math-demo': {
+    tabs: [
+      { id: 'run1', kind: 'session', sessionId: phasesView.record.id },
+      { id: 'appr1', kind: 'session', sessionId: sessionView.record.id },
+      { id: 'term1', kind: 'terminal', terminalId: fixtureTerminal.id },
+      { id: 'new1', kind: 'new' },
+    ],
+    activeTabId: 'run1',
+  },
+};
+
+const fixtureTerminalScript =
+  '~/projects/math-demo (main) $ node check.js\r\nok\r\n~/projects/math-demo (main) $ git status --short\r\n \u001b[31mM\u001b[0m \u001b[31mmath.js\u001b[0m\r\n~/projects/math-demo (main) $ ';
+
 const detailedViews = new Map<string, SessionView>(
   [
     sessionView,
@@ -1287,15 +1333,22 @@ const plainViews = new Map<string, SessionView>(
     .map((node) => [node.record.id, createPlainView(node.record)]),
 );
 
-type AccountActionName =
+type StatefulActionName =
   | 'refreshAccounts'
   | 'startLogin'
   | 'cancelLogin'
   | 'addApiKey'
   | 'logoutAccount'
-  | 'setAccountPriority';
+  | 'setAccountPriority'
+  | 'loadTabs'
+  | 'saveTabs'
+  | 'createTerminal'
+  | 'killTerminal'
+  | 'sendTerminalInput'
+  | 'resizeTerminal'
+  | 'watchTerminal';
 
-const fixtureActions: Omit<OraActions, AccountActionName> = {
+const fixtureActions: Omit<OraActions, StatefulActionName> = {
   createSession: () => Promise.resolve(sessionView.record.id),
   sendMessage: () => Promise.resolve(),
   cancelRun: () => Promise.resolve(),
@@ -1380,9 +1433,19 @@ export function createFixtureStore(): OraStoreSource {
   let accounts = fixtureAccounts;
   let snapshot: OraStore;
 
+  const tabsByCwd = new Map(Object.entries(fixtureTabs));
+  const terminalsById = new Map([[fixtureTerminal.id, fixtureTerminal]]);
+  let terminalCount = 0;
+
   const commit = (next: ProviderAccounts[]) => {
     accounts = { ...accounts, providers: next };
     snapshot = { ...snapshot, accounts };
+    listeners.forEach((listener) => {
+      listener();
+    });
+  };
+  const refresh = () => {
+    snapshot = { ...snapshot };
     listeners.forEach((listener) => {
       listener();
     });
@@ -1398,6 +1461,44 @@ export function createFixtureStore(): OraStoreSource {
 
   const actions: OraActions = {
     ...fixtureActions,
+    loadTabs: (cwd) => {
+      if (!tabsByCwd.has(cwd)) tabsByCwd.set(cwd, { tabs: [] });
+      refresh();
+      return Promise.resolve();
+    },
+    saveTabs: (cwd, next) => {
+      tabsByCwd.set(cwd, next);
+      refresh();
+      return Promise.resolve();
+    },
+    createTerminal: (cwd, size) => {
+      terminalCount += 1;
+      const id = `t-new${String(terminalCount).padStart(5, '0')}`;
+      terminalsById.set(id, {
+        id,
+        cwd,
+        status: 'running',
+        ...size,
+        createdAt: new Date().toISOString(),
+      });
+      refresh();
+      return Promise.resolve(id);
+    },
+    killTerminal: (id) => {
+      terminalsById.delete(id);
+      refresh();
+      return Promise.resolve();
+    },
+    sendTerminalInput: () => Promise.resolve(),
+    resizeTerminal: () => Promise.resolve(),
+    watchTerminal: (_id, handlers) => {
+      const timer = setTimeout(() => {
+        handlers.onOutput(new TextEncoder().encode(fixtureTerminalScript));
+      }, 0);
+      return () => {
+        clearTimeout(timer);
+      };
+    },
     refreshAccounts: () => Promise.resolve(),
     startLogin: (provider) => {
       const expiresAt = iso(Date.now() + 300_000);
@@ -1453,6 +1554,9 @@ export function createFixtureStore(): OraStoreSource {
   snapshot = {
     status: 'ready',
     sidebar: { repos, deviceName: 'MacBook-Pro' },
+    sessionsWithoutFolder: [],
+    getBranch: (cwd) =>
+      cwd.startsWith('~/projects/') && !cwd.includes('docs/') ? 'main' : undefined,
     getNewSessionContext: () => ({
       path: '~/Desktop/ora',
       branch: 'main',
@@ -1463,6 +1567,8 @@ export function createFixtureStore(): OraStoreSource {
     empty: { repos: ['math-demo', 'ora', 'notes'], branches: ['main'], chips: designChips },
     routing: fixtureRouting,
     defaultSessionId: sessionView.record.id,
+    getTabs: (cwd) => tabsByCwd.get(cwd),
+    getTerminal: (id) => terminalsById.get(id),
     getSession: (sessionId) => {
       const id = devAliases.get(sessionId) ?? sessionId;
       return detailedViews.get(id) ?? plainViews.get(id);

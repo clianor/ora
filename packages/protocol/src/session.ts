@@ -9,6 +9,24 @@ import {
   timestampSchema,
 } from './common.ts';
 
+const PROVIDER_BY_MODEL_PREFIX: readonly (readonly [string, string])[] = [
+  ['claude-', 'claude'],
+  ['gpt-', 'codex'],
+  ['grok-', 'grok'],
+  ['fake/', 'fake'],
+];
+
+/** 체인 도입 전 기록의 `models` 항목에는 프로바이더, 체인 위치, 출처가 없다. 읽을 때만 채우고 파일은 고쳐 쓰지 않는다. */
+function fillLegacyModels(raw: unknown): unknown {
+  if (!Array.isArray(raw)) return raw;
+  return raw.map((entry: unknown) => {
+    if (typeof entry !== 'object' || entry === null || 'provider' in entry) return entry;
+    const model = 'model' in entry && typeof entry.model === 'string' ? entry.model : '';
+    const provider = PROVIDER_BY_MODEL_PREFIX.find(([prefix]) => model.startsWith(prefix))?.[1];
+    return { provider: provider ?? 'unknown', chainPosition: 0, source: 'config', ...entry };
+  });
+}
+
 export const sessionRecordSchema = z.strictObject({
   schemaVersion: z.literal(1),
   id: sessionIdSchema,
@@ -20,16 +38,19 @@ export const sessionRecordSchema = z.strictObject({
   endReason: endReasonSchema.optional(),
   repo: z.string().min(1).optional(),
   /** 세션이 실제로 쓴 모델이다. 역할과 체인 위치마다 하나이고, 가장 나중에 쓴 항목이 맨 뒤에 온다. */
-  models: z.array(
-    z.strictObject({
-      model: z.string().min(1),
-      provider: z.string().min(1),
-      role: z.string().min(1),
-      chainPosition: z.number().int().nonnegative(),
-      effort: z.enum(['low', 'medium', 'high']).optional(),
-      /** `config`는 설정 체인, `user`는 사용자가 세션을 만들 때 고른 모델, `fallback`은 앞 모델이 실패해 넘어간 모델이다. */
-      source: z.enum(['config', 'user', 'fallback']),
-    }),
+  models: z.preprocess(
+    fillLegacyModels,
+    z.array(
+      z.strictObject({
+        model: z.string().min(1),
+        provider: z.string().min(1),
+        role: z.string().min(1),
+        chainPosition: z.number().int().nonnegative(),
+        effort: z.enum(['low', 'medium', 'high']).optional(),
+        /** `config`는 설정 체인, `user`는 사용자가 세션을 만들 때 고른 모델, `fallback`은 앞 모델이 실패해 넘어간 모델이다. */
+        source: z.enum(['config', 'user', 'fallback']),
+      }),
+    ),
   ),
   permissionMode: permissionModeSchema,
   isolation: isolationSchema,

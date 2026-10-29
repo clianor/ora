@@ -46,10 +46,10 @@ function buildItems(repos: readonly RepoNode[]): PaletteItem[] {
       icon: MessageSquare,
       label: node.record.title,
       detail: location,
-      route: 'session' as const,
+      route: 'worktree' as const,
       sessionId: node.record.id,
     })),
-    { group: '명령', icon: SquarePen, label: '새 세션 시작', shortcut: '⌘N', route: 'new' },
+    { group: '명령', icon: SquarePen, label: '새 세션 시작', shortcut: '⌘N', route: 'worktree' },
     ...sessions
       .filter(
         ({ node }) => node.record.status === 'crashed' || node.record.status === 'interrupted',
@@ -58,7 +58,7 @@ function buildItems(repos: readonly RepoNode[]): PaletteItem[] {
         group: '명령' as const,
         icon: RotateCcw,
         label: `${node.record.title} 재개`,
-        route: 'session' as const,
+        route: 'worktree' as const,
         sessionId: node.record.id,
       })),
     {
@@ -66,7 +66,7 @@ function buildItems(repos: readonly RepoNode[]): PaletteItem[] {
       icon: ListChecks,
       label: '할 일 패널',
       shortcut: '⌘1',
-      route: 'session',
+      route: 'worktree',
       focusTodos: true,
     },
     { group: '이동', icon: Settings, label: '설정', shortcut: '⌘,', route: 'settings' },

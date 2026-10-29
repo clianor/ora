@@ -1240,3 +1240,44 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+test(
+  '체인 도입 전 형식(models에 provider·chainPosition·source 없음)의 session.json도 목록에 나오고 재개된다',
+  async () => {
+    const running = await startServer([finalText]);
+    try {
+      const sessionId = await createSession(running);
+      // session_end 이벤트가 먼저 기록되고 워커가 끝나 live에서 빠지는 것은 그 뒤다. 재개는 live가 false일 때만 받는다.
+      await waitFor(async () => {
+        const state = await detail(running, sessionId);
+        return (
+          !state.live && state.session.status !== 'running' && state.session.status !== 'created'
+        );
+      });
+      const path = join(sessionDirOf(running, sessionId), 'session.json');
+      const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      record.models = [{ model: 'claude-haiku-5-5', role: 'default' }];
+      writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+
+      const listed = JSON.parse((await send(running, '/api/sessions')).text) as {
+        sessions: { id: string; models: unknown[] }[];
+      };
+      expect(listed.sessions.find((session) => session.id === sessionId)?.models).toEqual([
+        {
+          model: 'claude-haiku-5-5',
+          role: 'default',
+          provider: 'claude',
+          chainPosition: 0,
+          source: 'config',
+        },
+      ]);
+
+      const resumed = await post(running, `/api/sessions/${sessionId}/resume`, {});
+      expect(resumed.status).toBe(200);
+      await waitFor(() => readEvents(running, sessionId).some((event) => event.type === 'resume'));
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
