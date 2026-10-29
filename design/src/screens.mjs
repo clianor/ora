@@ -12,6 +12,7 @@ import {
   diffBlock,
   evidence,
   phasePanel,
+  waiverCard,
   header,
   mono,
   palette,
@@ -779,6 +780,84 @@ ${col('포기가 섞인 완료 · 포기 취소 메뉴', phasePanel(c, { banner:
 </Frame>`;
 }
 
+const gateTodo = (status, flow, extra = {}) => ({
+  id: 't2',
+  title: 'add에 음수 처리 TODO 주석을 남기고 덧셈으로 고친다',
+  status,
+  origin: 'model',
+  cmd: '$ node check.js',
+  result: 'exit 0',
+  resultColor: status === 'failed' ? 'ink3' : 'ok',
+  flow,
+  ...extra,
+});
+const GATE_FLOW = [
+  ['try', '시도 · 스텝 6'],
+  ['gate', '게이트 실패 · TODO 1곳 · 스텝 7'],
+];
+const gatePanel = (c, todo, current) =>
+  phasePanel(c, {
+    objective: '사용자 요청대로 음수 처리 TODO 주석을 남기고 add를 고친다',
+    phases: [
+      PHASE_FIND,
+      { name: '수정', open: true, criterion: 'node check.js가 exit 0으로 끝난다', todos: [todo] },
+    ],
+    current,
+  });
+
+/** 완성 무결성 게이트가 막은 todo에 모델이 예외를 요청한 순간. 권한 모드와 상관없이 승인 카드가 뜬다. */
+function gateWaiverScreen() {
+  const c = palette('Dark');
+  const blocks = [
+    userBubble(c, 'add를 덧셈으로 고치고, 음수 처리는 나중에 할 테니 TODO 주석으로 남겨 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={4}>${toolLine(c, { icon: 'file-pen', verb: '수정', target: 'math.js', add: 2, del: 1 })}${toolLine(c, { icon: 'shield-check', verb: '검증', target: 't2 · node check.js', status: T(c, 12, 16, 500, 'del', 't2: 게이트 실패 (exit 0, TODO 1곳)', '', mono) })}</Frame>`,
+    reply(
+      c,
+      `check.js는 통과했지만 게이트가 ${code(c, 'math.js:2')}의 TODO를 찾았습니다. 이 TODO는 요청하신 주석이라 예외를 요청합니다.`,
+    ),
+    waiverCard(c, {
+      todo: { id: 't2', title: 'add에 음수 처리 TODO 주석을 남기고 덧셈으로 고친다' },
+      command: 'node check.js',
+      exit: 0,
+      findings: ['math.js:2  // TODO: 음수 입력 처리'],
+      reason:
+        '사용자가 음수 처리를 나중에 하겠다며 TODO 주석을 남기라고 지시했습니다. 구현을 빼먹은 것이 아닙니다.',
+    }),
+  ];
+  const todo = gateTodo('failed', [
+    ...GATE_FLOW,
+    ['waiveAsk', '예외 요청 · 사용자 답 기다림 · 스텝 8'],
+  ]);
+  return windowFrame(c, '14 Gate Waiver · Dark', {
+    side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
+    main:
+      header(c, { title: 'add 함수 버그 수정', repo: 'math-demo · main', stage: 5, diff: [2, 1] }) +
+      thread(c, blocks, { status: STATUS }),
+    panel: gatePanel(c, todo, 't2'),
+  });
+}
+
+/** 예외 요청에 답한 뒤 할 일 패널: 승인하면 "검증됨 · 예외 승인", 거부하면 실패로 남는다. */
+function gateResultScreen() {
+  const c = palette('Dark');
+  const approved = gateTodo(
+    'verified',
+    [...GATE_FLOW, ['waiveAsk', '예외 요청 · 스텝 8'], ['waive', '예외 승인 · 사용자 · 스텝 8']],
+    { waived: true },
+  );
+  const rejected = gateTodo('failed', [
+    ...GATE_FLOW,
+    ['waiveAsk', '예외 요청 · 스텝 8'],
+    ['waiveNo', '예외 거부 · 사용자 · 스텝 8'],
+  ]);
+  const col = (caption, panel) =>
+    `<Frame w={340} h="fill" flex="col" gap={10}>${T(c, 13, 18, 600, 'ink2', caption)}<Frame w={340} h="fill" flex="col" rounded={12} overflow="hidden">${panel}</Frame></Frame>`;
+  return `<Frame name="15 Gate Result · Dark" w={752} h={640} flex="row" gap={24} p={24} bg="${c.window}" rounded={12}>
+${col('예외 승인 뒤', gatePanel(c, approved, null))}
+${col('예외 거부 뒤', gatePanel(c, rejected, 't2'))}
+</Frame>`;
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -793,4 +872,6 @@ export const SCREENS = [
   { file: 'context-dark', jsx: contextScreen },
   { file: 'phases-dark', jsx: phasesScreen },
   { file: 'phase-states-dark', jsx: phaseStatesScreen },
+  { file: 'gate-waiver-dark', jsx: gateWaiverScreen },
+  { file: 'gate-result-dark', jsx: gateResultScreen },
 ];

@@ -264,6 +264,10 @@ const FLOW = {
   unblock: ['play', 'ink2'],
   abandon: ['circle-slash', 'ink3'],
   more: ['chevrons-up', 'ink2'],
+  gate: ['shield-alert', 'del'],
+  waiveAsk: ['shield-question', 'warn'],
+  waive: ['shield-check', 'ok'],
+  waiveNo: ['shield-x', 'del'],
 };
 
 /**
@@ -284,7 +288,8 @@ export function phasePanel(
     return `<Frame w="fill" h="hug" flex="row" items="start" gap={8} py={2}><Frame w={12} h={16} flex="row" items="center">${I(c, icon, col, 12)}</Frame>${T(c, 12, 16, 400, kind === 'more' ? 'ink2' : 'ink2', text, 'grow={1} textAutoResize="height"')}</Frame>`;
   };
   const todoRow = (t) => {
-    const [label, icon, col] = PHASE_TODO_STATUS[t.status];
+    const [baseLabel, icon, col] = PHASE_TODO_STATUS[t.status];
+    const label = t.waived ? '검증됨 · 예외 승인' : baseLabel;
     const isCurrent = t.id === current;
     const tag = isCurrent
       ? `<Frame w="hug" h={18} flex="row" items="center" px={6} rounded={4} bg="${c.ink}">${T(c, 11, 14, 600, 'onPrimary', '작업 중')}</Frame>`
@@ -320,7 +325,10 @@ ${reason}${cmd}${flow}</Frame>${menu}</Frame>`;
       right = `${I(c, 'circle-slash', 'ink3', 14)}${T(c, 12, 16, 500, 'ink2', '모두 포기')}`;
     else if (gaveUp)
       right = `${I(c, 'circle-check', 'ok', 14)}${T(c, 12, 16, 500, 'ink2', `끝남 · 포기 ${gaveUp}`)}`;
-    else right = `${I(c, 'circle-check', 'ok', 14)}${T(c, 12, 16, 500, 'ok', '통과')}`;
+    else {
+      const waived = p.todos.filter((t) => t.waived).length;
+      right = `${I(c, 'circle-check', 'ok', 14)}${T(c, 12, 16, 500, 'ok', '통과')}${waived ? T(c, 12, 16, 500, 'ink2', `· 예외 ${waived}`) : ''}`;
+    }
     const steps = done && p.steps ? T(c, 12, 16, 400, 'ink3', `· 스텝 ${p.steps}`) : '';
     const head = `<Frame name="PhaseHead" w="fill" h="hug" flex="row" items="center" gap={8} px={10} py={10} rounded={10}>${I(c, p.open ? 'chevron-down' : 'chevron-right', 'ink2', 14)}${T(c, 13, 18, 600, 'ink', p.name, 'grow={1}')}${right}${steps}</Frame>`;
     const meta = done
@@ -341,6 +349,22 @@ ${reason}${cmd}${flow}</Frame>${menu}</Frame>`;
 <Frame w="fill" h={48} flex="row" items="center" gap={16} px={16}>${T(c, 13, 18, 600, 'ink', '할 일')}${T(c, 13, 18, 500, 'ink3', '변경')}${T(c, 13, 18, 500, 'ink3', '파일')}${SP}${T(c, 12, 16, 500, 'ink2', `검증 ${verified}/${denom}`, '', M)}</Frame>
 <Frame w="fill" h="hug" flex="col" gap={10} px={8} pt={4}>${bannerRow}${goal}${phases.map(card).join('')}</Frame>
 ${overlay}
+</Frame>`;
+}
+
+/**
+ * 완성 무결성 게이트의 예외 승인 카드. 권한 모드와 상관없이 뜨고, 승인해야만 todo가 verified가 된다.
+ * findings는 게이트가 찾은 항목 한 줄씩이다.
+ */
+export function waiverCard(c, { todo, command, exit, findings, reason }) {
+  const finding = (s) => T(c, 12, 18, 400, 'ink', s, 'w="fill" textAutoResize="height"', M);
+  return `<Frame name="WaiverCard" w="fill" h="hug" flex="col" gap={12} p={16} rounded={14} bg="${c.raised}">
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'shield-question', 'warn', 16)}${T(c, 14, 20, 600, 'ink', '검증 예외를 승인할까요?')}${SP}${T(c, 12, 16, 500, 'ink2', todo.id)}</Frame>
+${T(c, 13, 20, 400, 'ink2', `${todo.title}. 검증 명령은 통과했지만 완성 무결성 게이트가 아래 항목을 찾았습니다.`, 'w="fill" textAutoResize="height"')}
+<Frame w="fill" h="hug" flex="col" gap={4} px={12} py={10} rounded={10} bg="${c.window}">${T(c, 12, 16, 500, 'ink3', `$ ${command} · exit ${exit}`, '', M)}${findings.map(finding).join('')}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={4}>${T(c, 12, 16, 500, 'ink3', '모델이 적은 사유')}${T(c, 13, 20, 400, 'ink', reason, 'w="fill" textAutoResize="height"')}</Frame>
+${T(c, 12, 18, 400, 'ink3', '승인하면 이 할 일은 "검증됨 · 예외 승인"으로 남고, 증거에 사유를 기록합니다. 거부하면 실패로 남아 모델이 다시 고칩니다.', 'w="fill" textAutoResize="height"')}
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '거부')}${button(c, 'primary', '예외 승인', { keyHint: '↵' })}</Frame>
 </Frame>`;
 }
 
