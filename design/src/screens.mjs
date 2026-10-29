@@ -16,6 +16,8 @@ import {
   routingPreview,
   modelPicker,
   modelSwitchMark,
+  workspaceSidebar,
+  tabBar,
   header,
   mono,
   palette,
@@ -963,6 +965,157 @@ function fallbackScreen() {
   });
 }
 
+const WORKSPACES = [
+  {
+    repo: 'math-demo',
+    worktrees: [
+      { name: 'main', add: 1, del: 1, running: 2, selected: true },
+      { name: 'docs/readme-pnpm', add: 12, del: 3 },
+    ],
+  },
+  {
+    repo: 'ora',
+    worktrees: [
+      { name: 'main', add: 4, del: 0 },
+      { name: 'feat/engine-slice2', add: 1930, del: 350 },
+    ],
+  },
+  { repo: 'notes', worktrees: [{ name: 'main', add: 0, del: 0 }] },
+];
+const MATH_MAIN = { repo: 'math-demo', name: 'main', diff: [1, 1] };
+const MATH_TABS = [
+  { title: 'add 함수 버그 수정', state: 'running' },
+  { title: 'README 예제 출력 갱신', state: 'approval' },
+  { title: '터미널 1', state: 'terminal' },
+];
+// 탭 줄에는 짧은 칩을 두고, 덮어쓰기 경고 전체 문구는 입력창 바로 위 안내 줄에 둔다. 탭 줄 폭이 좁아 긴 문구가 잘리기 때문이다.
+const RUNNING_WARNING = '세션 2개 동시 실행';
+const RUNNING_NOTICE = '같은 폴더에서 세션 2개 실행 중 · 파일을 서로 덮어쓸 수 있습니다';
+
+/** 워크트리 탭(SPEC 8.2절). 사이드바는 워크트리만 보이고, 가운데 위쪽 탭 줄에서 세션과 터미널을 오간다. */
+function tabsScreen() {
+  const c = palette('Dark');
+  const blocks = [
+    userBubble(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={4}>${toolLine(c, { icon: 'file-text', verb: '읽기', target: 'math.js' })}${toolLine(c, { icon: 'file-pen', verb: '수정', target: 'math.js', add: 1, del: 1 })}</Frame>`,
+    reply(
+      c,
+      `${code(c, 'add')}를 덧셈으로 고쳤습니다. 이제 ${code(c, 'node check.js')}로 검증하겠습니다.`,
+    ),
+  ];
+  return windowFrame(c, '18 Tabs · Dark', {
+    side: workspaceSidebar(c, { groups: WORKSPACES }),
+    main:
+      tabBar(c, { worktree: MATH_MAIN, tabs: MATH_TABS, active: 0, warning: RUNNING_WARNING }) +
+      thread(c, blocks, {
+        composerOptions: { running: true, model: 'claude-haiku-5-5' },
+        status: STATUS,
+        notice: RUNNING_NOTICE,
+      }),
+    panel: phasePanel(c, {
+      objective: PHASE_OBJECTIVE,
+      phases: [
+        PHASE_FIND,
+        {
+          name: '수정',
+          open: true,
+          todos: [
+            {
+              id: 't2',
+              title: 'math.js의 add를 덧셈으로 고친다',
+              status: 'attempted',
+              origin: 'model',
+            },
+          ],
+        },
+      ],
+      current: 't2',
+    }),
+  });
+}
+
+/** 새 탭. 세션과 터미널을 고르고, 브라우저와 에뮬레이터는 M3까지 "곧 지원"으로 흐리게 둔다. 줄 전체가 버튼이다. */
+function newTabScreen() {
+  const c = palette('Dark');
+  const item = (icon, label, key, soon = false) =>
+    `<Frame w="fill" h={40} flex="row" items="center" gap={10} px={14} rounded={10} bg="${c.raised}">${I(c, icon, soon ? 'ink3' : 'ink2', 16)}${T(c, 14, 20, 500, soon ? 'ink3' : 'ink', label, 'grow={1}')}${soon ? T(c, 12, 16, 500, 'ink3', '곧 지원') : T(c, 12, 16, 500, 'ink3', key, '', mono)}</Frame>`;
+  const chooser = `<Frame name="NewTab" w="fill" h="fill" flex="col" items="center" justify="center" gap={10} pb={60}>
+<Frame w={360} h="hug" flex="col" gap={6}>${T(c, 13, 18, 500, 'ink3', 'math-demo · main에서 열기', 'pb={4}')}
+${item('message-square', '세션', '⇧⌘S')}${item('square-terminal', '터미널', '⇧⌘T')}${item('globe', '브라우저', '', true)}${item('smartphone', '에뮬레이터', '', true)}</Frame>
+${T(c, 12, 16, 400, 'ink3', '브라우저와 에뮬레이터는 데스크톱 앱(M3)에서 지원합니다.')}
+</Frame>`;
+  return windowFrame(c, '19 New Tab · Dark', {
+    side: workspaceSidebar(c, { groups: WORKSPACES }),
+    main:
+      tabBar(c, {
+        worktree: MATH_MAIN,
+        tabs: [...MATH_TABS, { title: '새 탭', state: 'new' }],
+        active: 3,
+        warning: RUNNING_WARNING,
+      }) + chooser,
+  });
+}
+
+/** 터미널 탭. 워크트리 폴더에서 로그인 셸을 연다. 엔진의 승인 대화상자를 거치지 않는 사용자 셸이다. */
+function terminalScreen() {
+  const c = palette('Dark');
+  const line = (s, color = 'ink') => T(c, 13, 20, 400, color, s, '', mono);
+  const term = `<Frame name="Terminal" w="fill" h="fill" flex="col" gap={0} px={20} py={14} bg="${c.sunken}">
+${line('~/projects/math-demo (main) $ node check.js', 'ink')}
+${line('ok', 'ink2')}
+${line('~/projects/math-demo (main) $ git status --short', 'ink')}
+${line(' M math.js', 'del')}
+${line('~/projects/math-demo (main) $ █', 'ink')}
+</Frame>`;
+  return windowFrame(c, '20 Terminal · Dark', {
+    side: workspaceSidebar(c, { groups: WORKSPACES }),
+    main:
+      tabBar(c, { worktree: MATH_MAIN, tabs: MATH_TABS, active: 2, warning: RUNNING_WARNING }) +
+      term,
+  });
+}
+
+/** 기록 화면. 모든 워크트리의 세션을 찾고, 누르면 그 워크트리의 탭으로 연다. 줄 전체가 버튼이다. */
+function historyScreen() {
+  const c = palette('Dark');
+  const filter = (label, on = false) =>
+    `<Frame w="hug" h={28} flex="row" items="center" px={10} rounded={8} ${on ? `bg="${c.raised}"` : ''}>${T(c, 13, 18, on ? 600 : 500, on ? 'ink' : 'ink2', label)}</Frame>`;
+  const row = (state, title, where, time) => {
+    const [icon, col, label] = {
+      running: ['loader', 'ink2', '실행 중'],
+      approval: ['shield-alert', 'warn', '승인 대기'],
+      done: ['circle-check', 'ok', '완료'],
+      failed: ['circle-x', 'del', '실패'],
+      stopped: ['octagon-pause', 'warn', '막혀서 멈춤'],
+    }[state];
+    return `<Frame w="fill" h={52} flex="row" items="center" gap={12} px={14} rounded={10}>${I(c, icon, col, 16)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 14, 20, 500, 'ink', title, 'maxLines={1} truncate')}${T(c, 12, 16, 400, 'ink3', where, '', mono)}</Frame>${T(c, 12, 16, 500, col, label, 'w={80}')}${T(c, 12, 16, 400, 'ink3', time, 'w={64}')}</Frame>`;
+  };
+  const list = `<Frame name="History" w="fill" h="fill" flex="col" items="center" pt={28}>
+<Frame w={760} h="hug" flex="col" gap={14}>
+${T(c, 20, 28, 600, 'ink', '기록')}
+<Frame w="fill" h={36} flex="row" items="center" gap={8} px={12} rounded={10} bg="${c.raised}">${I(c, 'search', 'ink3', 15)}${T(c, 14, 20, 400, 'ink3', '제목, 본문, 할 일로 찾기', 'grow={1}')}</Frame>
+<Frame w="fill" h="hug" flex="row" gap={4}>${filter('전체', true)}${filter('실행 중')}${filter('승인 대기')}${filter('완료')}${filter('실패·멈춤')}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={2}>
+${row('running', 'add 함수 버그 수정', 'math-demo · main', '방금')}
+${row('approval', 'README 예제 출력 갱신', 'math-demo · main', '2분 전')}
+${row('done', '엔진 슬라이스 2 구현', 'ora · feat/engine-slice2', '어제')}
+${row('stopped', 'npm 레지스트리에 publish', 'math-demo · docs/readme-pnpm', '어제')}
+${row('failed', '검색 도구 타임아웃 재현', 'notes · main', '3일 전')}
+</Frame>
+</Frame>
+</Frame>`;
+  return windowFrame(c, '21 History · Dark', {
+    side: workspaceSidebar(c, {
+      groups: WORKSPACES.map((g) => ({
+        ...g,
+        worktrees: g.worktrees.map((w) => ({ ...w, selected: false })),
+      })),
+      nav: 'history',
+    }),
+    main: list,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -981,4 +1134,8 @@ export const SCREENS = [
   { file: 'gate-result-dark', jsx: gateResultScreen },
   { file: 'routing-dark', jsx: routingScreen },
   { file: 'fallback-dark', jsx: fallbackScreen },
+  { file: 'tabs-dark', jsx: tabsScreen },
+  { file: 'new-tab-dark', jsx: newTabScreen },
+  { file: 'terminal-dark', jsx: terminalScreen },
+  { file: 'history-dark', jsx: historyScreen },
 ];

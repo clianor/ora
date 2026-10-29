@@ -126,6 +126,62 @@ ${body}
 </Frame>`;
 }
 
+/**
+ * 워크트리만 보여주는 사이드바(SPEC 8.2절, 2026-10-29). 세션 목록 대신 위쪽에 "기록"과 "검색"을 두고,
+ * worktree 행에는 변경 통계와 실행 중 세션 수를 붙인다. nav는 지금 고른 위쪽 항목('history' 등)이다.
+ */
+export function workspaceSidebar(c, { groups = [], nav = null } = {}) {
+  const lights = ['#FF5F57', '#FEBC2E', '#28C840']
+    .map((x) => `<Ellipse w={12} h={12} bg="${x}" />`)
+    .join('');
+  const navRow = (key, icon, label, hint) => {
+    const on = key === nav;
+    return `<Frame w="fill" h={30} flex="row" items="center" gap={8} px={10} rounded={8} ${on ? `bg="${c.hover}"` : ''}>${I(c, icon, on ? 'ink' : 'ink2', 15)}${T(c, 13, 18, on ? 500 : 400, on ? 'ink' : 'ink2', label, 'grow={1}')}${T(c, 12, 16, 400, 'ink3', hint, '', M)}</Frame>`;
+  };
+  const wtRow = ({ name, add, del, running = 0, selected = false }) =>
+    `<Frame w="fill" h={30} flex="row" items="center" gap={8} pl={20} pr={10} rounded={8} ${selected ? `bg="${c.hover}"` : ''}>${I(c, 'git-branch', selected ? 'ink' : 'ink3', 13)}${T(c, 13, 18, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'grow={1} maxLines={1} truncate', M)}${running ? `<Frame w="hug" h={18} flex="row" items="center" gap={4} px={6} rounded={9} bg="${c.raised}">${I(c, 'loader', 'ink2', 11)}${T(c, 11, 14, 600, 'ink2', String(running), '', M)}</Frame>` : ''}${stat(c, add, del)}</Frame>`;
+  const group = ({ repo, worktrees }) =>
+    `<Frame w="fill" h="hug" flex="col" gap={1}><Frame w="fill" h={28} flex="row" items="center" gap={8} px={10}>${I(c, 'folder', 'ink3', 14)}${T(c, 13, 18, 500, 'ink2', repo)}</Frame>${worktrees.map(wtRow).join('')}</Frame>`;
+  return `<Frame name="Sidebar" w={264} h="fill" flex="col" gap={14} pt={16} pb={12} px={8} bg="${c.sidebar}">
+<Frame w="fill" h={20} flex="row" items="center" gap={8} px={10}>${lights}${SP}${I(c, 'panel-left', 'ink2', 16)}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={1}>${navRow('history', 'history', '기록', '⌘Y')}${navRow('search', 'search', '검색', '⌘K')}</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" px={10}>${T(c, 12, 16, 500, 'ink3', '워크트리', 'grow={1}')}${I(c, 'plus', 'ink3', 14)}</Frame>
+${groups.map(group).join('')}
+<Frame w="fill" h="fill" />
+<Frame w="fill" h={32} flex="row" items="center" gap={8} px={10}><Ellipse w={8} h={8} bg="${c.ok}" />${T(c, 13, 18, 400, 'ink2', 'MacBook-Pro', 'grow={1}')}${I(c, 'settings', 'ink3', 16)}</Frame>
+</Frame>`;
+}
+
+// 탭 상태 아이콘. 아이콘 모양이 서로 달라서 사용자는 색 없이도 상태를 구분한다.
+const TAB_STATE = {
+  running: ['loader', 'ink2', '실행 중'],
+  approval: ['shield-alert', 'warn', '승인 대기'],
+  done: ['circle-check', 'ok', '완료'],
+  failed: ['circle-x', 'del', '실패'],
+  new: ['square-pen', 'ink3', '새 탭'],
+  terminal: ['square-terminal', 'ink2', '터미널'],
+};
+
+/**
+ * 워크트리 탭 줄. tabs는 { title, state } 목록이고 active는 고른 탭의 순번이다.
+ * 탭은 아이콘·제목·닫기 버튼까지 한 덩어리의 버튼이다. warning은 동시 실행 경고 글자다.
+ */
+export function tabBar(c, { worktree, tabs, active, warning = null }) {
+  const tab = ({ title, state }, i) => {
+    const [icon, col] = TAB_STATE[state];
+    const on = i === active;
+    return `<Frame name="Tab" w="hug" maxW={220} h={30} flex="row" items="center" gap={7} pl={10} pr={6} rounded={8} ${on ? `bg="${c.raised}"` : ''}>${I(c, icon, col, 14)}${T(c, 13, 18, on ? 500 : 400, on ? 'ink' : 'ink2', title, 'maxW={150} maxLines={1} truncate')}<Frame w={18} h={18} flex="row" items="center" justify="center" rounded={4}>${on ? I(c, 'x', 'ink3', 12) : ''}</Frame></Frame>`;
+  };
+  const warn = warning
+    ? `<Frame w="hug" h={26} flex="row" items="center" gap={6} px={10} rounded={8} bg="${c.raised}">${I(c, 'triangle-alert', 'warn', 13)}${T(c, 12, 16, 500, 'ink', warning)}</Frame>`
+    : '';
+  return `<Frame name="TabBar" w="fill" h="hug" flex="col">
+<Frame w="fill" h={44} flex="row" items="center" gap={10} px={20}>${I(c, 'panel-left', 'ink2', 16)}${T(c, 14, 20, 600, 'ink', worktree.repo)}${T(c, 13, 18, 400, 'ink3', worktree.name, '', M)}${SP}${worktree.diff ? `<Frame w="hug" h={28} flex="row" items="center" gap={6} px={10} rounded={8} bg="${c.raised}">${I(c, 'git-compare', 'ink2', 14)}${stat(c, worktree.diff[0], worktree.diff[1])}</Frame>` : ''}</Frame>
+<Frame w="fill" h={38} flex="row" items="center" gap={2} px={14}>${tabs.map(tab).join('')}<Frame w={28} h={28} flex="row" items="center" justify="center" rounded={8}>${I(c, 'plus', 'ink2', 15)}</Frame>${SP}${warn}</Frame>
+<Frame w="fill" h={1} bg="${c.line}" />
+</Frame>`;
+}
+
 const STAGES = [
   'Understand',
   'Research',
@@ -424,11 +480,12 @@ export function windowFrame(c, name, { side, main, panel = '', overlay = '' }) {
   return `<Frame name="${name}" w={1440} h={900} flex="row" bg="${c.window}" overflow="hidden" rounded={12}>${side}<Frame w="fill" h="fill" flex="col">${main}</Frame>${panel}${overlay}</Frame>`;
 }
 
-/** 대화 영역. blocks는 위에서부터 쌓을 JSX 목록이고, 맨 아래에 입력창과 상태 표시줄을 둔다. */
-export function thread(c, blocks, { composerOptions = {}, status = [] } = {}) {
+/** 대화 영역. blocks는 위에서부터 쌓을 JSX 목록이고, 맨 아래에 입력창과 상태 표시줄을 둔다. notice는 입력창 바로 위 안내 줄이다. */
+export function thread(c, blocks, { composerOptions = {}, status = [], notice = null } = {}) {
   return `<Frame name="Thread" w="fill" h="fill" flex="col" items="center" pt={20}>
 <Frame w={720} h="hug" flex="col" gap={16}>${blocks.join('')}</Frame>
 <Frame w="fill" h="fill" />
+${notice ? `<Frame name="Notice" w={720} h="hug" flex="row" items="center" gap={8} px={14} pb={8}>${I(c, 'triangle-alert', 'warn', 14)}${T(c, 12, 16, 500, 'ink2', notice)}</Frame>` : ''}
 ${composer(c, composerOptions)}
 ${status.length ? statusLine(c, status) : ''}
 <Frame w="fill" h={status.length ? 12 : 20} />
