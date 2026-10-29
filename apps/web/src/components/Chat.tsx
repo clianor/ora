@@ -29,6 +29,7 @@ import type { ContextView } from '../lib/context.ts';
 import { MarkdownText } from './Markdown.tsx';
 import { CacheStat } from './CacheStat.tsx';
 import { CompactionMark } from './CompactionMark.tsx';
+import { ReviewNote } from './ReviewCard.tsx';
 import { ContextStat } from './ContextStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
 
@@ -125,7 +126,7 @@ function AssistantMessage() {
           tools: { Fallback: ToolLine },
           ToolGroup,
           data: {
-            by_name: { compaction: CompactionMark, mcp: McpNote },
+            by_name: { compaction: CompactionMark, mcp: McpNote, review: ReviewNote },
             Fallback: WarningNote,
           },
         }}

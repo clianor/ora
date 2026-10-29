@@ -267,10 +267,17 @@ const isPhaseDone = (phase: Phase): boolean => phase.todos.every(isFinished);
 function getResult(
   todo: Todo,
   isAwaitingApproval: boolean,
-): { text: string; tone: 'ok' | 'bad' | 'muted' } | null {
+): { text: string; tone: 'ok' | 'bad' | 'warn' | 'muted' } | null {
   const exitCode = todo.evidence?.exitCode;
+  const reviewCount = todo.evidence?.review?.findings.length ?? 0;
+  if (todo.status === 'attempted' && reviewCount > 0) {
+    return { text: `검토 지적 ${reviewCount}`, tone: 'warn' };
+  }
   if (todo.status === 'verified' && exitCode !== undefined) {
-    return { text: `exit ${exitCode}`, tone: 'ok' };
+    return {
+      text: reviewCount > 0 ? `exit ${exitCode} · 검토 지적 ${reviewCount}` : `exit ${exitCode}`,
+      tone: 'ok',
+    };
   }
   if (exitCode !== undefined && exitCode !== 0) return { text: `exit ${exitCode}`, tone: 'bad' };
   if (exitCode !== undefined && todo.evidence?.gateFindings !== undefined) {
@@ -288,6 +295,7 @@ function getResult(
 const resultTone = {
   ok: 'text-success',
   bad: 'text-danger',
+  warn: 'text-warning',
   muted: 'text-foreground-subtle',
 };
 

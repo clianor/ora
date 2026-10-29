@@ -1441,6 +1441,170 @@ const skillsView: SessionView = finishView({
   statusLine: ['스텝 1/50', '격리 harness'],
 });
 
+// 다른 모델의 검토 카드와 할 일 패널의 "검토 지적 2"입니다. 주소는 `#/session/review`입니다.
+const reviewSessionId = 's-20261030-rev0e1';
+const makeReview = createEventFactory(reviewSessionId);
+const reviewTodos: Todo[] = [
+  {
+    id: 't2',
+    content: 'math.js의 add를 덧셈으로 고친다',
+    status: 'attempted',
+    attempts: 2,
+    writeScope: ['math.js'],
+    phase: '수정',
+    verify: { command: 'node check.js', origin: 'repo' },
+    evidence: {
+      command: 'node check.js',
+      exitCode: 0,
+      summary: 'ok',
+      origin: 'repo',
+      ranAt: `${day}T09:05:00+09:00`,
+      scopeDigest: 'sha256:ab12',
+      review: {
+        model: 'gpt-5.6-luna',
+        verdict: 'changes',
+        findings: [
+          {
+            severity: 'major',
+            text: 'check.js가 음수 입력을 검사하지 않아 a - b로 되돌려도 통과할 수 있습니다.',
+            location: 'check.js:4',
+          },
+          {
+            severity: 'minor',
+            text: 'README 예제의 출력이 바뀐 동작과 다릅니다.',
+            location: 'README.md:18',
+          },
+        ],
+      },
+    },
+    updatedAt: `${day}T09:05:00+09:00`,
+  },
+  {
+    id: 't3',
+    content: '음수 입력 검사를 check.js에 더한다',
+    status: 'pending',
+    attempts: 0,
+    writeScope: ['check.js'],
+    phase: '수정',
+    updatedAt: `${day}T09:00:00+09:00`,
+  },
+];
+const reviewView: SessionView = finishView({
+  record: createRecord(
+    reviewSessionId,
+    'add 함수 버그 수정 (다른 모델 검토)',
+    'running',
+    'math-demo',
+  ),
+  events: [
+    sessionStart(makeReview),
+    ...createStageEvents(makeReview, 'verify', stageOrder),
+    makeReview('message', '14:00', 'user', {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고, 다른 모델 검토까지 받아 주세요.',
+        },
+      ],
+    }),
+    makeReview('todo_update', '14:01', 'engine', {
+      todoId: 't2',
+      from: 'pending',
+      to: 'attempted',
+      todo: {
+        id: 't2',
+        content: 'math.js의 add를 덧셈으로 고친다',
+        status: 'attempted',
+        attempts: 1,
+        writeScope: ['math.js'],
+        phase: '수정',
+        verify: { command: 'node check.js', origin: 'repo' },
+        updatedAt: `${day}T09:05:00+09:00`,
+      },
+    }),
+    makeReview('tool_call', '14:01', 'model', {
+      callId: 'r1',
+      tool: 'file_edit',
+      args: { path: 'math.js', oldText: 'return a - b;', newText: 'return a + b;' },
+      tier: 'write',
+    }),
+    makeReview('tool_result', '14:01', 'tool', {
+      callId: 'r1',
+      status: 'ok',
+      summary: '+1 −1',
+      durationMs: 12,
+    }),
+    makeReview('tool_call', '14:02', 'model', {
+      callId: 'r2',
+      tool: 'verify.run',
+      args: { todoId: 't2' },
+      tier: 'exec',
+    }),
+    makeReview('tool_result', '14:02', 'tool', {
+      callId: 'r2',
+      status: 'ok',
+      summary: 'exit 0',
+      durationMs: 480,
+    }),
+    makeReview('review', '14:02', 'engine', {
+      outcome: 'completed',
+      todoId: 't2',
+      model: 'gpt-5.6-luna',
+      verdict: 'changes',
+      findings: [
+        {
+          severity: 'major',
+          text: 'check.js가 음수 입력을 검사하지 않아 a - b로 되돌려도 통과할 수 있습니다.',
+          location: 'check.js:4',
+        },
+        {
+          severity: 'minor',
+          text: 'README 예제의 출력이 바뀐 동작과 다릅니다.',
+          location: 'README.md:18',
+        },
+      ],
+    }),
+    makeReview('message', '14:03', 'model', {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: '검토가 짚은 대로 `check.js`에 음수 입력 검사를 더하고, README 예제도 맞추겠습니다.',
+        },
+      ],
+    }),
+  ],
+  todos: reviewTodos,
+  repoLabel: 'math-demo · main',
+  diff: null,
+  statusLine: ['스텝 18/50', '격리 harness'],
+});
+
+// 검토할 다른 모델이 없어 건너뛴 대화입니다. 주소는 `#/session/review-skipped`입니다.
+const reviewSkippedId = 's-20261030-rev0e2';
+const makeReviewSkipped = createEventFactory(reviewSkippedId);
+const reviewSkippedView: SessionView = finishView({
+  record: createRecord(reviewSkippedId, 'add 함수 버그 수정 (검토 건너뜀)', 'running', 'math-demo'),
+  events: [
+    sessionStart(makeReviewSkipped),
+    ...createStageEvents(makeReviewSkipped, 'verify', stageOrder),
+    makeReviewSkipped('message', '14:00', 'user', {
+      role: 'user',
+      content: [{ type: 'text', text: 'math.js의 add가 뺄셈을 하고 있어요. 고쳐 주세요.' }],
+    }),
+    makeReviewSkipped('review', '14:02', 'engine', {
+      outcome: 'skipped',
+      todoId: 't1',
+      reason: '실행 모델과 다른 검토 모델이 없어 검토를 건너뛰었습니다.',
+    }),
+  ],
+  todos: mathTodos,
+  repoLabel: 'math-demo · main',
+  diff: null,
+  statusLine: ['스텝 6/50', '격리 harness'],
+});
+
 const fixtureSkills: SkillsData = {
   status: 'ready',
   list: {
@@ -1515,6 +1679,8 @@ const detailedViews = new Map<string, SessionView>(
     costStopView,
     mcpView,
     skillsView,
+    reviewView,
+    reviewSkippedView,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -1534,6 +1700,8 @@ const devAliases = new Map<string, string>([
   ['cost-stop', costStopView.record.id],
   ['mcp', mcpView.record.id],
   ['skills', skillsView.record.id],
+  ['review', reviewView.record.id],
+  ['review-skipped', reviewSkippedView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */

@@ -22,6 +22,13 @@ import { evidenceSchema, todoSchema, todoStatusSchema } from './todo.ts';
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 
+export const reviewFindingSchema = z.strictObject({
+  severity: z.enum(['major', 'minor']),
+  text: z.string().min(1),
+  location: z.string().optional(),
+});
+export type ReviewFinding = z.infer<typeof reviewFindingSchema>;
+
 export const contentBlockSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('text'), text: z.string() }),
   z.strictObject({
@@ -111,8 +118,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
         outputTokens: z.number().int().nonnegative(),
       }),
       durationMs: z.number().int().nonnegative(),
-      /** 요약 요청이면 `compaction`, 기억 유지보수 충돌 판정 요청이면 `memory`다. 스텝 요청에는 없다. 엔진은 이 값이 있는 요청을 입력 토큰 어림의 기준으로 쓰지 않는다. */
-      purpose: z.enum(['compaction', 'memory']).optional(),
+      /** 요약 요청이면 `compaction`, 기억 유지보수 충돌 판정 요청이면 `memory`, 다른 모델의 검토 요청이면 `review`다. 스텝 요청에는 없다. 엔진은 이 값이 있는 요청을 입력 토큰 어림의 기준으로 쓰지 않는다. */
+      purpose: z.enum(['compaction', 'memory', 'review']).optional(),
       /** 요청이 탄 모델 체인의 역할이다. 비어 있는 역할은 `default` 체인을 타므로 `default`로 남는다. */
       role: z.string().min(1).optional(),
       /** 비용 상한(`session.maxCost`)을 설정한 세션에서, 이 요청까지 쓴 지출이 상한의 몇 %인지 내림한 값이다. 금액은 기록하지 않는다. 상한이 없거나 이전 기록에는 없다. */
@@ -151,6 +158,30 @@ export const oraEventSchema = z.discriminatedUnion('type', [
   defineEvent(
     'memory',
     z.strictObject({ learnSkipped: z.literal(true), reason: z.literal('cost_limit') }),
+  ),
+  // 다른 모델의 검토 기록이다. `completed`는 검토를 받은 결과이고 `findings`가 지적 목록이다. `major`가 하나라도 있으면 `verdict`는 `changes`다. `skipped`는 검토할 다른 모델이 없어 건너뛴 경우이고, `failed`는 응답 형식이 두 번 틀려 결과를 얻지 못한 경우다. 두 경우 모두 todo 판정에는 영향이 없다.
+  defineEvent(
+    'review',
+    z.discriminatedUnion('outcome', [
+      z.strictObject({
+        outcome: z.literal('completed'),
+        todoId: z.string().min(1),
+        model: z.string().min(1),
+        verdict: z.enum(['pass', 'changes']),
+        findings: z.array(reviewFindingSchema),
+      }),
+      z.strictObject({
+        outcome: z.literal('skipped'),
+        todoId: z.string().min(1),
+        reason: z.string().min(1),
+      }),
+      z.strictObject({
+        outcome: z.literal('failed'),
+        todoId: z.string().min(1),
+        model: z.string().min(1),
+        reason: z.string().min(1),
+      }),
+    ]),
   ),
   // 회상 팩 구성 기록이다 (SPEC 3.3절, 4.1.2절). 세션을 시작할 때 한 번 남긴다. 스킬 필드는 스킬 도입 전 기록에 없다.
   defineEvent(

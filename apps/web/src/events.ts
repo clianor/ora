@@ -170,6 +170,13 @@ export function buildThread(
     }
   }
 
+  /** `verify.run` 호출은 todo ID만 인자로 받으므로, 줄에는 그 todo가 선언한 검증 명령을 보입니다. */
+  const verifyCommands = new Map<string, string>();
+  for (const event of events) {
+    if (event.type === 'todo_update' && event.payload.todo.verify !== undefined) {
+      verifyCommands.set(event.payload.todoId, event.payload.todo.verify.command);
+    }
+  }
   const calls = new Map<string, { tool: string; target: string }>();
   for (const event of events) {
     if (event.type === 'tool_call') {
@@ -235,6 +242,8 @@ export function buildThread(
       } else if (failedMcpServers.delete(server)) {
         assistantContent.push({ type: 'data-mcp', data: { server, outcome: 'recovered' } });
       }
+    } else if (event.type === 'review') {
+      assistantContent.push({ type: 'data-review', data: event.payload });
     } else if (event.type === 'recall') {
       for (const skill of event.payload.skills) {
         assistantContent.push({
@@ -263,13 +272,17 @@ export function buildThread(
     } else if (event.type === 'tool_call' && !waitingCallIds.has(event.payload.callId)) {
       const { callId, tool, args } = event.payload;
       if (controlTools.has(tool) && (results.get(callId)?.status ?? 'ok') === 'ok') continue;
+      let labeled: Record<string, unknown> = args;
+      if (tool === 'history.read') labeled = { ...args, label: describeHistoryRead(args) };
+      else if (tool === 'verify.run') {
+        const command = verifyCommands.get(String(args.todoId));
+        if (command !== undefined) labeled = { ...args, label: command };
+      }
       assistantContent.push({
         type: 'tool-call',
         toolCallId: callId,
         toolName: tool,
-        args: (tool === 'history.read'
-          ? { ...args, label: describeHistoryRead(args) }
-          : args) as JsonObject,
+        args: labeled as JsonObject,
         result: results.get(callId),
       });
     }

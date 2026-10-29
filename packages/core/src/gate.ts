@@ -17,7 +17,7 @@ const STUB_PATTERNS: readonly (readonly [RegExp, string])[] = [
 ];
 
 /** 기준선에 없던 줄과 그 줄 번호(1부터)다. 같은 줄이 여러 번 있으면 기준선에 있던 개수만큼 앞에서부터 기존 줄로 본다. ponytail: 줄 순서를 보지 않는 비교라 줄을 옮기면 놓친다. */
-function addedLines(before: string, after: string): Map<number, string> {
+export function addedLines(before: string, after: string): Map<number, string> {
   const remaining = new Map<string, number>();
   for (const line of before.split('\n')) remaining.set(line, (remaining.get(line) ?? 0) + 1);
   const added = new Map<number, string>();

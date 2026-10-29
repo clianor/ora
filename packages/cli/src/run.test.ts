@@ -119,7 +119,7 @@ interface CliResult {
 
 function runCli(
   project: Project,
-  responses: { content: Block[] }[],
+  responses: object[],
   extraArgs: string[] = [],
   config?: object,
   task = '파일을 고친다',
@@ -2214,4 +2214,122 @@ test(
     expect(broken.log).toMatch(/ · skip · L-\d{8}-\d{3} · 충돌 판정 응답 형식 오류 · /);
   },
   TEST_TIMEOUT_MS * 2,
+);
+
+const reviewRoles = {
+  default: { chain: ['claude/main-m'] },
+  review: { chain: ['claude/review-m'] },
+};
+
+function reviewReply(...findings: { severity: 'major' | 'minor'; text: string }[]) {
+  return respond({ type: 'text', text: JSON.stringify({ findings }) });
+}
+
+async function runReviewCase(
+  replies: object[],
+  roles: object = reviewRoles,
+  between: { content: Block[] }[] = [],
+) {
+  const project = createProject();
+  const result = await runCli(
+    project,
+    [
+      ...setupResponses,
+      ...repairResponses('f', 'a - b', 'a + b', true),
+      ...replies,
+      ...between,
+      ...closingResponses,
+    ],
+    ['--permission', 'bypass-permissions'],
+    { roles, verify: { review: true } },
+  );
+  expect(result.code).toBe(0);
+  const { events, todos } = readSession(project);
+  const reviews = events.flatMap((event) => (event.type === 'review' ? [event.payload] : []));
+  const reviewRequests = events.filter(
+    (event) => event.type === 'model_request' && event.payload.purpose === 'review',
+  );
+  return { events, todos, reviews, reviewRequests };
+}
+
+test(
+  '검토가 중요 지적을 하면 todo는 attempted로 남고, 고친 뒤 다시 검증해 통과하면 verified가 된다',
+  async () => {
+    const { events, todos, reviews, reviewRequests } = await runReviewCase(
+      [reviewReply({ severity: 'major', text: '음수 입력을 검사하지 않습니다.' })],
+      reviewRoles,
+      [
+        respond(use('g1', 'file_edit', { path: 'foo.js', oldText: 'a + b', newText: 'b + a' })),
+        respond(use('g2', 'stage.advance', { to: 'verify' })),
+        respond(use('g3', 'verify.run', { todoId: 't1' })),
+        reviewReply(),
+      ],
+    );
+    expect(reviews).toMatchObject([
+      { outcome: 'completed', verdict: 'changes', model: 'review-m' },
+      { outcome: 'completed', verdict: 'pass', findings: [] },
+    ]);
+    expect(reviewRequests).toHaveLength(2);
+    expect(todoTransitions(events).slice(0, 3)).toEqual(['pending', 'attempted', 'attempted']);
+    expect(findToolResult(events, 'fx')?.summary).toContain('음수 입력을 검사하지 않습니다.');
+    expect(todos[0]).toMatchObject({ status: 'verified', attempts: 2 });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '검토가 참고 지적만 하면 todo는 verified이고 지적은 증거에 남는다',
+  async () => {
+    const { todos, reviews } = await runReviewCase([
+      reviewReply({ severity: 'minor', text: 'README 예제가 다릅니다.' }),
+    ]);
+    expect(reviews).toMatchObject([{ outcome: 'completed', verdict: 'pass' }]);
+    expect(todos[0]).toMatchObject({
+      status: 'verified',
+      attempts: 1,
+      evidence: { review: { findings: [{ severity: 'minor', text: 'README 예제가 다릅니다.' }] } },
+    });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '검토 모델이 실행 모델과 같거나 폴백으로 실행 모델에 닿으면 검토를 건너뛰고 기록한다',
+  async () => {
+    const same = await runReviewCase([], {
+      default: { chain: ['claude/main-m'] },
+      review: { chain: ['claude/main-m'] },
+    });
+    expect(same.reviews).toMatchObject([{ outcome: 'skipped' }]);
+    expect(same.reviewRequests).toHaveLength(0);
+    expect(same.todos[0]).toMatchObject({ status: 'verified' });
+
+    const fallback = await runReviewCase([{ error: { kind: 'error', message: '일반 오류' } }], {
+      default: { chain: ['claude/main-m'] },
+      review: { chain: ['claude/review-m', 'claude/main-m'] },
+    });
+    expect(fallback.reviews).toMatchObject([
+      {
+        outcome: 'skipped',
+        reason: '실행 모델과 다른 검토 모델을 쓸 수 없어 검토를 건너뛰었습니다.',
+      },
+    ]);
+    expect(fallback.reviewRequests).toHaveLength(0);
+    expect(fallback.todos[0]).toMatchObject({ status: 'verified' });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '검토 응답 형식이 두 번 틀리면 검토 실패로 기록하고 todo 판정은 그대로다',
+  async () => {
+    const { todos, reviews, reviewRequests } = await runReviewCase([
+      respond({ type: 'text', text: '문제 없어 보입니다' }),
+      respond({ type: 'text', text: '{"findings":"없음"}' }),
+    ]);
+    expect(reviews).toMatchObject([{ outcome: 'failed', model: 'review-m' }]);
+    expect(reviewRequests).toHaveLength(2);
+    expect(todos[0]).toMatchObject({ status: 'verified' });
+  },
+  TEST_TIMEOUT_MS,
 );

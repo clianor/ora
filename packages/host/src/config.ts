@@ -159,6 +159,12 @@ const configSchema = z.object({
       noProgressSteps: 5,
       maxConcurrentSessions: 4,
     }),
+  verify: z
+    .strictObject({
+      /** 켜면 검증을 통과한 todo를 `review` 역할의 다른 모델이 검토한다. */
+      review: z.boolean().default(false),
+    })
+    .default({ review: false }),
   tools: z
     .object({
       shellTimeoutMs: z.number().int().positive().default(120000),

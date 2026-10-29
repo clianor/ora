@@ -652,6 +652,7 @@ export async function executeSession(
         noProgressSteps: config.limits.noProgressSteps,
         shellTimeoutMs: config.tools.shellTimeoutMs,
         recallTokenBudget: config.recall.tokenBudget,
+        reviewEnabled: config.verify.review,
         compactAtRatio: config.context.compactAtRatio,
         keepRecentTokens: config.context.keepRecentTokens,
         protectToolTokens: config.context.protectToolTokens,

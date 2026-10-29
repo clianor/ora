@@ -7,6 +7,7 @@ import type {
   Evidence,
   Isolation,
   PermissionMode,
+  ReviewFinding,
   SessionRecord,
   SessionStatus,
   Stage,
@@ -27,7 +28,7 @@ import {
 } from './control-tools.ts';
 import { assessRisk, decidePermission } from './permission.ts';
 import { findHarnessCliCall } from './harness-cli.ts';
-import { findStubs, judgeGate } from './gate.ts';
+import { addedLines, findStubs, judgeGate } from './gate.ts';
 import type { GateResult } from './gate.ts';
 import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
@@ -73,6 +74,14 @@ import {
   withCap,
 } from './compaction.ts';
 import { CONFLICT_JUDGE_PROMPT, conflictJudgementSchema } from './conflict.ts';
+import {
+  REVIEW_PROMPT,
+  buildReviewQuestion,
+  formatFindings,
+  parseReviewReply,
+  REVIEWER_UNAVAILABLE_REASON,
+  ReviewerUnavailableError,
+} from './review.ts';
 import { appendMessage } from './recovery.ts';
 import type { ResumePlan } from './recovery.ts';
 import { describeScrubHits, mergeScrubHits, scrubText, scrubValue } from './scrub.ts';
@@ -111,6 +120,8 @@ export interface EngineSettings {
   readonly warnCost?: number;
   /** `<프로바이더>/<모델>`마다 100만 토큰당 단가다. 가드레일 판정에만 쓴다. */
   readonly pricing?: Readonly<Record<string, ModelPricing>>;
+  /** 검증이 통과한 todo를 `review` 역할의 다른 모델에 검토시킨다. 기본은 끈다. */
+  readonly reviewEnabled?: boolean;
 }
 
 export interface EngineDeps {
@@ -824,6 +835,107 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     return { status: rejectedCount > 0 ? 'error' : 'ok', text: lines.join('\n') };
   };
 
+  interface ReviewResult {
+    readonly model: string;
+    readonly verdict: 'pass' | 'changes';
+    readonly findings: ReviewFinding[];
+  }
+
+  /**
+   * 통과한 todo를 `review` 역할의 다른 모델에 도구 없이 한 번 묻는다. 형식이 틀리면 한 번 다시 묻는다.
+   * 건너뛰었거나 두 번 틀렸으면 그 사실만 `review` 이벤트로 남기고 `undefined`를 돌려준다.
+   * 비교하는 기준은 세션 파일 기준선이라, 이 todo의 쓰기 범위에서 세션 동안 더한 줄이 모두 들어간다.
+   */
+  const reviewTodo = async (todo: Todo, evidence: Evidence): Promise<ReviewResult | undefined> => {
+    const executor = entryAt('default', stateOf('default').position);
+    const baselines = await store.readBaselines();
+    const cwdPrefix = `${input.cwd.replace(/\/$/, '')}/`;
+    const diffLines: string[] = [];
+    for (const path of await workspace.listScopeFiles(todo.writeScope)) {
+      const before = baselines[path];
+      if (before === undefined) continue;
+      const after = await workspace.readText(path);
+      if (after === undefined) continue;
+      const shown = path.startsWith(cwdPrefix) ? path.slice(cwdPrefix.length) : path;
+      for (const [line, text] of addedLines(before ?? '', after)) {
+        diffLines.push(`${shown}:${line}: +${text}`);
+      }
+    }
+    const messages: ModelMessage[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: buildReviewQuestion({
+              title: todo.content,
+              command: evidence.command,
+              evidenceSummary: evidence.summary,
+              diff: scrubText(diffLines.join('\n')).text,
+            }),
+          },
+        ],
+      },
+    ];
+    let model = entryAt('review', stateOf('review').position).model;
+    let failure = '검토 응답이 약속한 JSON 형식이 아니었습니다.';
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await requestModel(
+        'review',
+        { system: REVIEW_PROMPT, messages, tools: [], maxOutputTokens: 1500 },
+        AbortSignal.any([signal, softStop]),
+        executor,
+      ).catch((error: unknown) => {
+        if (error instanceof CostStopError || signal.aborted || softStop.aborted) throw error;
+        if (error instanceof ReviewerUnavailableError) return error;
+        return new Error(error instanceof Error ? error.message : String(error));
+      });
+      if (result instanceof ReviewerUnavailableError) {
+        await emit('engine', {
+          type: 'review',
+          payload: { outcome: 'skipped', todoId: todo.id, reason: REVIEWER_UNAVAILABLE_REASON },
+        });
+        return undefined;
+      }
+      if (result instanceof Error) {
+        failure = `검토 요청이 실패했습니다: ${scrubText(result.message).text}`;
+        break;
+      }
+      const { completed, port, chainPosition, durationMs } = result;
+      model = port.model;
+      await emit('model', {
+        type: 'model_request',
+        payload: {
+          model: port.model,
+          adapter: port.adapter,
+          chainPosition,
+          role: 'review',
+          nativeToolCalls: completed.nativeToolCalls,
+          usage: completed.usage,
+          ...addSpend(port.model, completed.usage),
+          durationMs,
+          purpose: 'review',
+        },
+      });
+      const reply = completed.content
+        .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+        .join('\n');
+      const findings = parseReviewReply(reply);
+      if (findings === undefined) continue;
+      const verdict = findings.some((finding) => finding.severity === 'major') ? 'changes' : 'pass';
+      await emit('engine', {
+        type: 'review',
+        payload: { outcome: 'completed', todoId: todo.id, model, verdict, findings },
+      });
+      return { model, verdict, findings };
+    }
+    await emit('engine', {
+      type: 'review',
+      payload: { outcome: 'failed', todoId: todo.id, model, reason: failure },
+    });
+    return undefined;
+  };
+
   const runVerify = async (
     data: z.infer<typeof verifyRunSchema>,
     callId: string,
@@ -903,13 +1015,21 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             }),
       },
     });
+    const review =
+      passed && settings.reviewEnabled === true ? await reviewTodo(todo, evidence) : undefined;
+    const hasMajor = review?.findings.some((finding) => finding.severity === 'major') === true;
+    const reviewedEvidence: Evidence = review === undefined ? evidence : { ...evidence, review };
     const repairs = todo.attempts - 1;
-    const exhausted = !passed && repairs >= settings.maxRepairsPerTodo;
+    const exhausted = (!passed || hasMajor) && repairs >= settings.maxRepairsPerTodo;
+    let nextStatus: TodoStatus = 'verified';
+    if (!passed) nextStatus = 'failed';
+    else if (hasMajor) nextStatus = 'attempted';
     const updated: Todo = {
       ...todo,
-      status: passed ? 'verified' : 'failed',
+      status: nextStatus,
+      attempts: hasMajor ? todo.attempts + 1 : todo.attempts,
       verify: { command: todo.verify.command, origin },
-      evidence,
+      evidence: reviewedEvidence,
       updatedAt: now(),
     };
     todos.set(updated.id, updated);
@@ -928,7 +1048,9 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       finalTodo = {
         ...updated,
         status: 'blocked',
-        blockedReason: `${repairs}번 고쳤지만 검사를 통과하지 못했습니다`,
+        blockedReason: hasMajor
+          ? `${repairs}번 고쳤지만 검토 지적이 남았습니다`
+          : `${repairs}번 고쳤지만 검사를 통과하지 못했습니다`,
         updatedAt: now(),
       };
       todos.set(finalTodo.id, finalTodo);
@@ -936,7 +1058,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         type: 'todo_update',
         payload: {
           todoId: finalTodo.id,
-          from: 'failed',
+          from: updated.status,
           to: 'blocked',
           todo: finalTodo,
           ...(reconcileCurrent() ?? {}),
@@ -944,10 +1066,14 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       });
     }
     await saveTodos();
-    if (!passed && stage === 'verify') await enterStage('execute');
+    if ((!passed || hasMajor) && stage === 'verify') await enterStage('execute');
     return {
       status: 'ok',
       text: `${todo.id}: ${finalTodo.status} (${result.timedOut ? 'timeout' : `exit ${result.exitCode ?? 'signal'}`})\n${evidence.summary}${
+        review === undefined || review.findings.length === 0
+          ? ''
+          : `\n다른 모델(${review.model})의 검토 지적:\n${formatFindings(review.findings)}${hasMajor ? '\n중요 지적을 고친 뒤 다시 검증합니다. 이 왕복은 고친 횟수에 셉니다.' : ''}`
+      }${
         gate === undefined || gate.passed
           ? ''
           : `\n완성 무결성 게이트가 걸렸습니다. 종료 코드는 0이지만 verified가 아닙니다:\n${gate.findings.map((finding) => `- ${finding}`).join('\n')}\n스텁을 구현하고 건너뜀을 없앤 뒤 다시 검증합니다. 사용자가 일부러 요청한 경우처럼 정당한 사유가 있을 때만 verify.waive로 예외를 요청합니다.`
@@ -1331,7 +1457,12 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
    * 역할의 체인에서 지금 위치의 모델로 요청 한 번을 보낸다. 실패하면 `fallback.on`에 맞을 때 다음 모델로 같은 요청을 다시 보내고 `retry` 이벤트를 남긴다.
    * 첫 모델이 한도 오류로 넘어갔고 그 해제 시각이 지났으면, 요청 전에 첫 모델로 되돌아간다. 취소는 폴백하지 않는다.
    */
-  const requestModel = async (role: string, request: ModelRequest, modelSignal: AbortSignal) => {
+  const requestModel = async (
+    role: string,
+    request: ModelRequest,
+    modelSignal: AbortSignal,
+    exclude?: ModelChainEntry,
+  ) => {
     const state = stateOf(role);
     const chain = router.chain(role);
     let attempt = 0;
@@ -1370,6 +1501,14 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       await emitRetry('revert', undefined, 0);
     }
     for (;;) {
+      for (
+        let entry = entryAt(role, state.position);
+        entry.provider === exclude?.provider && entry.model === exclude.model;
+        entry = entryAt(role, state.position)
+      ) {
+        if (state.position + 1 >= chain.length) throw new ReviewerUnavailableError();
+        state.position += 1;
+      }
       const port = await currentPort(role);
       await guardCost(port.model);
       const started = clock.now().getTime();

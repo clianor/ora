@@ -35,6 +35,20 @@ export const evidenceSchema = z.strictObject({
       at: timestampSchema,
     })
     .optional(),
+  /** 다른 모델의 검토 결과다. 검토를 받았을 때만 있다. 지적은 `minor`만 있어도 남긴다. */
+  review: z
+    .strictObject({
+      model: z.string().min(1),
+      verdict: z.enum(['pass', 'changes']),
+      findings: z.array(
+        z.strictObject({
+          severity: z.enum(['major', 'minor']),
+          text: z.string().min(1),
+          location: z.string().optional(),
+        }),
+      ),
+    })
+    .optional(),
 });
 export type Evidence = z.infer<typeof evidenceSchema>;
 
