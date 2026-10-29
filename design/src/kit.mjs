@@ -194,19 +194,70 @@ ${T(c, 12, 18, 400, 'ink3', 't1의 검증 명령입니다. 엔진이 실행하�
 }
 
 const CHIP_ICON = { model: 'cpu', permission: 'shield' };
-export function composer(c, { placeholder = null, running = false, width = 720 } = {}) {
+export function composer(
+  c,
+  {
+    placeholder = null,
+    running = false,
+    width = 720,
+    model = '기본 모델',
+    effort = 'medium',
+    modelOpen = false,
+  } = {},
+) {
   const hint =
     placeholder ??
     (running
       ? '조향 메시지를 입력합니다. 현재 스텝이 끝난 뒤 반영합니다'
       : 'Ora에게 메시지, @파일, /명령');
   const chip = (kind, label, caret) =>
-    `<Frame w="hug" h={26} flex="row" items="center" gap={4} px={8} rounded={8}>${CHIP_ICON[kind] ? I(c, CHIP_ICON[kind], 'ink2', 14) : ''}${T(c, 12, 16, 500, 'ink2', label)}${caret ? I(c, 'chevron-down', 'ink3', 12) : ''}</Frame>`;
+    `<Frame name="Chip/${kind}" w="hug" h={26} flex="row" items="center" gap={4} px={8} rounded={8} ${kind === 'model' && modelOpen ? `bg="${c.hover}"` : ''}>${CHIP_ICON[kind] ? I(c, CHIP_ICON[kind], 'ink2', 14) : ''}${T(c, 12, 16, 500, 'ink2', label, '', kind === 'model' && model !== '기본 모델' ? M : F)}${caret ? I(c, 'chevron-down', 'ink3', 12) : ''}</Frame>`;
   const action = running ? I(c, 'square', 'onPrimary', 12) : I(c, 'arrow-up', 'onPrimary', 16);
   return `<Frame name="Composer" w={${width}} h="hug" flex="col" gap={10} pt={12} pb={10} px={14} rounded={18} bg="${c.raised}">
 ${T(c, 15, 22, 400, 'ink3', hint, 'w="fill"')}
-<Frame w="fill" h={28} flex="row" items="center" gap={6}>${I(c, 'paperclip', 'ink3', 16)}${chip('model', '기본 모델', true)}${chip('effort', 'medium', true)}${chip('permission', '승인 생략', false)}${SP}<Frame w={30} h={30} flex="row" items="center" justify="center" rounded={15} bg="${c.primary}">${action}</Frame></Frame>
+<Frame w="fill" h={28} flex="row" items="center" gap={6}>${I(c, 'paperclip', 'ink3', 16)}${chip('model', model, true)}${chip('effort', effort, true)}${chip('permission', '승인 생략', false)}${SP}<Frame w={30} h={30} flex="row" items="center" justify="center" rounded={15} bg="${c.primary}">${action}</Frame></Frame>
 </Frame>`;
+}
+
+/**
+ * 라우팅 미리보기. 입력창 바로 아래 한 줄에 이번 세션이 쓸 역할과 모델 체인, 추론 강도, 로그인 상태를 보여 준다.
+ * chain은 { model, effort, signedIn, picked } 목록이고, picked는 사용자가 고른 모델이다.
+ */
+export function routingPreview(c, { role = 'default', chain }) {
+  const item = (m, i) => {
+    const state = m.signedIn
+      ? ''
+      : `<Frame w="hug" h="hug" flex="row" items="center" gap={3}>${I(c, 'circle-alert', 'warn', 12)}${T(c, 12, 16, 500, 'warn', '로그인 필요')}</Frame>`;
+    const picked = m.picked ? T(c, 12, 16, 500, 'ink2', '· 직접 고름') : '';
+    return `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${T(c, 12, 16, 500, 'ink3', String(i + 1), '', M)}${T(c, 12, 16, 500, 'ink', m.model, '', M)}${T(c, 12, 16, 400, 'ink2', m.effort)}${picked}${state}</Frame>`;
+  };
+  const arrow = I(c, 'arrow-right', 'ink3', 12);
+  return `<Frame name="RoutingPreview" w={720} h="hug" flex="row" items="center" gap={8} px={14} wrap={true}>${T(c, 12, 16, 500, 'ink3', `역할 ${role}`)}${T(c, 12, 16, 400, 'ink3', '·')}${chain.map(item).join(arrow)}</Frame>`;
+}
+
+/**
+ * 모델 칩을 누르면 뜨는 모델 고르기 팝오버. 줄 전체가 버튼이다.
+ * groups는 [제목, [{ model, provider, effort, signedIn, selected }]] 목록이다.
+ */
+export function modelPicker(c, { x, y, groups, note }) {
+  const row = (m) => {
+    const right = m.signedIn
+      ? T(c, 12, 16, 400, 'ink3', m.provider)
+      : `<Frame w="hug" h="hug" flex="row" items="center" gap={3}>${I(c, 'circle-alert', 'warn', 12)}${T(c, 12, 16, 500, 'warn', '로그인 필요')}</Frame>`;
+    return `<Frame w="fill" h={32} flex="row" items="center" gap={8} px={10} rounded={6} ${m.selected ? `bg="${c.hover}"` : ''}><Frame w={14} h={14} flex="row" items="center">${m.selected ? I(c, 'check', 'ink', 14) : ''}</Frame>${T(c, 13, 18, 500, m.signedIn ? 'ink' : 'ink2', m.model, 'grow={1}', M)}${T(c, 12, 16, 400, 'ink2', m.effort ?? '')}${right}</Frame>`;
+  };
+  const group = ([title, items]) =>
+    `<Frame w="fill" h="hug" flex="col" gap={2}><Frame w="fill" h="hug" px={10} pt={6} pb={2}>${T(c, 12, 16, 500, 'ink3', title)}</Frame>${items.map(row).join('')}</Frame>`;
+  return `<Frame name="ModelPicker" position="absolute" x={${x}} y={${y}} w={340} h="hug" flex="col" gap={4} p={4} rounded={10} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${groups.map(group).join('')}<Frame w="fill" h="hug" px={10} pt={4} pb={6}>${T(c, 12, 18, 400, 'ink2', note, 'w="fill" textAutoResize="height"')}</Frame></Frame>`;
+}
+
+/** 대화 안의 모델 전환 표시. 폴백과 첫 모델 복귀를 같은 모양으로 보이고, 이유와 시각을 함께 적는다. */
+export function modelSwitchMark(
+  c,
+  { from, to, reason, time, icon = 'arrow-right-left', label = '모델을 바꿨습니다' },
+) {
+  const rule = `<Frame w="fill" h={1} bg="${c.line}" />`;
+  return `<Frame name="ModelSwitch" w="fill" h="hug" flex="row" items="center" gap={10}>${rule}<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${I(c, icon, 'warn', 14)}${T(c, 12, 16, 500, 'ink2', label)}${T(c, 12, 16, 500, 'ink', from, '', M)}${I(c, 'arrow-right', 'ink3', 12)}${T(c, 12, 16, 500, 'ink', to, '', M)}${T(c, 12, 16, 400, 'ink3', `· ${reason} · ${time}`)}</Frame>${rule}</Frame>`;
 }
 
 /** 상태 표시줄. 입력창 바로 아래 한 줄에 스텝 수, 사용 모델, 격리 옵션을 적는다. items는 [글자, 색 이름] 쌍이다. */

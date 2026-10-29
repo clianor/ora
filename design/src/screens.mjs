@@ -13,6 +13,9 @@ import {
   evidence,
   phasePanel,
   waiverCard,
+  routingPreview,
+  modelPicker,
+  modelSwitchMark,
   header,
   mono,
   palette,
@@ -323,17 +326,18 @@ function questionScreen() {
 }
 
 /** 첫 화면과 워크트리별 새 세션 화면이 함께 쓰는 가운데 영역이다. context는 입력창 위에 놓을 칩 줄이다. */
-function welcome(c, context) {
+function welcome(c, context, { composerOptions = {}, below = '', overlay = '' } = {}) {
   const key = (k, label) =>
     `<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${T(c, 12, 16, 500, 'ink2', k, '', mono)}${T(c, 12, 16, 400, 'ink3', label)}</Frame>`;
   return `<Frame name="Welcome" w="fill" h="fill" flex="col" items="center" justify="center" gap={20} pb={80}>
 <Frame w={720} h="hug" flex="col" gap={6}>${T(c, 24, 32, 600, 'ink', '무엇을 할까요?')}${T(c, 14, 22, 400, 'ink3', 'Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를 보고합니다.')}</Frame>
 <Frame w={720} h="hug" flex="col" gap={8}>
 <Frame w="fill" h="hug" flex="row" items="center" gap={6}>${context}</Frame>
-${composer(c)}
+${composer(c, composerOptions)}
+${below}
 </Frame>
 <Frame w={720} h="hug" flex="row" gap={20} px={14}>${key('⌘K', '명령 팔레트')}${key('⌘N', '새 세션')}${key('⌘,', '설정')}</Frame>
-</Frame>`;
+${overlay}</Frame>`;
 }
 
 function newSessionScreen() {
@@ -858,6 +862,107 @@ ${col('예외 거부 뒤', gatePanel(c, rejected, 't2'))}
 </Frame>`;
 }
 
+const ROUTE_CHAIN = [
+  { model: 'claude-haiku-5-5', provider: 'claude', effort: 'medium', signedIn: true },
+  { model: 'gpt-5.6-luna', provider: 'codex', effort: 'low', signedIn: true },
+];
+
+/** 라우팅 미리보기(SPEC 2.4절). 입력창 아래 줄이 default 역할의 체인을 보이고, 모델 칩을 누르면 모델을 고르는 팝오버가 열린다. */
+function routingScreen() {
+  const c = palette('Dark');
+  const chip = (icon, label, extra = '') =>
+    `<Frame w="hug" h={28} flex="row" items="center" gap={6} px={10} rounded={8} bg="${c.raised}">${I(c, icon, 'ink2', 14)}${T(c, 13, 18, 500, 'ink2', label, '', mono)}${extra}</Frame>`;
+  const context = `${chip('folder', '~/Desktop/ora')}${chip('git-branch', 'main')}${T(c, 12, 16, 400, 'ink3', '이 워크트리에서 시작합니다', 'pl={6}')}`;
+  const picker = modelPicker(c, {
+    x: ROUTE_PICKER_X,
+    y: ROUTE_PICKER_Y,
+    groups: [
+      ['역할 default의 체인', ROUTE_CHAIN.map((m, i) => ({ ...m, selected: i === 0 }))],
+      [
+        '다른 모델',
+        [
+          { model: 'claude-sonnet-5-5', provider: 'claude', effort: 'medium', signedIn: true },
+          { model: 'grok-5', provider: 'grok', effort: 'medium', signedIn: false },
+        ],
+      ],
+    ],
+    note: '고른 모델을 이 세션 체인의 맨 앞에 두고, 세션 기록에 "직접 고름"으로 남깁니다. 나머지 체인은 폴백으로 그대로 씁니다.',
+  });
+  return windowFrame(c, '16 Routing Preview · Dark', {
+    side: sidebar(c, { groups: repos({ worktree: 'ora/main' }) }),
+    main:
+      header(c, { title: '새 세션', repo: 'ora · main' }) +
+      welcome(c, context, {
+        composerOptions: { model: 'claude-haiku-5-5', effort: 'medium', modelOpen: true },
+        below: routingPreview(c, { chain: ROUTE_CHAIN }),
+        overlay: picker,
+      }),
+  });
+}
+// 모델 칩 바로 위로 팝오버를 연다. 아래로 열면 미리보기 줄을 가리기 때문이다. 16 Routing Preview 시안을 내보낸 이미지(1280px)에서 칩 왼쪽 위 끝(470, 414)과 팝오버 높이(218px)를 재고, 1440px 창과 Welcome 프레임 원점(264, 50) 기준으로 바꿨다.
+const ROUTE_PICKER_X = 265;
+const ROUTE_PICKER_Y = 167;
+
+/** 실행 중 폴백. 대화에 모델 전환 표시가 생기고, 상태 표시줄의 모델 칸이 폴백 중임을 글자로 알린다. */
+function fallbackScreen() {
+  const c = palette('Dark');
+  const blocks = [
+    userBubble(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={4}>${toolLine(c, { icon: 'file-text', verb: '읽기', target: 'math.js' })}${toolLine(c, { icon: 'file-pen', verb: '수정', target: 'math.js', add: 1, del: 1 })}</Frame>`,
+    modelSwitchMark(c, {
+      from: 'claude-haiku-5-5',
+      to: 'gpt-5.6-luna',
+      reason: '사용 한도 · 18:10에 풀림',
+      time: '17:42',
+    }),
+    reply(c, `이어서 ${code(c, 'node check.js')}로 검증하겠습니다.`),
+    `<Frame w="fill" h="hug" flex="col" gap={4}>${toolLine(c, { icon: 'shield-check', verb: '검증', target: 't1 · node check.js', status: T(c, 12, 16, 500, 'ok', 't1: verified (exit 0)', '', mono) })}</Frame>`,
+    modelSwitchMark(c, {
+      from: 'gpt-5.6-luna',
+      to: 'claude-haiku-5-5',
+      reason: '사용 한도가 풀림',
+      time: '18:11',
+      icon: 'undo-2',
+      label: '첫 모델로 돌아왔습니다',
+    }),
+  ];
+  const phases = [
+    PHASE_FIND,
+    {
+      name: '수정',
+      open: true,
+      todos: [
+        {
+          id: 't1',
+          title: 'math.js의 add를 덧셈으로 고친다',
+          status: 'verified',
+          origin: 'user',
+          cmd: '$ node check.js',
+          result: 'exit 0',
+          resultColor: 'ok',
+        },
+        { id: 't2', title: 'README 예제 출력을 갱신한다', status: 'attempted', origin: 'model' },
+      ],
+    },
+  ];
+  return windowFrame(c, '17 Fallback · Dark', {
+    side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
+    main:
+      header(c, { title: 'add 함수 버그 수정', repo: 'math-demo · main', stage: 4, diff: [1, 1] }) +
+      thread(c, blocks, {
+        composerOptions: { running: true, model: 'claude-haiku-5-5' },
+        status: [
+          ['스텝 14/50'],
+          ['claude-haiku-5-5 · 체인 1/2'],
+          ['폴백 1회', 'warn'],
+          ['격리 harness'],
+          ['캐시 적중 61%'],
+        ],
+      }),
+    panel: phasePanel(c, { objective: PHASE_OBJECTIVE, phases, current: 't2' }),
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -874,4 +979,6 @@ export const SCREENS = [
   { file: 'phase-states-dark', jsx: phaseStatesScreen },
   { file: 'gate-waiver-dark', jsx: gateWaiverScreen },
   { file: 'gate-result-dark', jsx: gateResultScreen },
+  { file: 'routing-dark', jsx: routingScreen },
+  { file: 'fallback-dark', jsx: fallbackScreen },
 ];
