@@ -8,6 +8,7 @@ import {
   pendingApprovalSchema,
   pendingQuestionSchema,
   requestResolvedSchema,
+  compactionFileResponseSchema,
   errorResponseSchema,
   infoResponseSchema,
   type InfoResponse,
@@ -27,6 +28,7 @@ import {
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { buildThread, reuseMessages } from './events.ts';
 import { buildCacheView } from './lib/cache.ts';
+import { buildContextView, type ContextLimits } from './lib/context.ts';
 import { basename } from './lib/path.ts';
 import { permissionLabel } from './lib/status.ts';
 import type {
@@ -69,6 +71,7 @@ interface SessionState {
   steerFailure: SessionView['steerFailure'];
   lastMessages: ThreadMessageLike[];
   maxSteps: number | undefined;
+  limits: ContextLimits | undefined;
   /** SSE 연결이 한 번 끊겼다가 다시 열렸을 때 놓친 이벤트와 대기 요청을 서버에서 다시 맞추기 위한 표시입니다. */
   hadStreamError: boolean;
   watchers: number;
@@ -160,6 +163,7 @@ function createSessionState(record: SessionRecord): SessionState {
     steerFailure: null,
     lastMessages: [],
     maxSteps: undefined,
+    limits: undefined,
     hadStreamError: false,
     watchers: 0,
     source: null,
@@ -213,6 +217,7 @@ export function createHttpStore(): OraStoreSource {
       diff: null,
       statusLine: buildStatusLine(state.events, state.maxSteps ?? info?.maxSteps),
       cache: buildCacheView(state.events),
+      context: buildContextView(state.events, state.limits),
       chips: {
         model: state.record.models[0]?.model,
         permission: permissionLabel[state.record.permissionMode],
@@ -317,6 +322,11 @@ export function createHttpStore(): OraStoreSource {
       state.approvals = detail.pendingApprovals;
       state.questions = detail.pendingQuestions;
       state.maxSteps = detail.maxSteps;
+      state.limits = {
+        ...(detail.contextWindow === undefined ? {} : { contextWindow: detail.contextWindow }),
+        compactAtRatio: detail.compactAtRatio,
+        keepRecentTokens: detail.keepRecentTokens,
+      };
       if (!detail.live) state.isStopping = false;
     } catch (error) {
       state.error = toMessage(error);
@@ -513,6 +523,13 @@ export function createHttpStore(): OraStoreSource {
     },
     answerQuestions: async (id, requestId, answers: QuestionAnswer[]) => {
       await post(id, 'answer', { requestId, answers }, okResponseSchema);
+    },
+    readCompaction: async (id, path) => {
+      const file = await requestJson(
+        `/api/sessions/${id}/compaction?path=${encodeURIComponent(path)}`,
+        compactionFileResponseSchema,
+      );
+      return file.text;
     },
     resumeSession: async (id) => {
       await post(id, 'resume', {}, sessionIdResponseSchema);

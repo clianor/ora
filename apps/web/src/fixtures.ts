@@ -1,5 +1,6 @@
 import { buildThread } from './events.ts';
 import { buildCacheView } from './lib/cache.ts';
+import { buildContextView } from './lib/context.ts';
 import type { AccountProvider, LoginState, ProviderAccounts } from '@ora/protocol';
 import type {
   Actor,
@@ -287,7 +288,14 @@ const designChips = { model: '기본 모델', effort: 'medium', permission: '승
 
 type ViewBase = Omit<
   SessionView,
-  'thread' | 'approvals' | 'questions' | 'isStopping' | 'error' | 'steerFailure' | 'cache'
+  | 'thread'
+  | 'approvals'
+  | 'questions'
+  | 'isStopping'
+  | 'error'
+  | 'steerFailure'
+  | 'cache'
+  | 'context'
 >;
 
 /** 기다리는 요청(승인, 질문)을 정하고 이벤트에서 채팅 메시지를 만들어 화면 데이터를 완성합니다. */
@@ -305,6 +313,14 @@ function finishView(
     ...base,
     chips: designChips,
     cache: buildCacheView(base.events, base.record.id === mathId ? '1시간' : undefined),
+    context:
+      base.record.id === contextId
+        ? buildContextView(base.events, {
+            contextWindow: 200_000,
+            compactAtRatio: 0.8,
+            keepRecentTokens: 20_000,
+          })
+        : null,
     thread: buildThread(base.events, waitingCallIds),
     approvals,
     questions,
@@ -344,6 +360,132 @@ const sessionView: SessionView = finishView(
     ],
   },
 );
+
+const contextId = 's-20261029-c0nt3x';
+const makeContext = createEventFactory(contextId);
+const contextUsage = (uncached: number, read: number, creation: number) => ({
+  model: 'fake/scripted',
+  adapter: 'fake',
+  chainPosition: 0,
+  nativeToolCalls: true,
+  usage: {
+    outputTokens: 300,
+    uncachedInputTokens: uncached,
+    cacheReadInputTokens: read,
+    cacheCreationInputTokens: creation,
+  },
+  durationMs: 1500,
+});
+const prunedReads = [
+  'src/index.js',
+  'src/math.js',
+  'src/format.js',
+  'README.md',
+  'docs/api.md',
+  'examples/sum.js',
+  'examples/diff.js',
+  'package.json',
+  'check.js',
+];
+/** 시작 준비 이벤트 뒤에서 모델 요청과 도구 호출마다 스텝 번호를 올려 `stepId`를 붙입니다. */
+function tagSteps(events: readonly OraEvent[]): OraEvent[] {
+  let step = 0;
+  return events.map((event) => {
+    if (event.type === 'model_request' || event.type === 'tool_call') step += 1;
+    return step === 0 || event.type === 'compaction' ? event : { ...event, stepId: `step-${step}` };
+  });
+}
+const contextEvents: OraEvent[] = tagSteps([
+  sessionStart(makeContext),
+  ...createStageEvents(makeContext, 'verify', stageOrder),
+  makeContext('message', '18:00', 'user', {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.' },
+    ],
+  }),
+  makeContext('model_request', '18:01', 'engine', contextUsage(30000, 0, 8000)),
+  ...prunedReads.flatMap((path, index) => [
+    makeContext('tool_call', '18:10', 'model', {
+      callId: `p${index}`,
+      tool: 'read',
+      args: { path },
+      tier: 'read',
+    }),
+    makeContext('tool_result', '18:10', 'tool', {
+      callId: `p${index}`,
+      status: 'ok',
+      summary: '120줄',
+      durationMs: 8,
+    }),
+  ]),
+  makeContext('model_request', '18:20', 'engine', contextUsage(300, 55400, 0)),
+  makeContext('compaction', '18:31', 'engine', {
+    method: 'prune',
+    fromSeq: 12,
+    toSeq: 28,
+    prunedCallIds: prunedReads.map((_, index) => `p${index}`),
+    savedTokens: 58200,
+  }),
+  makeContext('compaction', '18:42', 'engine', {
+    method: 'handoff',
+    fromSeq: 1,
+    toSeq: 24,
+    path: 'compactions/1.md',
+    prunedCallIds: [],
+  }),
+  makeContext('tool_call', '18:43', 'model', {
+    callId: 'h1',
+    tool: 'history.read',
+    args: { callId: 'p3' },
+    tier: 'read',
+  }),
+  makeContext('tool_result', '18:43', 'tool', {
+    callId: 'h1',
+    status: 'ok',
+    summary: '120줄',
+    durationMs: 12,
+  }),
+  makeContext('tool_call', '18:44', 'model', {
+    callId: 'e1',
+    tool: 'file_edit',
+    args: { path: 'README.md', add: 2, del: 1 },
+    tier: 'write',
+  }),
+  makeContext('tool_result', '18:44', 'tool', {
+    callId: 'e1',
+    status: 'ok',
+    summary: '수정함',
+    durationMs: 20,
+  }),
+  makeContext('model_request', '18:45', 'engine', contextUsage(300, 127000, 1100)),
+  makeContext('message', '18:45', 'model', {
+    role: 'assistant',
+    content: [
+      {
+        type: 'text',
+        text: 'README 예제 출력을 실제 값으로 맞췄습니다. 이제 `pnpm test -- readme`로 확인하겠습니다.',
+      },
+    ],
+  }),
+]);
+const contextView: SessionView = finishView({
+  record: createRecord(contextId, 'add 함수 버그 수정', 'running', 'math-demo'),
+  events: contextEvents,
+  todos: mathTodos,
+  repoLabel: 'math-demo · main',
+  diff: { add: 3, del: 2 },
+  statusLine: ['스텝 31/50', '기본 모델 사용 중', '격리 harness'],
+});
+
+const compactionDocument = [
+  '# 컨텍스트 압축 요약',
+  '이 문서가 압축한 이전 대화를 대신한다. 모델이 쓴 절을 뺀 나머지는 엔진이 기록에서 직접 만들었다.',
+  '## 사용자 지시 (원문)\n### 지시 1\nmath.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.\n\n### 지시 2\nREADME 예제도 실제 출력으로 맞춰 주세요.',
+  '## todo 상태\n- t1 [verified] math.js의 add를 덧셈으로 고친다\n  - 증거: `node check.js` 종료 코드 0, 통과\n- t2 [attempted] README 예제 출력을 갱신한다\n  - 증거 없음',
+  '## 해결하지 못한 오류\n없음',
+  '## 결정 기록과 작업 경과\ncheck.js로 검증했고 t1은 끝났다. README 예제는 node examples/sum.js의 실제 출력으로 맞추는 중이다. 출력 형식은 예제 3개 모두 같다.',
+].join('\n\n');
 
 const askId = 's-20261028-n0t3s1';
 const makeAsk = createEventFactory(askId);
@@ -622,13 +764,14 @@ function listSessionNodes(worktrees: WorktreeNode[]): SessionNode[] {
 }
 
 const detailedViews = new Map<string, SessionView>(
-  [sessionView, questionView, crashedView].map((view) => [view.record.id, view]),
+  [sessionView, questionView, crashedView, contextView].map((view) => [view.record.id, view]),
 );
 
 // 시안을 주소로 열 수 있도록 개발용 별칭(#/question 등)도 세션 ID처럼 받습니다.
 const devAliases = new Map<string, string>([
   ['question', questionView.record.id],
   ['crashed', crashedView.record.id],
+  ['context', contextView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
@@ -665,6 +808,7 @@ const fixtureActions: Omit<OraActions, AccountActionName> = {
   decideApproval: () => Promise.resolve(),
   answerQuestions: () => Promise.resolve(),
   resumeSession: () => Promise.resolve(),
+  readCompaction: () => Promise.resolve(compactionDocument),
   dismissError: () => undefined,
 };
 

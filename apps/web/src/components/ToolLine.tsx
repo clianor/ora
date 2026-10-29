@@ -3,26 +3,28 @@ import {
   CirclePause,
   FilePen,
   FileText,
+  History,
   LoaderCircle,
   Search,
   Terminal,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
-import type { ToolResultView } from '../events.ts';
+import { readToolTarget, toolVerbs, type ToolResultView } from '../events.ts';
 import { DiffStat } from '../ui/stat.tsx';
 import { DiffBlock, type DiffRow } from './DiffBlock.tsx';
 
-const toolStyles: Record<string, { verb: string; icon: LucideIcon }> = {
-  read: { verb: '읽기', icon: FileText },
-  edit: { verb: '수정', icon: FilePen },
-  search: { verb: '검색', icon: Search },
-  bash: { verb: '실행', icon: Terminal },
-  file_read: { verb: '읽기', icon: FileText },
-  file_edit: { verb: '수정', icon: FilePen },
-  file_write: { verb: '쓰기', icon: FilePen },
-  shell: { verb: '실행', icon: Terminal },
-  'verify.run': { verb: '검증', icon: Terminal },
+const toolIcons: Record<string, LucideIcon> = {
+  read: FileText,
+  edit: FilePen,
+  search: Search,
+  bash: Terminal,
+  file_read: FileText,
+  file_edit: FilePen,
+  file_write: FilePen,
+  shell: Terminal,
+  'verify.run': Terminal,
+  'history.read': History,
 };
 
 const shellTools = new Set(['bash', 'shell', 'verify.run']);
@@ -54,8 +56,8 @@ function readResult(value: unknown): ToolResultView | null {
 
 /** 도구 호출을 높이 28px 한 줄로 보여 줍니다. 수정이면 diff 블록을 바로 아래에 놓습니다. */
 export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
-  const style = toolStyles[toolName] ?? { verb: toolName, icon: Terminal };
-  const Icon = style.icon;
+  const verb = toolVerbs[toolName] ?? toolName;
+  const Icon = toolIcons[toolName] ?? Terminal;
   const input = args as Record<string, unknown>;
   const diffRows = readDiffRows(input.diff);
   const oldText = readText(input.oldText);
@@ -67,11 +69,7 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
           ...oldText.split('\n').map((text) => ['', '-', text] as const),
           ...newText.split('\n').map((text) => ['', '+', text] as const),
         ];
-  const target =
-    readText(input.path) ||
-    readText(input.command) ||
-    readText(input.pattern) ||
-    readText(input.intent);
+  const target = readText(input.label) || readToolTarget(input);
   const add = typeof input.add === 'number' ? input.add : rows.filter((r) => r[1] === '+').length;
   const del = typeof input.del === 'number' ? input.del : rows.filter((r) => r[1] === '-').length;
   const outcome = readResult(result);
@@ -82,7 +80,7 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
       <div className="flex h-7 items-center gap-2">
         <Icon aria-hidden className="size-[15px] shrink-0 text-foreground-subtle" />
         <span className="shrink-0 text-[13px] leading-[18px] font-medium text-foreground-muted">
-          {style.verb}
+          {verb}
         </span>
         <span className="min-w-0 truncate font-mono text-[13px] leading-[18px] text-foreground-muted">
           {target}

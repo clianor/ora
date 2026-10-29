@@ -12,6 +12,7 @@ import type {
 } from '@ora/protocol';
 import type { ThreadData } from './events.ts';
 import type { CacheView } from './lib/cache.ts';
+import type { ContextView } from './lib/context.ts';
 
 /** 입력창 칩에 적는 글자입니다. 서버가 주지 않는 값은 비워 두고, 비어 있으면 칩을 그리지 않습니다. */
 export interface ComposerChips {
@@ -76,6 +77,8 @@ export interface SessionView {
   statusLine: string[];
   /** 프롬프트 캐시 적중 정보입니다. 계산할 수 없으면 null이고 상태 표시줄에서 숨깁니다. */
   cache: CacheView | null;
+  /** 컨텍스트 사용 정보입니다. 창 크기를 모르거나 스텝 요청이 없으면 null이고 상태 표시줄에서 숨깁니다. */
+  context: ContextView | null;
   chips?: ComposerChips;
   placeholder?: string;
   initialSearch?: { query: string };
@@ -106,6 +109,8 @@ export interface OraActions {
     answers: QuestionAnswer[],
   ) => Promise<void>;
   resumeSession: (sessionId: string) => Promise<void>;
+  /** 압축 요약 파일의 본문을 서버에서 읽습니다. `path`는 이벤트가 가리킨 세션 디렉터리 기준 경로입니다. */
+  readCompaction: (sessionId: string, path: string) => Promise<string>;
   /** 계정 목록과 진행 중인 로그인을 서버에서 다시 읽습니다. */
   refreshAccounts: () => Promise<void>;
   /** 로그인을 시작하고 서버가 돌려준 상태(로그인 주소나 디바이스 코드)를 줍니다. 실패하면 거부합니다. */

@@ -60,6 +60,13 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
   const isCrashed = record.status === 'crashed';
   const resumeTodo = view.todos.find((todo) => todo.status === 'interrupted');
   const lastVerified = view.todos.findLast((todo) => todo.status === 'verified');
+  // 컨텍스트 창을 넘어 멈췄을 때는 별도 카드 없이 기존 오류 줄에 session_end의 요약 문구를 보여 줍니다.
+  const lastEnd = view.events.findLast((event) => event.type === 'session_end');
+  const overflowText =
+    !isRunning && lastEnd?.payload.endReason === 'context_overflow'
+      ? lastEnd.payload.summary
+      : null;
+  const errorText = view.error ?? overflowText;
   const approval = view.approvals[0];
   const question = view.questions[0];
 
@@ -120,21 +127,23 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
             )}
           </ThreadView>
           <div className="flex flex-col items-center pb-3">
-            {view.error && (
+            {errorText && (
               <div
                 role="alert"
                 className="mb-2 flex w-[720px] max-w-full items-start gap-2 rounded-md bg-danger-subtle px-3 py-2 text-xs leading-[18px] text-danger"
               >
-                <p className="flex-1">{view.error}</p>
-                <button
-                  type="button"
-                  aria-label="오류 닫기"
-                  onClick={() => {
-                    actions.dismissError(sessionId);
-                  }}
-                >
-                  <X aria-hidden className="size-3.5" />
-                </button>
+                <p className="flex-1">{errorText}</p>
+                {view.error && (
+                  <button
+                    type="button"
+                    aria-label="오류 닫기"
+                    onClick={() => {
+                      actions.dismissError(sessionId);
+                    }}
+                  >
+                    <X aria-hidden className="size-3.5" />
+                  </button>
+                )}
               </div>
             )}
             <Composer
@@ -146,7 +155,7 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
                 runAction(actions.cancelRun(sessionId, view.isStopping ? 'hard' : 'soft'));
               }}
             />
-            <StatusLine items={view.statusLine} cache={view.cache} />
+            <StatusLine items={view.statusLine} context={view.context} cache={view.cache} />
           </div>
         </ChatProvider>
       </main>

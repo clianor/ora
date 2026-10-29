@@ -13,8 +13,11 @@ import { useEffect, type ReactNode } from 'react';
 import type { ComposerChips, SessionView } from '../model.ts';
 import { cn } from '../lib/cn.ts';
 import type { CacheView } from '../lib/cache.ts';
+import type { ContextView } from '../lib/context.ts';
 import { MarkdownText } from './Markdown.tsx';
 import { CacheStat } from './CacheStat.tsx';
+import { CompactionMark } from './CompactionMark.tsx';
+import { ContextStat } from './ContextStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
 
 interface ChatProviderProps {
@@ -90,7 +93,7 @@ function AssistantMessage() {
           Text: MarkdownText,
           tools: { Fallback: ToolLine },
           ToolGroup,
-          data: { Fallback: WarningNote },
+          data: { by_name: { compaction: CompactionMark }, Fallback: WarningNote },
         }}
       />
     </MessagePrimitive.Root>
@@ -199,16 +202,19 @@ export function Composer({
   );
 }
 
-/** 입력창 바로 아래의 한 줄입니다. 스텝 수, 사용 모델, 격리 옵션, 캐시 적중을 가운뎃점으로 나눕니다. */
+/** 입력창 바로 아래의 한 줄입니다. 스텝 수, 사용 모델, 격리 옵션, 컨텍스트 사용, 캐시 적중을 가운뎃점으로 나눕니다. */
 export function StatusLine({
   items,
+  context,
   cache,
 }: {
   items: readonly string[];
+  context?: ContextView | null;
   cache?: CacheView | null;
 }) {
   const parts: ReactNode[] = [
     ...items,
+    ...(context ? [<ContextStat key="context" context={context} />] : []),
     ...(cache ? [<CacheStat key="cache" cache={cache} />] : []),
   ];
   return (

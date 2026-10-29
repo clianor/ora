@@ -65,10 +65,20 @@ export const sessionDetailResponseSchema = z.strictObject({
   live: z.boolean(),
   /** 이 서버 설정의 최대 스텝 수다. session.json에는 없는 값이라 여기서 알려 준다. */
   maxSteps: z.number().int().positive(),
+  /** 세션 모델의 컨텍스트 창 크기(토큰)다. 모르면 없다. */
+  contextWindow: z.number().int().positive().optional(),
+  /** 입력이 창 × 이 값에 닿으면 압축한다 (`context.compactAtRatio`). */
+  compactAtRatio: z.number().gt(0).lte(1),
+  /** 압축해도 원문으로 남기는 최근 토큰 수다 (`context.keepRecentTokens`). */
+  keepRecentTokens: z.number().int().positive(),
   pendingApprovals: z.array(pendingApprovalSchema),
   pendingQuestions: z.array(pendingQuestionSchema),
 });
 export type SessionDetailResponse = z.infer<typeof sessionDetailResponseSchema>;
+
+/** `GET /api/sessions/:id/compaction?path=`의 응답이다. 압축 요약 파일 본문이다. */
+export const compactionFileResponseSchema = z.strictObject({ text: z.string() });
+export type CompactionFileResponse = z.infer<typeof compactionFileResponseSchema>;
 
 export const okResponseSchema = z.strictObject({ ok: z.literal(true) });
 export type OkResponse = z.infer<typeof okResponseSchema>;

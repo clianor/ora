@@ -204,6 +204,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       path: z.string().min(1).optional(),
       /** 이 이벤트가 자리표시로 바꾼 도구 호출 ID다. */
       prunedCallIds: z.array(z.string().min(1)).default([]),
+      /** `prune`과 `shake`가 줄인 어림 토큰 수다. 이전 기록에는 없다. */
+      savedTokens: z.number().int().nonnegative().optional(),
     }),
   ),
   // 재개할 때 모델 컨텍스트에서 뺀 seq 범위다. transcript 파일에는 그대로 남는다.

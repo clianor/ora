@@ -871,6 +871,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     method: 'prune' | 'shake',
     touched: readonly number[],
     callIds: readonly string[],
+    tokensBefore: number,
     toSeq?: number,
   ) => {
     const seqs = touched.map((index) => historySeqs[index] ?? 1);
@@ -881,6 +882,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         fromSeq: Math.min(...seqs),
         toSeq: toSeq ?? Math.max(...seqs),
         prunedCallIds: [...callIds],
+        savedTokens: Math.max(0, tokensBefore - estimateTokens(history)),
       },
     });
     knownTokens = undefined;
@@ -924,9 +926,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   const runShake = async (): Promise<boolean> => {
     const upToSeq = shakeBoundarySeq(history, historySeqs, settings.keepRecentTokens);
     if (upToSeq === undefined) return false;
+    const tokensBefore = estimateTokens(history);
     const { touched, callIds } = shakeMessages(history, historySeqs, upToSeq, firstEligible());
     if (touched.length === 0) return false;
-    await recordRewrite('shake', touched, callIds, upToSeq);
+    await recordRewrite('shake', touched, callIds, tokensBefore, upToSeq);
     return true;
   };
   const runHandoff = async (
@@ -1114,9 +1117,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         let estimate = estimateInput();
         if (estimate >= threshold) {
           const pruneIds = planPrune(history, settings.protectToolTokens, settings.minPruneSavings);
+          const tokensBefore = estimateTokens(history);
           const pruned = pruneIds.length === 0 ? [] : applyPrune(history, new Set(pruneIds));
           if (pruned.length > 0) {
-            await recordRewrite('prune', pruned, pruneIds);
+            await recordRewrite('prune', pruned, pruneIds, tokensBefore);
             estimate = estimateInput();
           }
         }
@@ -1145,9 +1149,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
               block.type === 'tool_result' ? [block.callId] : [],
             );
             if (estimate > window && lastIds.length > 0) {
+              const tokensBefore = estimateTokens(history);
               const touched = applyPrune(history, new Set(lastIds));
               if (touched.length > 0) {
-                await recordRewrite('prune', touched, lastIds);
+                await recordRewrite('prune', touched, lastIds, tokensBefore);
                 estimate = estimateInput();
               }
             }

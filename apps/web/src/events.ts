@@ -1,5 +1,6 @@
 import { stageSchema, type OraEvent, type Stage } from '@ora/protocol';
 import type { ThreadMessageLike } from '@assistant-ui/react';
+import { getStepRange, type StepRange } from './lib/context.ts';
 
 type MessageContent = Exclude<ThreadMessageLike['content'], string>;
 type ToolPart = Extract<MessageContent[number], { type: 'tool-call' }>;
@@ -10,6 +11,41 @@ export const stages: readonly Stage[] = stageSchema.options;
 export interface ToolResultView {
   status: 'ok' | 'error' | 'aborted' | 'timeout';
   summary: string;
+}
+
+/** 도구 호출 줄의 동사입니다. 목록에 없는 도구는 이름을 그대로 적습니다. */
+export const toolVerbs: Record<string, string> = {
+  read: '읽기',
+  edit: '수정',
+  search: '검색',
+  bash: '실행',
+  file_read: '읽기',
+  file_edit: '수정',
+  file_write: '쓰기',
+  shell: '실행',
+  'verify.run': '검증',
+  'history.read': '원문 보기',
+};
+
+/** 도구 호출 줄의 대상 글자입니다. 경로, 명령, 패턴, 의도 순으로 처음 있는 값을 씁니다. */
+export function readToolTarget(args: Record<string, unknown>): string {
+  for (const key of ['path', 'command', 'pattern', 'intent']) {
+    const value = args[key];
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return '';
+}
+
+/** 압축 이벤트가 대화에 남기는 표시입니다. 가지치기는 생략한 호출의 도구 이름과 대상을 목록으로 갖습니다. */
+export interface CompactionMarkData {
+  sessionId: string;
+  ts: string;
+  method: Extract<OraEvent, { type: 'compaction' }>['payload']['method'];
+  /** 압축이 바꾼 스텝 범위입니다. 스텝을 알 수 없으면 null입니다. */
+  range: StepRange | null;
+  path?: string;
+  count: number;
+  items: { tool: string; target: string }[];
 }
 
 /** 상태를 헤더와 할 일 패널이 이미 보여 주는 제어 도구입니다. 실패했을 때만 줄로 보입니다. */
@@ -64,6 +100,26 @@ export function buildThread(
     }
   }
 
+  const calls = new Map<string, { tool: string; target: string }>();
+  for (const event of events) {
+    if (event.type === 'tool_call') {
+      calls.set(event.payload.callId, {
+        tool: event.payload.tool,
+        target: readToolTarget(event.payload.args),
+      });
+    }
+  }
+  /** `history.read`가 가리키는 원문의 이름입니다. 호출 ID면 그 호출의 대상과 동사, 범위면 seq 범위입니다. */
+  const describeHistoryRead = (args: Record<string, unknown>): string => {
+    if (typeof args.callId === 'string') {
+      const call = calls.get(args.callId);
+      return call
+        ? `${call.target} ${toolVerbs[call.tool] ?? call.tool} 결과`.trim()
+        : `호출 ${args.callId}`;
+    }
+    return `seq ${String(args.fromSeq)}~${String(args.toSeq)}`;
+  };
+
   const messages: ThreadMessageLike[] = [];
   const assistantContent: MessageContent[number][] = [];
   const flushAssistant = () => {
@@ -100,6 +156,21 @@ export function buildThread(
       messages.push({ role: 'user', content: [{ type: 'text', text }] });
     } else if (event.type === 'permission' && event.payload.warning) {
       assistantContent.push({ type: 'data-warning', data: { text: event.payload.warning } });
+    } else if (event.type === 'compaction') {
+      const { method, fromSeq, toSeq, path, prunedCallIds } = event.payload;
+      const data: CompactionMarkData = {
+        sessionId: event.sessionId,
+        ts: event.ts,
+        method,
+        range: getStepRange(events, fromSeq, toSeq),
+        ...(path === undefined ? {} : { path }),
+        count: prunedCallIds.length,
+        items: prunedCallIds.flatMap((callId) => {
+          const call = calls.get(callId);
+          return call ? [call] : [];
+        }),
+      };
+      assistantContent.push({ type: 'data-compaction', data });
     } else if (event.type === 'tool_call' && !waitingCallIds.has(event.payload.callId)) {
       const { callId, tool, args } = event.payload;
       if (controlTools.has(tool) && (results.get(callId)?.status ?? 'ok') === 'ok') continue;
@@ -107,7 +178,9 @@ export function buildThread(
         type: 'tool-call',
         toolCallId: callId,
         toolName: tool,
-        args: args as JsonObject,
+        args: (tool === 'history.read'
+          ? { ...args, label: describeHistoryRead(args) }
+          : args) as JsonObject,
         result: results.get(callId),
       });
     }

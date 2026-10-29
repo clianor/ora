@@ -3,8 +3,9 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
+import { createCatalog } from '@ora/adapters';
 import {
   answerBodySchema,
   approvalBodySchema,
@@ -184,6 +185,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     );
   }
   const sessionsDir = resolveSessionsDir(config, oraHome);
+  const catalogOf = createCatalog(config.models);
   const token = randomBytes(32).toString('hex');
   const webRoot = options.webDir === undefined ? undefined : resolve(options.webDir);
   const modelArgs =
@@ -541,11 +543,20 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       const session = await readSessionRecord(sessionDir).catch(() => undefined);
       if (session === undefined) throw new HttpError(404, `세션이 없습니다: ${id}`);
       const entry = live.get(id);
+      const modelId = session.models[0]?.model;
+      // 모델 스크립트 세션은 창 크기를 스크립트가 정하므로 알 수 없다. 카탈로그에 없는 실제 모델은 실행 때와 같은 200k를 쓴다.
+      const contextWindow =
+        modelId === undefined || options.modelScriptPath !== undefined
+          ? undefined
+          : (catalogOf(modelId)?.contextWindow ?? 200_000);
       const detail: SessionDetailResponse = {
         session,
         todos: await readTodos(sessionDir),
         live: entry !== undefined,
         maxSteps: config.limits.maxSteps,
+        ...(contextWindow === undefined ? {} : { contextWindow }),
+        compactAtRatio: config.context.compactAtRatio,
+        keepRecentTokens: config.context.keepRecentTokens,
         pendingApprovals: [...(entry?.approvals ?? [])].map(
           ([requestId, request]): PendingApproval => ({ requestId, request }),
         ),
@@ -554,6 +565,23 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         ),
       };
       reply(res, 200, detail);
+      return;
+    }
+    if (action === 'compaction' && method === 'GET') {
+      const ref = url.searchParams.get('path') ?? '';
+      // 요약 파일은 세션 디렉터리의 compactions/<번호>.md 뿐이다. 심볼릭 링크로 밖을 가리켜도 거부한다.
+      if (!/^compactions\/\d+\.md$/.test(ref))
+        throw new HttpError(400, '요약 파일 경로가 아닙니다.');
+      const file = resolve(sessionDir, ref);
+      const [realFile, realDir] = await Promise.all([
+        realpath(file).catch(() => undefined),
+        realpath(sessionDir).catch(() => undefined),
+      ]);
+      if (realFile === undefined || realDir === undefined)
+        throw new HttpError(404, '요약 파일이 없습니다.');
+      if (!realFile.startsWith(realDir + sep))
+        throw new HttpError(400, '세션 디렉터리 밖의 경로입니다.');
+      reply(res, 200, { text: await readFile(realFile, 'utf8') });
       return;
     }
     if (action === 'events' && method === 'GET') {
