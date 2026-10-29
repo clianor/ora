@@ -847,10 +847,15 @@ function firstText(input: { messages: unknown[] } | undefined): unknown {
 }
 
 /** 검증이 실패한 증거를 남기고, 입력 토큰이 창의 80%를 넘었다고 보고하는 응답 뒤에 요약 응답을 둔다. */
-function compactionResponses(summary: string | { content: Block[] }, tail: { content: Block[] }[]) {
+function compactionResponses(
+  summary: string | { content: Block[] },
+  tail: { content: Block[] }[],
+  extra: { content: Block[] }[] = [],
+) {
   return [
     ...setupResponses,
     ...repairResponses('f', 'a - b', 'a * b', true),
+    ...extra,
     {
       ...respond(use('big', 'file_read', { path: 'foo.js' })),
       usage: {
@@ -926,9 +931,20 @@ test(
     const project = createProject();
     await startCompactionRun(
       project,
-      compactionResponses('ZZ-결정: 덧셈으로 고친다.', [
-        respond(use('s1', 'shell', { command: 'echo done' })),
-      ]),
+      compactionResponses(
+        'ZZ-결정: 덧셈으로 고친다.',
+        [respond(use('s1', 'shell', { command: 'echo done' }))],
+        [
+          respond(
+            use('b1', 'todo.update', {
+              todos: [
+                { id: 't2', content: '막힌 작업', phase: '수정' },
+                { id: 't2', status: 'blocked', reason: '환경이 없음' },
+              ],
+            }),
+          ),
+        ],
+      ),
     ).done;
 
     const { dir, events, todos } = readSession(project);
@@ -952,6 +968,7 @@ test(
       '세션 목표: 파일 수정',
       '작업 중인 todo: t1',
       '1. 수정 (완료 조건: check.js 통과)',
+      '막힘 사유: 환경이 없음',
     ]) {
       expect(summary).toContain(fact);
     }
@@ -1532,6 +1549,53 @@ test(
     const context = JSON.stringify(first?.messages);
     expect(context).toContain('목표: 파일 수정');
     expect(context).toContain('(수정) foo.js의 add를 고친다 ← 작업 중');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'verified todo의 phase를 바꾸려는 항목만 거부하고 같은 호출의 정상 항목은 반영한다',
+  async () => {
+    const project = createProject();
+    await runCli(
+      project,
+      [
+        respond(use('p1', 'todo.update', { todos: [todoSpec('t1', 'A'), todoSpec('t2', 'A')] })),
+        respond(
+          use('p2', 'todo.update', { todos: [{ id: 't1', status: 'attempted' }] }),
+          use('p3', 'verify.run', { todoId: 't1' }),
+        ),
+        respond(
+          use('p4', 'todo.update', {
+            todos: [
+              { id: 't1', phase: 'B' },
+              { id: 't2', content: '정상 항목은 반영한다' },
+            ],
+          }),
+        ),
+        respond(
+          use('p5', 'todo.update', {
+            todos: [{ id: 't2', status: 'blocked', reason: '환경이 없음' }],
+          }),
+        ),
+      ],
+      ['--permission', 'bypass-permissions'],
+    );
+
+    const { events, todos } = readSession(project);
+    const rejected = events.flatMap((event) =>
+      event.type === 'todo_update' && event.payload.rejected !== undefined
+        ? [event.payload.todoId]
+        : [],
+    );
+    expect(rejected).toEqual(['t1']);
+    expect(todos.find((todo) => todo.id === 't1')).toMatchObject({
+      phase: 'A',
+      status: 'verified',
+    });
+    expect(todos.find((todo) => todo.id === 't2')).toMatchObject({
+      content: '정상 항목은 반영한다',
+    });
   },
   TEST_TIMEOUT_MS,
 );
