@@ -836,3 +836,193 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+const COMPACTION_WINDOW = 20_000;
+function firstText(input: { messages: unknown[] } | undefined): unknown {
+  const [message] = (input?.messages ?? []) as { content: { text?: string }[] }[];
+  return message?.content[0]?.text;
+}
+
+/** 검증이 실패한 증거를 남기고, 입력 토큰이 창의 80%를 넘었다고 보고하는 응답 뒤에 요약 응답을 둔다. */
+function compactionResponses(summary: string, tail: { content: Block[] }[]) {
+  return [
+    ...setupResponses,
+    ...repairResponses('f', 'a - b', 'a * b', true),
+    {
+      ...respond(use('big', 'file_read', { path: 'foo.js' })),
+      usage: {
+        uncachedInputTokens: 17_000,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        outputTokens: 0,
+      },
+    },
+    respond({ type: 'text', text: summary }),
+    ...tail,
+  ];
+}
+
+function startCompactionRun(project: Project, responses: { content: Block[] }[]): RunningCli {
+  const scriptPath = join(project.home, 'first.json');
+  writeFileSync(scriptPath, JSON.stringify({ responses, contextWindow: COMPACTION_WINDOW }));
+  const configPath = join(project.home, 'engine.config.json');
+  writeFileSync(
+    configPath,
+    JSON.stringify({ schemaVersion: 1, context: { compactAtRatio: 0.8, keepRecentSteps: 1 } }),
+  );
+  return startCli(project, [
+    'run',
+    '파일을 고친다',
+    '--model-script',
+    scriptPath,
+    '--record-model-input',
+    join(project.home, 'first-input.jsonl'),
+    '--permission',
+    'bypass-permissions',
+    '--config',
+    configPath,
+  ]);
+}
+
+function readModelInputs(
+  project: Project,
+  name: string,
+): { system: string; messages: unknown[] }[] {
+  return readFileSync(join(project.home, `${name}-input.jsonl`), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { system: string; messages: unknown[] });
+}
+
+test(
+  '입력이 창의 80%에 닿으면 요약 파일을 만들고, 요약 모델이 빼먹은 todo·증거·사용자 지시도 요약에 넣으며, 이후 요청은 요약과 최근 스텝만 담는다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      compactionResponses('ZZ-결정: 덧셈으로 고친다.', [
+        respond(use('s1', 'shell', { command: 'echo done' })),
+      ]),
+    ).done;
+
+    const { dir, events, todos } = readSession(project);
+    const compaction = events.find((event) => event.type === 'compaction');
+    expect(compaction?.payload.path).toBe('compactions/1.md');
+    expect(compaction?.payload.toSeq).toBeGreaterThan(compaction?.payload.fromSeq ?? Infinity);
+    expect(
+      events.filter((event) => event.type === 'model_request' && event.payload.purpose),
+    ).toHaveLength(1);
+
+    const summary = readFileSync(join(dir, 'compactions', '1.md'), 'utf8');
+    expect(summary.match(/^## /gm)).toHaveLength(4);
+    expect(summary).toContain('파일을 고친다');
+    const [todo] = todos as {
+      id: string;
+      status: string;
+      content: string;
+      evidence: { command: string; exitCode: number };
+    }[];
+    for (const fact of [
+      todo?.id,
+      todo?.status,
+      todo?.content,
+      todo?.evidence.command,
+      `${todo?.evidence.exitCode}`,
+      'ZZ-결정',
+    ]) {
+      expect(summary).toContain(fact);
+    }
+    expect(readFileSync(join(dir, 'transcript.jsonl'), 'utf8')).toContain('"callId":"c1"');
+
+    const inputs = readModelInputs(project, 'first');
+    const after = inputs[inputs.findIndex((input) => input.system !== inputs[0]?.system) + 1];
+    expect(after?.system).toBe(inputs[0]?.system);
+    expect(after?.messages).toHaveLength(3);
+    expect(firstText(after)).toBe(summary);
+    const text = JSON.stringify(after?.messages);
+    expect(text).toContain('"callId":"big"');
+    expect(text).not.toContain('"callId":"c1"');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '압축한 뒤에도 입력이 컨텍스트 창을 넘으면 stopped와 context_overflow로 멈춘다',
+  async () => {
+    const project = createProject();
+    const result = await startCompactionRun(
+      project,
+      compactionResponses('x'.repeat(90_000), [finalReport]),
+    ).done;
+    expect(result.code).toBe(1);
+
+    const { events, session } = readSession(project);
+    expect(session).toMatchObject({ status: 'stopped', endReason: 'context_overflow' });
+    expect(events.some((event) => event.type === 'compaction')).toBe(true);
+    const lastRequest = events.findLast((event) => event.type === 'model_request');
+    expect(lastRequest?.payload.purpose).toBe('compaction');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '압축한 세션을 재개하면 요약과 그 뒤 메시지로 컨텍스트를 다시 만든다',
+  async () => {
+    const project = createProject();
+    const running = startCompactionRun(
+      project,
+      compactionResponses('ZZ-결정: 덧셈으로 고친다.', [
+        respond(use('s1', 'shell', { command: 'echo started > started.txt; sleep 2' })),
+      ]),
+    );
+    await waitFor(() => existsSync(startedFile(project)));
+    running.child.kill('SIGINT');
+    expect((await running.done).code).toBe(130);
+
+    await startResume(project, sessionIdOf(project), 'second', [finalReport]).done;
+
+    const [first] = readModelInputs(project, 'second');
+    const summary = readFileSync(join(readSession(project).dir, 'compactions', '1.md'), 'utf8');
+    expect(firstText(first)).toBe(summary);
+    const text = JSON.stringify(first?.messages);
+    expect(text).toContain('"callId":"big"');
+    expect(text).not.toContain('"callId":"c1"');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '압축 요약 파일을 읽지 못하면 원본 메시지로 재개하고 폴백을 기록하며, 재개 조향은 지시 원문만 남긴다',
+  async () => {
+    const project = createProject();
+    const running = startCompactionRun(
+      project,
+      compactionResponses('ZZ-결정: 덧셈으로 고친다.', [
+        respond(use('s1', 'shell', { command: 'echo started > started.txt; sleep 2' })),
+      ]),
+    );
+    await waitFor(() => existsSync(startedFile(project)));
+    running.child.kill('SIGINT');
+    expect((await running.done).code).toBe(130);
+    rmSync(join(readSession(project).dir, 'compactions', '1.md'));
+
+    await startResume(
+      project,
+      sessionIdOf(project),
+      'second',
+      [finalReport],
+      ['--steer', '덧셈만 쓴다'],
+    ).done;
+
+    const { events } = readSession(project);
+    const resumed = events.findLast((event) => event.type === 'resume');
+    expect(resumed?.payload.summaryFallback).toEqual({ missing: ['compactions/1.md'] });
+    const [first] = readModelInputs(project, 'second');
+    expect(JSON.stringify(first?.messages)).toContain('"callId":"c1"');
+    const steered = events.findLast(
+      (event) => event.type === 'message' && event.payload.instructions?.includes('덧셈만 쓴다'),
+    );
+    expect(steered?.type === 'message' && steered.payload.instructions).toEqual(['덧셈만 쓴다']);
+  },
+  TEST_TIMEOUT_MS,
+);

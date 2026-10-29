@@ -17,6 +17,7 @@ const scriptSchema = z.object({
         .optional(),
     }),
   ),
+  contextWindow: z.number().int().positive().optional(),
 });
 
 /**
@@ -30,6 +31,7 @@ export async function loadScriptedModel(
   const script = scriptSchema.parse(JSON.parse(await readFile(scriptPath, 'utf8')));
   let next = 0;
   return {
+    ...(script.contextWindow === undefined ? {} : { contextWindow: script.contextWindow }),
     model: 'fake/scripted',
     adapter: 'fake',
     async *stream(request): AsyncGenerator<ModelStreamEvent> {

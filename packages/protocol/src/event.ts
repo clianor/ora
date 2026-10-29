@@ -92,6 +92,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       role: z.enum(['user', 'assistant']),
       content: z.array(contentBlockSchema),
       providerMetadata: jsonObjectSchema.optional(),
+      /** 이 메시지가 담은 사용자 지시 원문이다(최초 요청, 승인 거부 때의 조향, 재개 조향). 알림문이나 todo 목록은 넣지 않는다. 압축 요약의 "사용자 지시"는 이 필드만 읽는다. */
+      instructions: z.array(z.string()).optional(),
     }),
   ),
   defineEvent(
@@ -108,6 +110,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
         outputTokens: z.number().int().nonnegative(),
       }),
       durationMs: z.number().int().nonnegative(),
+      /** 요약 요청이면 `compaction`이다. 스텝 요청에는 없다. 엔진은 이 값이 있는 요청을 입력 토큰 어림의 기준으로 쓰지 않는다. */
+      purpose: z.literal('compaction').optional(),
     }),
   ),
   defineEvent('intent', z.strictObject({ text: z.string().min(1) })),
@@ -188,6 +192,16 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       afterSeq: z.number().int().nonnegative(),
     }),
   ),
+  // 컨텍스트 압축 결과다 (SPEC 4.3절). message 이벤트 중 seq가 첫 message부터 `toSeq`까지인 것을 `path`의 요약이 대신한다.
+  // transcript 파일의 원본 이벤트는 그대로 남고, 재개는 마지막 compaction 이벤트의 요약과 그 뒤의 message로 컨텍스트를 만든다.
+  defineEvent(
+    'compaction',
+    z.strictObject({
+      fromSeq: z.number().int().positive(),
+      toSeq: z.number().int().positive(),
+      path: z.string().min(1),
+    }),
+  ),
   // 재개할 때 모델 컨텍스트에서 뺀 seq 범위다. transcript 파일에는 그대로 남는다.
   defineEvent(
     'context_trim',
@@ -204,6 +218,10 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       hardKilled: z.boolean(),
       steered: z.boolean(),
       resumePointTodoId: z.string().min(1).optional(),
+      /** 마지막 압축 요약 파일을 읽지 못해 이전 요약이나 원본 메시지로 컨텍스트를 다시 만들었다는 기록이다. `usedPath`가 없으면 원본 메시지를 썼다. */
+      summaryFallback: z
+        .strictObject({ missing: z.array(z.string()).min(1), usedPath: z.string().optional() })
+        .optional(),
     }),
   ),
   defineEvent(

@@ -90,6 +90,8 @@ export function buildClaudeEnv(env: NodeJS.ProcessEnv, cacheTtl: '5m' | '1h'): N
     ...Object.fromEntries(Object.entries(env).filter(([name]) => ENV_ALLOWLIST.includes(name))),
     CLAUDE_CODE_PROMPT_CACHE_TTL: cacheTtl,
     CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+    // 압축은 엔진이 한다 (SPEC 4.3절). Claude Code 자체 압축은 끈다.
+    DISABLE_AUTO_COMPACT: '1',
     CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1',
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   };

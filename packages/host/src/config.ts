@@ -95,6 +95,13 @@ const configSchema = z.object({
   recall: z
     .object({ tokenBudget: z.number().int().nonnegative().default(2000) })
     .default({ tokenBudget: 2000 }),
+  /** 컨텍스트 압축 설정이다 (SPEC 4.3절). 요약 모델은 세션 모델이고, `roles.compaction`은 아직 구현하지 않았다. */
+  context: z
+    .object({
+      compactAtRatio: z.number().gt(0).lte(1).default(0.8),
+      keepRecentSteps: z.number().int().positive().default(10),
+    })
+    .default({ compactAtRatio: 0.8, keepRecentSteps: 10 }),
   /** 모델 카탈로그다. 같은 id는 내장 항목(`claude-haiku-5-5` 등)을 덮어쓰고, 다른 id는 모델을 늘린다. */
   models: z.array(catalogModelSchema).default([]),
 });

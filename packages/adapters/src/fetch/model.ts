@@ -110,6 +110,7 @@ export function createFetchModel(options: FetchModelOptions): ModelPort {
   return {
     model: catalog.id,
     adapter: `${catalog.provider}-fetch`,
+    contextWindow: catalog.contextWindow,
     accountPin: () =>
       pinned === undefined || lastUsedAt === undefined
         ? undefined

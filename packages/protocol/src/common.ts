@@ -25,6 +25,7 @@ export const endReasonSchema = z.enum([
   'passed',
   'max_steps',
   'no_progress',
+  'context_overflow',
   'cost_limit',
   'error',
   'user_cancel',

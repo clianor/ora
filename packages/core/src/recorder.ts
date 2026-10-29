@@ -16,6 +16,8 @@ export interface Recorder {
   emit(actor: Actor, draft: EventDraft, stepId?: string): Promise<void>;
   /** 이벤트 필드에서 마스킹한 패턴별 횟수의 누적이다. */
   scrubbedHits(): Readonly<ScrubHits>;
+  /** 마지막으로 붙인 seq다. */
+  lastSeq(): number;
 }
 
 /** seq는 `lastSeq` 다음 번호부터 호출 순서대로 붙이고, 디스크 쓰기는 한 번에 하나씩 이어서 한다. 쓰기 전에 모든 문자열을 스크럽한다. */
@@ -43,5 +45,6 @@ export function createRecorder(
       return tail;
     },
     scrubbedHits: () => hits,
+    lastSeq: () => seq,
   };
 }

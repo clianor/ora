@@ -38,6 +38,14 @@ import type { TranscriptSink } from './ports/transcript-sink.ts';
 import type { WorkspacePort } from './ports/workspace.ts';
 import { assembleSystemPrompt, describeTodos } from './prompt.ts';
 import { createRecorder } from './recorder.ts';
+import {
+  SUMMARY_SYSTEM,
+  buildSummaryDocument,
+  estimateTokens,
+  findCut,
+  renderForSummary,
+  summaryMessage,
+} from './compaction.ts';
 import { appendMessage } from './recovery.ts';
 import type { ResumePlan } from './recovery.ts';
 import { describeScrubHits, mergeScrubHits, scrubText, scrubValue } from './scrub.ts';
@@ -56,6 +64,11 @@ export interface EngineSettings {
   readonly noProgressSteps: number;
   readonly shellTimeoutMs: number;
   readonly recallTokenBudget: number;
+  /** 입력 토큰이 `contextWindow × compactAtRatio`에 닿으면 압축한다. */
+  readonly compactAtRatio: number;
+  readonly keepRecentSteps: number;
+  /** 모델 컨텍스트 창이다. 모르면 비워 두고, 그러면 압축도 넘침 검사도 하지 않는다. */
+  readonly contextWindow?: number;
 }
 
 export interface EngineDeps {
@@ -112,6 +125,8 @@ interface ToolCall {
 interface CallResult {
   readonly text: string;
   readonly isError: boolean;
+  /** `tool_result` 이벤트에 적은 요약이다. 재개가 같은 값을 읽는다. */
+  readonly summary: string;
 }
 
 interface ControlOutput extends ToolOutput {
@@ -231,6 +246,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   };
   const saveTodos = () => store.saveTodos(scrubValue([...todos.values()]));
 
+  let taskSeq = 0;
   if (resume === undefined) {
     await emit('engine', {
       type: 'session_start',
@@ -250,8 +266,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     await saveSession({ status: 'running' });
     await emit('user', {
       type: 'message',
-      payload: { role: 'user', content: [{ type: 'text', text: input.task }] },
+      payload: {
+        role: 'user',
+        content: [{ type: 'text', text: input.task }],
+        instructions: [input.task],
+      },
     });
+    taskSeq = recorder.lastSeq();
     await emit('engine', { type: 'stage', payload: { outcome: 'entered', stage } });
   }
 
@@ -423,6 +444,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       await record('denied');
       await restoreRunning();
       const steer = decision.steer === undefined ? '' : ` 사용자 지시: ${decision.steer}`;
+      if (decision.steer !== undefined) pendingSteers.push(scrubText(decision.steer).text);
       return { denied: `사용자가 ${call.tool} 호출을 거부했습니다.${steer}` };
     }
     const edited =
@@ -689,7 +711,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         },
       });
       const refNote = outputRef === undefined ? '' : `\n[전체 출력: ${outputRef}]`;
-      return { text: scrubbed.text + refNote, isError: output.status !== 'ok' };
+      return {
+        text: scrubbed.text + refNote,
+        isError: output.status !== 'ok',
+        summary: scrubbed.text.slice(0, EVENT_SUMMARY_MAX_CHARS) + note,
+      };
     };
 
     if (!control && tool === undefined) {
@@ -734,7 +760,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       type: 'tool_result',
       payload: { callId: call.callId, status: 'aborted', summary: text, durationMs: 0 },
     });
-    return { text, isError: true };
+    return { text, isError: true, summary: text };
   };
 
   const invalidateStaleEvidence = async () => {
@@ -754,10 +780,100 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   const history: ModelMessage[] = resume
     ? [...resume.plan.history]
     : [{ role: 'user', content: [{ type: 'text', text: scrubText(input.task).text }] }];
-  const pushUser = async (actor: 'user' | 'tool' | 'engine', content: ContentBlock[]) => {
+  // `history` 메시지마다 마지막으로 합쳐진 이벤트의 seq다. 압축 범위를 seq로 적는 데 쓴다.
+  const historySeqs: number[] = resume ? [...resume.plan.historySeqs] : [taskSeq];
+  const instructions: string[] = resume
+    ? [...resume.plan.instructions]
+    : [scrubText(input.task).text];
+  const lastResults = new Map<string, { isError: boolean; text: string }>(
+    resume?.plan.openErrors.map((error) => [error.tool, { isError: true, text: error.summary }]),
+  );
+  let hasSummary = resume?.plan.hasSummary ?? false;
+  // 마지막 모델 응답의 입력과 출력 토큰 합계와, 그때 `history` 길이다. 압축 직후에는 비운다.
+  let knownTokens: number | undefined;
+  let knownLength = 0;
+  // 승인 거부 때 사용자가 덧붙인 조향이다. 같은 배치의 도구 결과 메시지에 지시 원문으로 함께 적는다.
+  const pendingSteers: string[] = [];
+  let stepsSinceCompaction = Number.POSITIVE_INFINITY;
+  const estimateInput = () =>
+    knownTokens === undefined
+      ? estimateTokens(system) + estimateTokens(specs) + estimateTokens(history)
+      : knownTokens + estimateTokens(history.slice(knownLength));
+  /** 사용자 지시 원문이 있으면 메시지 `instructions`에 적고, 압축 요약에 넣을 지시 목록에도 더한다. */
+  const pushUser = async (
+    actor: 'user' | 'tool' | 'engine',
+    content: ContentBlock[],
+    userInstructions: string[] = [],
+  ) => {
     const safeContent = scrubValue(content);
+    const before = history.length;
     appendMessage(history, { role: 'user', content: safeContent });
-    await emit(actor, { type: 'message', payload: { role: 'user', content: safeContent } });
+    await emit(actor, {
+      type: 'message',
+      payload: {
+        role: 'user',
+        content: safeContent,
+        ...(userInstructions.length === 0 ? {} : { instructions: userInstructions }),
+      },
+    });
+    instructions.push(...userInstructions);
+    if (history.length > before) historySeqs.push(recorder.lastSeq());
+    else historySeqs[historySeqs.length - 1] = recorder.lastSeq();
+  };
+  /** 최근 스텝 앞의 `cut`개 메시지를 요약 파일로 만들고, 그 자리에 요약 메시지를 넣는다. */
+  const compact = async (cut: number, modelSignal: AbortSignal) => {
+    const started = clock.now().getTime();
+    let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
+    for await (const event of model.stream(
+      {
+        system: SUMMARY_SYSTEM,
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: renderForSummary(history.slice(0, cut)) }],
+          },
+        ],
+        tools: [],
+      },
+      modelSignal,
+    )) {
+      if (event.type === 'completed') completed = event;
+    }
+    if (completed === undefined) throw new Error('요약 모델 스트림이 completed 없이 끝났습니다.');
+    await emit('model', {
+      type: 'model_request',
+      payload: {
+        model: model.model,
+        adapter: model.adapter,
+        chainPosition: 0,
+        nativeToolCalls: completed.nativeToolCalls,
+        usage: completed.usage,
+        durationMs: Math.max(0, clock.now().getTime() - started),
+        purpose: 'compaction',
+      },
+    });
+    const narrative = completed.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n')
+      .trim();
+    const document = scrubText(
+      buildSummaryDocument({
+        instructions,
+        todos: [...todos.values()],
+        openErrors: [...lastResults]
+          .filter(([, result]) => result.isError)
+          .map(([tool, result]) => ({ tool, summary: result.text })),
+        narrative: narrative === '' ? '(요약 모델이 내용을 쓰지 않았습니다.)' : narrative,
+      }),
+    ).text;
+    const fromSeq = historySeqs[0] ?? 1;
+    const toSeq = historySeqs[cut - 1] ?? fromSeq;
+    const path = await store.writeCompaction(document);
+    await emit('engine', { type: 'compaction', payload: { fromSeq, toSeq, path } });
+    history.splice(0, cut, summaryMessage(document));
+    historySeqs.splice(0, cut, fromSeq);
+    hasSummary = true;
+    knownTokens = undefined;
   };
   const isTool = (name: string) => !isControlTool(name) && toolMap.get(name)?.tier === 'read';
 
@@ -777,6 +893,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           ...(plan.resumePointTodoId === undefined
             ? {}
             : { resumePointTodoId: plan.resumePointTodoId }),
+          ...(plan.summaryFallback === undefined ? {} : { summaryFallback: plan.summaryFallback }),
         },
       });
       await saveSession({
@@ -794,13 +911,17 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
               : `마지막으로 검증된 todo는 ${plan.resumePointTodoId}입니다.`
           } 그 뒤의 작업은 파일 상태를 확인한 뒤 이어 갑니다.`
         : '사용자가 작업을 중단했습니다. 중단한 지점부터 이어 갑니다.';
-      await pushUser(resume.steer === undefined ? 'engine' : 'user', [
-        ...plan.repair,
-        {
-          type: 'text',
-          text: `${notice}${resume.steer === undefined ? '' : `\n사용자 지시: ${resume.steer}`}\n${describeTodos([...todos.values()])}\n현재 단계: ${stage}`,
-        },
-      ]);
+      await pushUser(
+        resume.steer === undefined ? 'engine' : 'user',
+        [
+          ...plan.repair,
+          {
+            type: 'text',
+            text: `${notice}${resume.steer === undefined ? '' : `\n사용자 지시: ${resume.steer}`}\n${describeTodos([...todos.values()])}\n현재 단계: ${stage}`,
+          },
+        ],
+        resume.steer === undefined ? [] : [scrubText(resume.steer).text],
+      );
     }
     // 진전은 todo 상태 전진, 수리 시도 증가, 새 todo 추가, 새 검증 증거, 오류 없이 끝난 도구 호출 중 하나다.
     const snapshotProgress = () =>
@@ -861,6 +982,32 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       stepId = `step-${step}`;
       toolSucceeded = false;
 
+      const window = settings.contextWindow;
+      if (window !== undefined) {
+        let compacted = false;
+        if (estimateInput() >= window * settings.compactAtRatio) {
+          const cut = findCut(history, settings.keepRecentSteps);
+          if (
+            cut !== undefined &&
+            cut > (hasSummary ? 1 : 0) &&
+            stepsSinceCompaction >= Math.max(1, settings.keepRecentSteps)
+          ) {
+            await compact(cut, AbortSignal.any([signal, softStop]));
+            stepsSinceCompaction = 0;
+            compacted = true;
+          }
+        }
+        const estimate = estimateInput();
+        if (estimate > window) {
+          return await finish(
+            'stopped',
+            'context_overflow',
+            `입력이 약 ${estimate}토큰으로 컨텍스트 창 ${window}토큰을 넘습니다. ${
+              compacted ? '압축한 뒤에도' : '압축할 범위가 없어'
+            } 넘쳐서 멈춥니다. 앞부분을 자르지 않았습니다.`,
+          );
+        }
+      }
       const started = clock.now().getTime();
       let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
       const modelSignal = AbortSignal.any([signal, softStop]);
@@ -894,6 +1041,14 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             : { providerMetadata: completed.providerMetadata }),
         },
       });
+      historySeqs.push(recorder.lastSeq());
+      knownTokens =
+        completed.usage.uncachedInputTokens +
+        completed.usage.cacheReadInputTokens +
+        completed.usage.cacheCreationInputTokens +
+        completed.usage.outputTokens;
+      knownLength = history.length;
+      stepsSinceCompaction += 1;
       const accountPin = model.accountPin?.();
       if (
         accountPin !== undefined &&
@@ -961,6 +1116,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       await flushReads();
       await invalidateStaleEvidence();
       toolSucceeded = [...results.values()].some((result) => !result.isError);
+      for (const call of calls) {
+        const result = results.get(call.callId);
+        lastResults.set(call.tool, {
+          isError: result?.isError ?? true,
+          text: result?.summary ?? '',
+        });
+      }
 
       const observations: ContentBlock[] = calls.map((call) => {
         const result = results.get(call.callId);
@@ -975,7 +1137,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         type: 'text',
         text: `${describeTodos([...todos.values()])}\n현재 단계: ${stage}`,
       });
-      await pushUser('tool', observations);
+      await pushUser('tool', observations, pendingSteers.splice(0));
     }
   } catch (error) {
     if (signal.aborted || softStop.aborted) return await finishCancelled();

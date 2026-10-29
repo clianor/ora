@@ -9,6 +9,8 @@ import type {
   Todo,
 } from '@ora/protocol';
 import type { ModelMessage } from './ports/model.ts';
+import { summaryMessage } from './compaction.ts';
+import type { OpenError } from './compaction.ts';
 import type { EventDraft } from './recorder.ts';
 
 export class TranscriptCorruptError extends Error {}
@@ -168,6 +170,16 @@ export interface ResumePlan {
   /** 마지막으로 검증 증거가 남은 todo다. */
   readonly resumePointTodoId?: string;
   readonly lastSeq: number;
+  /** `history` 메시지마다 마지막으로 합쳐진 이벤트의 seq다. 요약이 대신하는 첫 메시지는 압축 범위의 시작 seq다. */
+  readonly historySeqs: readonly number[];
+  /** 사용자가 쓴 지시 원문이다(최초 요청과 조향). 압축으로 transcript가 컨텍스트에서 빠져도 전부 남는다. */
+  readonly instructions: readonly string[];
+  /** 도구마다 마지막 결과가 실패인 것이다. */
+  readonly openErrors: readonly OpenError[];
+  /** 마지막 압축 요약을 읽지 못해 되돌아간 기록이다. */
+  readonly summaryFallback?: EventOf<'resume'>['payload']['summaryFallback'];
+  /** 마지막 압축 요약이 `history`의 첫 메시지를 대신한다. */
+  readonly hasSummary: boolean;
 }
 
 const BATCH_EVENT_TYPES: readonly OraEvent['type'][] = [
@@ -187,7 +199,10 @@ const BATCH_EVENT_TYPES: readonly OraEvent['type'][] = [
  * 봉인까지 끝난 transcript에서 재개 계획을 만든다 (SPEC 4.1.3절, 2.9절).
  * 마지막 배치가 전부 실패·중단이면 그 꼬리를 모델 컨텍스트에서 뺀다. 일부라도 성공했으면 결과를 그대로 둔다.
  */
-export function planResume(events: readonly OraEvent[]): ResumePlan {
+export function planResume(
+  events: readonly OraEvent[],
+  readSummary: (path: string) => string | undefined = () => undefined,
+): ResumePlan {
   const lastEnd = events.findLast(
     (event): event is EventOf<'session_end'> => event.type === 'session_end',
   );
@@ -197,8 +212,23 @@ export function planResume(events: readonly OraEvent[]): ResumePlan {
   const trimmedRanges = events.flatMap((event) =>
     event.type === 'context_trim' ? [[event.payload.fromSeq, event.payload.toSeq] as const] : [],
   );
+  // 마지막 압축 요약 파일을 읽지 못하면 이전 압축으로, 그것도 없으면 원본 메시지 전체로 컨텍스트를 만든다.
+  const missing: string[] = [];
+  let compaction: EventOf<'compaction'> | undefined;
+  let summaryText: string | undefined;
+  for (const candidate of events
+    .filter((event): event is EventOf<'compaction'> => event.type === 'compaction')
+    .reverse()) {
+    summaryText = readSummary(candidate.payload.path);
+    if (summaryText !== undefined) {
+      compaction = candidate;
+      break;
+    }
+    missing.push(candidate.payload.path);
+  }
   let messages = events.flatMap((event) =>
     event.type === 'message' &&
+    event.seq > (compaction?.payload.toSeq ?? 0) &&
     !trimmedRanges.some(([from, to]) => event.seq >= from && event.seq <= to)
       ? [{ seq: event.seq, role: event.payload.role, content: event.payload.content }]
       : [],
@@ -240,7 +270,43 @@ export function planResume(events: readonly OraEvent[]): ResumePlan {
   }
 
   const history: ModelMessage[] = [];
-  for (const message of messages) appendMessage(history, message);
+  const historySeqs: number[] = [];
+  if (compaction !== undefined && summaryText !== undefined) {
+    history.push(summaryMessage(summaryText));
+    historySeqs.push(compaction.payload.fromSeq);
+  }
+  for (const message of messages) {
+    const before = history.length;
+    appendMessage(history, message);
+    if (history.length > before) historySeqs.push(message.seq);
+    else historySeqs[historySeqs.length - 1] = message.seq;
+  }
+
+  const toolOf = new Map<string, string>();
+  const lastResult = new Map<string, { status: string; summary: string }>();
+  // 새 기록은 `instructions` 필드가 지시 원문이다. 그 필드가 없는 옛 기록은 사용자가 쓴 메시지 전체를 지시로 읽는다.
+  const hasInstructionField = events.some(
+    (event) => event.type === 'message' && event.payload.instructions !== undefined,
+  );
+  const instructions: string[] = [];
+  for (const event of events) {
+    if (event.type === 'tool_call') toolOf.set(event.payload.callId, event.payload.tool);
+    if (event.type === 'tool_result') {
+      lastResult.set(toolOf.get(event.payload.callId) ?? event.payload.callId, event.payload);
+    }
+    if (event.type !== 'message') continue;
+    if (hasInstructionField) {
+      instructions.push(...(event.payload.instructions ?? []));
+    } else if (event.actor === 'user' && event.payload.role === 'user') {
+      const text = event.payload.content.flatMap((block) =>
+        block.type === 'text' ? [block.text] : [],
+      );
+      if (text.length > 0) instructions.push(text.join('\n'));
+    }
+  }
+  const openErrors = [...lastResult]
+    .filter(([, result]) => result.status !== 'ok')
+    .map(([tool, result]) => ({ tool, summary: result.summary }));
 
   const todos = new Map<string, Todo>();
   for (const event of events) {
@@ -273,5 +339,17 @@ export function planResume(events: readonly OraEvent[]): ResumePlan {
     repair,
     ...(resumePoint === undefined ? {} : { resumePointTodoId: resumePoint.payload.todoId }),
     lastSeq: events.at(-1)?.seq ?? 0,
+    historySeqs,
+    instructions,
+    openErrors,
+    hasSummary: compaction !== undefined,
+    ...(missing.length === 0
+      ? {}
+      : {
+          summaryFallback: {
+            missing,
+            ...(compaction === undefined ? {} : { usedPath: compaction.payload.path }),
+          },
+        }),
   };
 }

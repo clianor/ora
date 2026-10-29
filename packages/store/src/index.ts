@@ -70,6 +70,27 @@ export async function createSessionStorage(sessionDir: string): Promise<SessionS
         }
       }
     },
+    async writeCompaction(content) {
+      await mkdir(join(sessionDir, 'compactions'), { recursive: true });
+      for (let number = 1; ; number += 1) {
+        const ref = `compactions/${number}.md`;
+        let handle;
+        try {
+          handle = await open(join(sessionDir, ref), 'wx');
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+          throw error;
+        }
+        try {
+          await handle.writeFile(content, 'utf8');
+          // `compaction` 이벤트가 이 파일을 가리키기 전에 디스크에 반영한다.
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        return ref;
+      }
+    },
   };
 
   return { transcript, sessions };

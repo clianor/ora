@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -455,22 +455,31 @@ export async function executeSession(
       throw new UsageError(`세션 기록을 읽을 수 없습니다: ${command.sessionId}`);
     }
     const events = parseTranscript(text).events;
-    const plan = planResume(events);
+    const plan = planResume(events, (path) => {
+      if (!/^compactions\/\d+\.md$/.test(path)) return undefined;
+      try {
+        return readFileSync(join(sessionDir, path), 'utf8');
+      } catch {
+        return undefined;
+      }
+    });
     resume = {
       plan,
       session,
       ...(command.steer === undefined ? {} : { steer: command.steer }),
     };
     // 하드 킬 뒤에는 Claude 세션이 기록과 어긋났을 수 있어서 `--resume`을 쓰지 않고 기록을 다시 넣는다.
-    if (!plan.hardKilled) {
-      claudeResume = events
-        .toReversed()
-        .flatMap((event) =>
-          event.type === 'message'
-            ? [claudeResumeStateSchema.safeParse(event.payload.providerMetadata)]
-            : [],
-        )
-        .find((parsed) => parsed.success)?.data;
+    // 마지막 응답 뒤에 압축했다면 그 Claude 세션은 압축 전 기록을 들고 있으므로 같은 이유로 다시 넣는다.
+    const carrier = events.findLast(
+      (event) =>
+        event.type === 'message' &&
+        claudeResumeStateSchema.safeParse(event.payload.providerMetadata).success,
+    );
+    const compactedAfter =
+      carrier !== undefined &&
+      events.some((event) => event.type === 'compaction' && event.seq > carrier.seq);
+    if (!plan.hardKilled && !compactedAfter && carrier?.type === 'message') {
+      claudeResume = claudeResumeStateSchema.parse(carrier.payload.providerMetadata);
     }
   }
   const isolation = command.isolation ?? resume?.session.isolation ?? config.isolation;
@@ -511,6 +520,8 @@ export async function executeSession(
       writeShellPids();
     },
   });
+  const contextWindow =
+    model.contextWindow ?? createCatalog(config.models)(model.model)?.contextWindow;
   const outcome = await runSession(
     {
       model,
@@ -566,6 +577,9 @@ export async function executeSession(
         noProgressSteps: config.limits.noProgressSteps,
         shellTimeoutMs: config.tools.shellTimeoutMs,
         recallTokenBudget: config.recall.tokenBudget,
+        compactAtRatio: config.context.compactAtRatio,
+        keepRecentSteps: config.context.keepRecentSteps,
+        ...(contextWindow === undefined ? {} : { contextWindow }),
       },
       configSummary: {
         limits: config.limits,

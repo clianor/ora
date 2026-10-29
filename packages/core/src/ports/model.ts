@@ -37,6 +37,8 @@ export type ModelStreamEvent =
 export interface ModelPort {
   readonly model: string;
   readonly adapter: string;
+  /** 모델 컨텍스트 창(토큰)이다. 모르면 비우고, 호스트가 카탈로그 값을 채운다. */
+  readonly contextWindow?: number;
   stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelStreamEvent>;
   /** 마지막 요청을 보낸 계정이다. 엔진이 `session.json`에 적어 재개한 세션이 같은 계정을 이어 쓰게 한다. */
   accountPin?(): SessionRecord['accountPin'];
