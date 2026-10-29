@@ -9,7 +9,7 @@ import type {
   Todo,
 } from '@ora/protocol';
 import type { ModelMessage } from './ports/model.ts';
-import { summaryMessage } from './compaction.ts';
+import { applyPrune, shakeMessages, summaryMessage } from './compaction.ts';
 import type { OpenError } from './compaction.ts';
 import type { EventDraft } from './recorder.ts';
 
@@ -217,14 +217,18 @@ export function planResume(
   let compaction: EventOf<'compaction'> | undefined;
   let summaryText: string | undefined;
   for (const candidate of events
-    .filter((event): event is EventOf<'compaction'> => event.type === 'compaction')
+    .filter(
+      (event): event is EventOf<'compaction'> =>
+        event.type === 'compaction' && event.payload.path !== undefined,
+    )
     .reverse()) {
-    summaryText = readSummary(candidate.payload.path);
+    const path = candidate.payload.path ?? '';
+    summaryText = readSummary(path);
     if (summaryText !== undefined) {
       compaction = candidate;
       break;
     }
-    missing.push(candidate.payload.path);
+    missing.push(path);
   }
   let messages = events.flatMap((event) =>
     event.type === 'message' &&
@@ -280,6 +284,15 @@ export function planResume(
     appendMessage(history, message);
     if (history.length > before) historySeqs.push(message.seq);
     else historySeqs[historySeqs.length - 1] = message.seq;
+  }
+  // 가지치기와 shake는 원본 메시지에 같은 순서로 다시 적용한다. 요약이 대신한 메시지는 이미 없으므로 남은 메시지에만 닿는다.
+  const firstEligible = compaction === undefined ? 0 : 1;
+  for (const event of events) {
+    if (event.type !== 'compaction') continue;
+    if (event.payload.method === 'prune') applyPrune(history, new Set(event.payload.prunedCallIds));
+    if (event.payload.method === 'shake') {
+      shakeMessages(history, historySeqs, event.payload.toSeq, firstEligible);
+    }
   }
 
   const toolOf = new Map<string, string>();

@@ -192,14 +192,18 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       afterSeq: z.number().int().nonnegative(),
     }),
   ),
-  // 컨텍스트 압축 결과다 (SPEC 4.3절). message 이벤트 중 seq가 첫 message부터 `toSeq`까지인 것을 `path`의 요약이 대신한다.
-  // transcript 파일의 원본 이벤트는 그대로 남고, 재개는 마지막 compaction 이벤트의 요약과 그 뒤의 message로 컨텍스트를 만든다.
+  // 컨텍스트 압축 결과다 (SPEC 4.3절). `prune`은 도구 출력 가지치기, `shake`는 모델 없이 큰 블록을 참조로 바꾼 것, `handoff`와 `summary`는 요약 파일이 앞 메시지를 대신한 것이다.
+  // 범위는 컨텍스트에서 바뀐 메시지의 seq 범위다. transcript 파일의 원본 이벤트는 그대로 남고, 재개는 이 이벤트들을 같은 순서로 다시 적용한다.
   defineEvent(
     'compaction',
     z.strictObject({
+      method: z.enum(['prune', 'shake', 'handoff', 'summary']).default('summary'),
       fromSeq: z.number().int().positive(),
       toSeq: z.number().int().positive(),
-      path: z.string().min(1),
+      /** `handoff`와 `summary`만 있다. */
+      path: z.string().min(1).optional(),
+      /** 이 이벤트가 자리표시로 바꾼 도구 호출 ID다. */
+      prunedCallIds: z.array(z.string().min(1)).default([]),
     }),
   ),
   // 재개할 때 모델 컨텍스트에서 뺀 seq 범위다. transcript 파일에는 그대로 남는다.

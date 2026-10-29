@@ -97,11 +97,29 @@ const configSchema = z.object({
     .default({ tokenBudget: 2000 }),
   /** 컨텍스트 압축 설정이다 (SPEC 4.3절). 요약 모델은 세션 모델이고, `roles.compaction`은 아직 구현하지 않았다. */
   context: z
-    .object({
+    .strictObject({
       compactAtRatio: z.number().gt(0).lte(1).default(0.8),
-      keepRecentSteps: z.number().int().positive().default(10),
+      keepRecentTokens: z.number().int().positive().default(20000),
+      protectToolTokens: z.number().int().nonnegative().default(40000),
+      minPruneSavings: z.number().int().nonnegative().default(20000),
+      methodOrder: z
+        .array(z.enum(['shake', 'handoff', 'summary']))
+        .min(1)
+        .default(['shake', 'handoff', 'summary']),
+      keepRecentSteps: z
+        .never({
+          error:
+            'context.keepRecentSteps는 없어졌습니다. 토큰 수를 쓰는 context.keepRecentTokens로 바꿉니다.',
+        })
+        .optional(),
     })
-    .default({ compactAtRatio: 0.8, keepRecentSteps: 10 }),
+    .default({
+      compactAtRatio: 0.8,
+      keepRecentTokens: 20000,
+      protectToolTokens: 40000,
+      minPruneSavings: 20000,
+      methodOrder: ['shake', 'handoff', 'summary'],
+    }),
   /** 모델 카탈로그다. 같은 id는 내장 항목(`claude-haiku-5-5` 등)을 덮어쓰고, 다른 id는 모델을 늘린다. */
   models: z.array(catalogModelSchema).default([]),
 });

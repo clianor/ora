@@ -844,7 +844,7 @@ function firstText(input: { messages: unknown[] } | undefined): unknown {
 }
 
 /** 검증이 실패한 증거를 남기고, 입력 토큰이 창의 80%를 넘었다고 보고하는 응답 뒤에 요약 응답을 둔다. */
-function compactionResponses(summary: string, tail: { content: Block[] }[]) {
+function compactionResponses(summary: string | { content: Block[] }, tail: { content: Block[] }[]) {
   return [
     ...setupResponses,
     ...repairResponses('f', 'a - b', 'a * b', true),
@@ -857,18 +857,25 @@ function compactionResponses(summary: string, tail: { content: Block[] }[]) {
         outputTokens: 0,
       },
     },
-    respond({ type: 'text', text: summary }),
+    typeof summary === 'string' ? respond({ type: 'text', text: summary }) : summary,
     ...tail,
   ];
 }
 
-function startCompactionRun(project: Project, responses: { content: Block[] }[]): RunningCli {
+function startCompactionRun(
+  project: Project,
+  responses: { content: Block[]; usage?: object }[],
+  context: object = {},
+): RunningCli {
   const scriptPath = join(project.home, 'first.json');
   writeFileSync(scriptPath, JSON.stringify({ responses, contextWindow: COMPACTION_WINDOW }));
   const configPath = join(project.home, 'engine.config.json');
   writeFileSync(
     configPath,
-    JSON.stringify({ schemaVersion: 1, context: { compactAtRatio: 0.8, keepRecentSteps: 1 } }),
+    JSON.stringify({
+      schemaVersion: 1,
+      context: { compactAtRatio: 0.8, keepRecentTokens: 1, methodOrder: ['summary'], ...context },
+    }),
   );
   return startCli(project, [
     'run',
@@ -887,11 +894,11 @@ function startCompactionRun(project: Project, responses: { content: Block[] }[])
 function readModelInputs(
   project: Project,
   name: string,
-): { system: string; messages: unknown[] }[] {
+): { system: string; tools: string[]; messages: unknown[] }[] {
   return readFileSync(join(project.home, `${name}-input.jsonl`), 'utf8')
     .trim()
     .split('\n')
-    .map((line) => JSON.parse(line) as { system: string; messages: unknown[] });
+    .map((line) => JSON.parse(line) as { system: string; tools: string[]; messages: unknown[] });
 }
 
 test(
@@ -1023,6 +1030,185 @@ test(
       (event) => event.type === 'message' && event.payload.instructions?.includes('덧셈만 쓴다'),
     );
     expect(steered?.type === 'message' && steered.payload.instructions).toEqual(['덧셈만 쓴다']);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+const bigUsage = {
+  uncachedInputTokens: 17_000,
+  cacheReadInputTokens: 0,
+  cacheCreationInputTokens: 0,
+  outputTokens: 0,
+};
+const bigShell = (callId: string) =>
+  use(callId, 'shell', { command: `node -e "console.log('x '.repeat(3000))"` });
+const REPEATED = 'x x x x x x x x';
+
+function toolResultText(events: OraEvent[], callId: string): string | undefined {
+  for (const event of events) {
+    if (event.type !== 'message') continue;
+    for (const block of event.payload.content) {
+      if (block.type === 'tool_result' && block.callId === callId) return block.text;
+    }
+  }
+  return undefined;
+}
+
+test(
+  '가지치기한 도구 출력은 자리표시로 바뀌어 모델에 가고, history.read가 원문을 돌려주며 transcript는 그대로다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      [
+        ...setupResponses,
+        respond(bigShell('sh1')),
+        attemptedResponse,
+        { ...respond(use('rd', 'file_read', { path: 'foo.js' })), usage: bigUsage },
+        respond(use('hr1', 'history.read', { callId: 'sh1' })),
+        finalReport,
+      ],
+      { protectToolTokens: 10, minPruneSavings: 100 },
+    ).done;
+
+    const { events } = readSession(project);
+    const pruned = events.find((event) => event.type === 'compaction');
+    expect(pruned?.payload).toMatchObject({ method: 'prune', prunedCallIds: ['sh1'] });
+
+    const inputs = readModelInputs(project, 'first');
+    const prunedAt = inputs.findIndex((input) =>
+      JSON.stringify(input.messages).includes('출력 생략'),
+    );
+    expect(prunedAt).toBeGreaterThan(0);
+    expect(JSON.stringify(inputs[prunedAt - 1]?.messages)).toContain(REPEATED);
+    const sent = JSON.stringify(inputs[prunedAt]?.messages);
+    expect(sent).toContain('callId=sh1');
+    expect(sent).not.toContain(REPEATED);
+
+    const original = toolResultText(events, 'sh1');
+    expect(original).toContain(REPEATED);
+    const reread = toolResultText(events, 'hr1');
+    expect(reread).toContain(REPEATED);
+    expect(reread).not.toContain('출력 생략');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'shake가 여유를 만들지 못하면 다음 방식인 summary로 넘어간다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      [
+        ...setupResponses,
+        respond({ type: 'text', text: 'lorem '.repeat(7000) }, bigShell('sh1')),
+        attemptedResponse,
+        { ...respond(use('rd', 'file_read', { path: 'foo.js' })), usage: bigUsage },
+        respond({ type: 'text', text: 'ZZ-요약' }),
+        finalReport,
+      ],
+      { methodOrder: ['shake', 'summary'] },
+    ).done;
+
+    const { events } = readSession(project);
+    const methods = events.flatMap((event) =>
+      event.type === 'compaction' ? [event.payload.method] : [],
+    );
+    expect(methods).toEqual(['shake', 'summary']);
+    const inputs = readModelInputs(project, 'first');
+    const summaryRequest = inputs.find((input) => input.system !== inputs[0]?.system);
+    expect(JSON.stringify(summaryRequest?.messages)).not.toContain(REPEATED);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'handoff 요청은 라이브와 같은 시스템 프롬프트와 도구를 쓰고, 응답의 도구 호출은 무시한다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      compactionResponses(
+        respond(
+          { type: 'text', text: 'ZZ-인계' },
+          use('hx', 'shell', { command: 'echo hacked > hx.txt' }),
+        ),
+        [finalReport],
+      ),
+      { methodOrder: ['handoff'] },
+    ).done;
+
+    const { dir, events } = readSession(project);
+    const inputs = readModelInputs(project, 'first');
+    const handoff = inputs.find((input) => JSON.stringify(input.messages).includes('인계 문서'));
+    expect(handoff?.system).toBe(inputs[0]?.system);
+    expect(handoff?.tools).toEqual(inputs[0]?.tools);
+    expect(
+      events.filter((event) => event.type === 'model_request' && event.payload.purpose),
+    ).toHaveLength(1);
+    expect(
+      events.some((event) => event.type === 'tool_call' && event.payload.callId === 'hx'),
+    ).toBe(false);
+    expect(existsSync(join(project.dir, 'hx.txt'))).toBe(false);
+    const compaction = events.find((event) => event.type === 'compaction');
+    expect(compaction?.payload.method).toBe('handoff');
+    expect(readFileSync(join(dir, compaction?.payload.path ?? ''), 'utf8')).toContain('ZZ-인계');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '턴 중간에서 자르면 그 턴 앞부분을 따로 요약해 붙인다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(project, [
+      ...setupResponses,
+      respond({ type: 'text', text: '아직 끝나지 않았다.' }),
+      ...repairResponses('f', 'a - b', 'a * b', true),
+      { ...respond(use('big', 'file_read', { path: 'foo.js' })), usage: bigUsage },
+      respond({ type: 'text', text: 'ZZ-이전' }),
+      respond({ type: 'text', text: 'ZZ-턴' }),
+      finalReport,
+    ]).done;
+
+    const { dir, events } = readSession(project);
+    const compaction = events.find((event) => event.type === 'compaction');
+    const summary = readFileSync(join(dir, compaction?.payload.path ?? ''), 'utf8');
+    expect(summary).toContain('ZZ-이전');
+    expect(summary).toContain('ZZ-턴');
+    expect(summary.match(/^## /gm)).toHaveLength(5);
+    const inputs = readModelInputs(project, 'first');
+    expect(inputs.filter((input) => input.system !== inputs[0]?.system)).toHaveLength(2);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '재개하면 가지치기를 다시 적용해 같은 컨텍스트를 만든다',
+  async () => {
+    const project = createProject();
+    const running = startCompactionRun(
+      project,
+      [
+        ...setupResponses,
+        respond(bigShell('sh1')),
+        attemptedResponse,
+        { ...respond(use('rd', 'file_read', { path: 'foo.js' })), usage: bigUsage },
+        respond(use('s1', 'shell', { command: 'echo started > started.txt; sleep 2' })),
+      ],
+      { protectToolTokens: 10, minPruneSavings: 100 },
+    );
+    await waitFor(() => existsSync(startedFile(project)));
+    running.child.kill('SIGINT');
+    expect((await running.done).code).toBe(130);
+
+    await startResume(project, sessionIdOf(project), 'second', [finalReport]).done;
+
+    const [first] = readModelInputs(project, 'second');
+    const sent = JSON.stringify(first?.messages);
+    expect(sent).toContain('callId=sh1');
+    expect(sent).not.toContain(REPEATED);
   },
   TEST_TIMEOUT_MS,
 );

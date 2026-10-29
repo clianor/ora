@@ -17,6 +17,8 @@ export interface BuiltinToolOptions {
   readonly protectedPaths: readonly string[];
   /** 읽기와 쓰기를 모두 막는 파일이다. 모델 프로바이더 토큰을 담은 `<oraHome>/auth.json`이 여기에 든다 (SPEC 5.2절). */
   readonly secretPaths: readonly string[];
+  /** 이 세션의 디렉터리다. `history.read`는 이 안의 `transcript.jsonl`과 `artifacts/`만 읽는다. */
+  readonly sessionDir: string;
 }
 
 const FORBIDDEN_SEGMENTS = ['.ssh', '.aws'];
@@ -106,6 +108,31 @@ async function writeAtomic(path: string, content: string): Promise<void> {
   }
 }
 
+interface HistoryBlock {
+  type?: string;
+  text?: string;
+  callId?: string;
+  tool?: string;
+  input?: unknown;
+}
+
+interface HistoryEvent {
+  seq: number;
+  type: string;
+  payload?: { role?: string; content?: HistoryBlock[]; callId?: string; outputRef?: string };
+}
+
+function renderHistoryBlocks(event: HistoryEvent): string {
+  return (event.payload?.content ?? [])
+    .flatMap((block) => {
+      if (block.type === 'text') return [block.text ?? ''];
+      if (block.type === 'tool_use')
+        return [`[도구 호출 ${block.tool} ${JSON.stringify(block.input)}]`];
+      if (block.type === 'tool_result') return [`[도구 결과 ${block.callId}]\n${block.text ?? ''}`];
+      return [];
+    })
+    .join('\n');
+}
 export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
   const isUnder = async (roots: readonly string[], path: string): Promise<boolean> => {
     const guarded = await Promise.all(roots.map(resolveThroughSymlinks));
@@ -236,5 +263,75 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
     },
   });
 
-  return [shell, fileRead, fileWrite, fileEdit];
+  const historyRead = defineTool({
+    name: 'history.read',
+    description:
+      '압축이나 가지치기로 컨텍스트에서 빠진 원문을 다시 읽는다. 도구 호출 ID(callId)나 message seq 범위(fromSeq, toSeq) 중 하나를 준다. 이 세션의 기록만 읽는다.',
+    tier: 'read',
+    inputSchema: z.object({
+      callId: z.string().min(1).optional(),
+      fromSeq: z.number().int().positive().optional(),
+      toSeq: z.number().int().positive().optional(),
+    }),
+    async run(input) {
+      const hasRange = input.fromSeq !== undefined && input.toSeq !== undefined;
+      if ((input.callId === undefined) === !hasRange) {
+        return { status: 'error', text: 'callId 하나나 fromSeq와 toSeq 둘 중 하나만 줍니다.' };
+      }
+      const raw = await readFile(join(options.sessionDir, 'transcript.jsonl'), 'utf8').catch(
+        () => undefined,
+      );
+      if (raw === undefined) return { status: 'error', text: '이 세션의 기록을 읽을 수 없습니다.' };
+      const events = raw.split('\n').flatMap((line) => {
+        try {
+          return [JSON.parse(line) as HistoryEvent];
+        } catch {
+          return [];
+        }
+      });
+      if (input.callId !== undefined) {
+        const text = await readCallOutput(events, input.callId);
+        if (text === undefined) {
+          return {
+            status: 'error',
+            text: `이 세션에서 호출 ID를 찾을 수 없습니다: ${input.callId}`,
+          };
+        }
+        return { status: 'ok', text: truncateMiddle(text, options.maxOutputBytes) };
+      }
+      const from = input.fromSeq ?? 0;
+      const to = input.toSeq ?? 0;
+      const text = events
+        .filter((event) => event.type === 'message' && event.seq >= from && event.seq <= to)
+        .map((event) => `[seq ${event.seq} ${event.payload?.role}]\n${renderHistoryBlocks(event)}`)
+        .join('\n\n');
+      if (text === '') return { status: 'error', text: `seq ${from}~${to}에 message가 없습니다.` };
+      return { status: 'ok', text: truncateMiddle(text, options.maxOutputBytes) };
+    },
+  });
+
+  /** 도구 호출의 원문 출력이다. 전체 출력을 artifact로 남겼으면 그 파일을 읽는다. */
+  async function readCallOutput(
+    events: readonly HistoryEvent[],
+    callId: string,
+  ): Promise<string | undefined> {
+    const outputRef = events.find(
+      (event) => event.type === 'tool_result' && event.payload?.callId === callId,
+    )?.payload?.outputRef;
+    if (outputRef !== undefined && /^artifacts\/[A-Za-z0-9_.-]+\.txt$/.test(outputRef)) {
+      const full = await readFile(join(options.sessionDir, outputRef), 'utf8').catch(
+        () => undefined,
+      );
+      if (full !== undefined) return full;
+    }
+    for (const event of events) {
+      if (event.type !== 'message') continue;
+      const block = event.payload?.content?.find(
+        (candidate) => candidate.type === 'tool_result' && candidate.callId === callId,
+      );
+      if (block !== undefined) return block.text ?? '';
+    }
+    return undefined;
+  }
+  return [shell, fileRead, fileWrite, fileEdit, historyRead];
 }

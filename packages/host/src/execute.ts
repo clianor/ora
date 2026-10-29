@@ -531,6 +531,7 @@ export async function executeSession(
         maxOutputBytes: config.tools.maxOutputBytes,
         maxFileBytes: config.tools.maxFileBytes,
         secretPaths: [join(oraHome, AUTH_FILE)],
+        sessionDir,
         protectedPaths: [
           join(oraHome, PERMISSIONS_FILE),
           join(oraHome, 'engine.config.json'),
@@ -578,7 +579,10 @@ export async function executeSession(
         shellTimeoutMs: config.tools.shellTimeoutMs,
         recallTokenBudget: config.recall.tokenBudget,
         compactAtRatio: config.context.compactAtRatio,
-        keepRecentSteps: config.context.keepRecentSteps,
+        keepRecentTokens: config.context.keepRecentTokens,
+        protectToolTokens: config.context.protectToolTokens,
+        minPruneSavings: config.context.minPruneSavings,
+        methodOrder: config.context.methodOrder,
         ...(contextWindow === undefined ? {} : { contextWindow }),
       },
       configSummary: {

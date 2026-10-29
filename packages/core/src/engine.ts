@@ -30,7 +30,7 @@ import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
 import type { MemoryPort } from './ports/memory.ts';
-import type { ModelMessage, ModelPort, ModelStreamEvent } from './ports/model.ts';
+import type { ModelMessage, ModelPort, ModelRequest, ModelStreamEvent } from './ports/model.ts';
 import type { SessionStore } from './ports/session-store.ts';
 import type { Clock } from './ports/system.ts';
 import type { Tool, ToolOutput } from './ports/tool.ts';
@@ -39,11 +39,19 @@ import type { WorkspacePort } from './ports/workspace.ts';
 import { assembleSystemPrompt, describeTodos } from './prompt.ts';
 import { createRecorder } from './recorder.ts';
 import {
+  HANDOFF_PROMPT,
   SUMMARY_SYSTEM,
+  TURN_PREFIX_SYSTEM,
+  applyPrune,
   buildSummaryDocument,
+  buildSummaryInput,
   estimateTokens,
-  findCut,
-  renderForSummary,
+  findKeepCut,
+  findTurnStart,
+  narrativeOf,
+  planPrune,
+  shakeBoundarySeq,
+  shakeMessages,
   summaryMessage,
 } from './compaction.ts';
 import { appendMessage } from './recovery.ts';
@@ -66,7 +74,10 @@ export interface EngineSettings {
   readonly recallTokenBudget: number;
   /** 입력 토큰이 `contextWindow × compactAtRatio`에 닿으면 압축한다. */
   readonly compactAtRatio: number;
-  readonly keepRecentSteps: number;
+  readonly keepRecentTokens: number;
+  readonly protectToolTokens: number;
+  readonly minPruneSavings: number;
+  readonly methodOrder: readonly ('shake' | 'handoff' | 'summary')[];
   /** 모델 컨텍스트 창이다. 모르면 비워 두고, 그러면 압축도 넘침 검사도 하지 않는다. */
   readonly contextWindow?: number;
 }
@@ -134,6 +145,12 @@ interface ControlOutput extends ToolOutput {
   readonly scrubHits?: Readonly<ScrubHits>;
 }
 
+/** 압축한 뒤 어림값이 기준선의 이 비율 이하여야 여유를 만들었다고 본다 (SPEC 4.3절 진행 보증). */
+const PROGRESS_RATIO = 0.8;
+/** 요약 문서가 차지할 토큰의 어림이다. 남길 범위를 줄일 때 뺀다. */
+const SUMMARY_RESERVE_TOKENS = 2000;
+/** 압축이 여유를 만들지 못했을 때 창 안에서 다시 시도하기까지 기다리는 모델 응답 수다. */
+const PASS_RETRY_RESPONSES = 3;
 const SUMMARY_MAX_LINES = 20;
 const SUMMARY_MAX_CHARS = 2048;
 const EVENT_SUMMARY_MAX_CHARS = 500;
@@ -794,7 +811,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   let knownLength = 0;
   // 승인 거부 때 사용자가 덧붙인 조향이다. 같은 배치의 도구 결과 메시지에 지시 원문으로 함께 적는다.
   const pendingSteers: string[] = [];
-  let stepsSinceCompaction = Number.POSITIVE_INFINITY;
+  let responsesSincePass = Number.POSITIVE_INFINITY;
   const estimateInput = () =>
     knownTokens === undefined
       ? estimateTokens(system) + estimateTokens(specs) + estimateTokens(history)
@@ -820,26 +837,17 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     if (history.length > before) historySeqs.push(recorder.lastSeq());
     else historySeqs[historySeqs.length - 1] = recorder.lastSeq();
   };
-  /** 최근 스텝 앞의 `cut`개 메시지를 요약 파일로 만들고, 그 자리에 요약 메시지를 넣는다. */
-  const compact = async (cut: number, modelSignal: AbortSignal) => {
+  /** 요약과 인계 문서 요청이다. 응답의 텍스트만 돌려주고 도구 호출은 무시한다. 사용량은 `purpose: 'compaction'`으로 남긴다. */
+  const requestCompaction = async (
+    request: ModelRequest,
+    modelSignal: AbortSignal,
+  ): Promise<string> => {
     const started = clock.now().getTime();
     let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
-    for await (const event of model.stream(
-      {
-        system: SUMMARY_SYSTEM,
-        messages: [
-          {
-            role: 'user',
-            content: [{ type: 'text', text: renderForSummary(history.slice(0, cut)) }],
-          },
-        ],
-        tools: [],
-      },
-      modelSignal,
-    )) {
+    for await (const event of model.stream(request, modelSignal)) {
       if (event.type === 'completed') completed = event;
     }
-    if (completed === undefined) throw new Error('요약 모델 스트림이 completed 없이 끝났습니다.');
+    if (completed === undefined) throw new Error('압축 요청 스트림이 completed 없이 끝났습니다.');
     await emit('model', {
       type: 'model_request',
       payload: {
@@ -852,10 +860,37 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         purpose: 'compaction',
       },
     });
-    const narrative = completed.content
+    return completed.content
       .flatMap((block) => (block.type === 'text' ? [block.text] : []))
       .join('\n')
       .trim();
+  };
+  const firstEligible = () => (hasSummary ? 1 : 0);
+  /** 도구 출력 가지치기나 shake가 바꾼 메시지 범위를 `compaction` 이벤트로 남긴다. */
+  const recordRewrite = async (
+    method: 'prune' | 'shake',
+    touched: readonly number[],
+    callIds: readonly string[],
+    toSeq?: number,
+  ) => {
+    const seqs = touched.map((index) => historySeqs[index] ?? 1);
+    await emit('engine', {
+      type: 'compaction',
+      payload: {
+        method,
+        fromSeq: Math.min(...seqs),
+        toSeq: toSeq ?? Math.max(...seqs),
+        prunedCallIds: [...callIds],
+      },
+    });
+    knownTokens = undefined;
+  };
+  /** 앞 `cut`개 메시지를 요약 문서 하나로 바꾼다. 필수 절은 엔진이 기록에서 만든다. */
+  const commit = async (
+    method: 'handoff' | 'summary',
+    cut: number,
+    parts: { narrative: string; turnPrefix?: string },
+  ) => {
     const document = scrubText(
       buildSummaryDocument({
         instructions,
@@ -863,17 +898,78 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         openErrors: [...lastResults]
           .filter(([, result]) => result.isError)
           .map(([tool, result]) => ({ tool, summary: result.text })),
-        narrative: narrative === '' ? '(요약 모델이 내용을 쓰지 않았습니다.)' : narrative,
+        ...parts,
       }),
     ).text;
     const fromSeq = historySeqs[0] ?? 1;
     const toSeq = historySeqs[cut - 1] ?? fromSeq;
     const path = await store.writeCompaction(document);
-    await emit('engine', { type: 'compaction', payload: { fromSeq, toSeq, path } });
+    await emit('engine', {
+      type: 'compaction',
+      payload: { method, fromSeq, toSeq, path, prunedCallIds: [] },
+    });
     history.splice(0, cut, summaryMessage(document));
     historySeqs.splice(0, cut, fromSeq);
     hasSummary = true;
     knownTokens = undefined;
+  };
+  /** 압축 결과가 기준선의 80% 아래에 오도록 줄인 원문 유지 범위의 시작 위치다. 어시스턴트 메시지 앞에서만 자른다. */
+  const keepCut = (window: number): number | undefined => {
+    const fixed = estimateTokens(system) + estimateTokens(specs) + SUMMARY_RESERVE_TOKENS;
+    const room = window * settings.compactAtRatio * PROGRESS_RATIO - fixed;
+    const cut = findKeepCut(history, Math.max(0, Math.min(settings.keepRecentTokens, room)));
+    return cut !== undefined && cut > firstEligible() ? cut : undefined;
+  };
+  const runShake = async (): Promise<boolean> => {
+    const upToSeq = shakeBoundarySeq(history, historySeqs, settings.keepRecentTokens);
+    if (upToSeq === undefined) return false;
+    const { touched, callIds } = shakeMessages(history, historySeqs, upToSeq, firstEligible());
+    if (touched.length === 0) return false;
+    await recordRewrite('shake', touched, callIds, upToSeq);
+    return true;
+  };
+  const runHandoff = async (window: number, modelSignal: AbortSignal): Promise<boolean> => {
+    const cut = keepCut(window);
+    if (cut === undefined) return false;
+    const messages = [...history];
+    appendMessage(messages, { role: 'user', content: [{ type: 'text', text: HANDOFF_PROMPT }] });
+    const narrative = await requestCompaction({ system, messages, tools: specs }, modelSignal);
+    if (narrative === '') return false;
+    await commit('handoff', cut, { narrative });
+    return true;
+  };
+  const runSummary = async (window: number, modelSignal: AbortSignal): Promise<boolean> => {
+    const cut = keepCut(window);
+    if (cut === undefined) return false;
+    const start = firstEligible();
+    const first = history[0]?.content.flatMap((block) =>
+      block.type === 'text' ? [block.text] : [],
+    );
+    const previous = hasSummary ? narrativeOf((first ?? []).join('\n')) : undefined;
+    const turnStart = findTurnStart(history, cut, start);
+    // 턴 중간에서 잘랐고 그 앞에 요약할 메시지가 있으면, 턴 앞부분은 따로 요약해 붙인다.
+    const splitAt = turnStart !== undefined && turnStart > start ? turnStart : undefined;
+    const ask = (askSystem: string, messages: readonly ModelMessage[], prior?: string) =>
+      requestCompaction(
+        {
+          system: askSystem,
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: buildSummaryInput(messages, prior) }] },
+          ],
+          tools: [],
+        },
+        modelSignal,
+      );
+    const narrative = await ask(SUMMARY_SYSTEM, history.slice(start, splitAt ?? cut), previous);
+    const turnPrefix =
+      splitAt === undefined
+        ? undefined
+        : await ask(TURN_PREFIX_SYSTEM, history.slice(splitAt, cut));
+    await commit('summary', cut, {
+      narrative: narrative === '' ? '(요약 모델이 내용을 쓰지 않았습니다.)' : narrative,
+      ...(turnPrefix === undefined ? {} : { turnPrefix }),
+    });
+    return true;
   };
   const isTool = (name: string) => !isControlTool(name) && toolMap.get(name)?.tier === 'read';
 
@@ -984,20 +1080,36 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
 
       const window = settings.contextWindow;
       if (window !== undefined) {
+        const threshold = window * settings.compactAtRatio;
+        let estimate = estimateInput();
         let compacted = false;
-        if (estimateInput() >= window * settings.compactAtRatio) {
-          const cut = findCut(history, settings.keepRecentSteps);
-          if (
-            cut !== undefined &&
-            cut > (hasSummary ? 1 : 0) &&
-            stepsSinceCompaction >= Math.max(1, settings.keepRecentSteps)
-          ) {
-            await compact(cut, AbortSignal.any([signal, softStop]));
-            stepsSinceCompaction = 0;
+        if (estimate >= threshold) {
+          const pruneIds = planPrune(history, settings.protectToolTokens, settings.minPruneSavings);
+          const pruned = pruneIds.length === 0 ? [] : applyPrune(history, new Set(pruneIds));
+          if (pruned.length > 0) {
+            await recordRewrite('prune', pruned, pruneIds);
             compacted = true;
+            estimate = estimateInput();
           }
         }
-        const estimate = estimateInput();
+        // 가지치기만으로 기준선 아래로 내려가면 압축하지 않는다. 앞선 압축이 여유를 만들지 못했다면 창 안에서는 몇 응답 동안 다시 시도하지 않는다.
+        if (
+          estimate >= threshold &&
+          (estimate > window || responsesSincePass >= PASS_RETRY_RESPONSES)
+        ) {
+          const methods = { shake: runShake, handoff: runHandoff, summary: runSummary };
+          let reached = false;
+          for (const method of settings.methodOrder) {
+            if (!(await methods[method](window, AbortSignal.any([signal, softStop])))) continue;
+            compacted = true;
+            estimate = estimateInput();
+            if (estimate <= threshold * PROGRESS_RATIO) {
+              reached = true;
+              break;
+            }
+          }
+          responsesSincePass = reached ? Number.POSITIVE_INFINITY : 0;
+        }
         if (estimate > window) {
           return await finish(
             'stopped',
@@ -1048,7 +1160,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         completed.usage.cacheCreationInputTokens +
         completed.usage.outputTokens;
       knownLength = history.length;
-      stepsSinceCompaction += 1;
+      responsesSincePass += 1;
       const accountPin = model.accountPin?.();
       if (
         accountPin !== undefined &&
