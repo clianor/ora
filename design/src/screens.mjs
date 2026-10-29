@@ -11,6 +11,7 @@ import {
   composer,
   diffBlock,
   evidence,
+  phasePanel,
   header,
   mono,
   palette,
@@ -618,6 +619,166 @@ ${group('이동', [
   });
 }
 
+const PHASE_OBJECTIVE = 'add 함수가 덧셈을 하도록 고치고, 테스트와 README 예제까지 맞춘다';
+const PHASE_FIND = {
+  name: '원인 찾기',
+  steps: 3,
+  todos: [{ id: 't1', title: 'add가 뺄셈을 하는 줄을 찾는다', status: 'verified' }],
+};
+
+/** phase로 나눈 할 일 패널(실행 중). 끝난 phase는 접고, 작업 중인 할 일이 있는 phase를 펼쳐 흐름을 보인다. */
+function phasesScreen() {
+  const c = palette('Dark');
+  const phases = [
+    PHASE_FIND,
+    {
+      name: '수정',
+      open: true,
+      criterion: 'node check.js가 exit 0으로 끝난다',
+      todos: [
+        {
+          id: 't2',
+          title: 'math.js의 add를 덧셈으로 고친다',
+          status: 'verified',
+          origin: 'model',
+          cmd: '$ node check.js',
+          result: 'exit 0',
+          resultColor: 'ok',
+          flow: [
+            ['try', '시도 · 스텝 4'],
+            ['fail', '검증 실패 · exit 1 · 스텝 5'],
+            ['repair', '수리 1 · 스텝 6'],
+            ['pass', '검증 통과 · exit 0 · 스텝 7'],
+          ],
+        },
+        {
+          id: 't3',
+          title: '음수 입력 검사를 check.js에 더한다',
+          status: 'attempted',
+          origin: 'model',
+          cmd: '$ node check.js --neg',
+          result: '실행 전',
+          flow: [['try', '시도 · 스텝 8']],
+        },
+      ],
+    },
+    {
+      name: '문서',
+      hover: true,
+      criterion: 'README 예제가 실제 출력과 같다',
+      todos: [
+        { id: 't4', title: 'README 예제 출력을 갱신한다', status: 'pending' },
+        { id: 't5', title: '변경 요약을 남긴다', status: 'pending' },
+      ],
+    },
+  ];
+  return windowFrame(c, '12 Phases · Dark', {
+    side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
+    main: sessionMain(c),
+    panel: phasePanel(c, { objective: PHASE_OBJECTIVE, phases, current: 't3' }),
+  });
+}
+
+/** phase 패널의 상태 네 가지: 엔진이 blocked로 멈춘 상태, 포기 메뉴, 포기 확인, 포기가 섞인 완료와 포기 취소 메뉴. */
+function phaseStatesScreen() {
+  const c = palette('Dark');
+  const blocked = {
+    name: '실제 앱에서 확인',
+    open: true,
+    todos: [
+      {
+        id: 't4',
+        title: 'claude CLI로 실제 응답을 받는다',
+        status: 'blocked',
+        origin: 'model',
+        reason: '격리 정책이 claude 실행을 막습니다',
+        flow: [
+          ['try', '시도 · 스텝 9'],
+          ['block', '막힘 · 스텝 10'],
+        ],
+      },
+      {
+        id: 't5',
+        title: 'check.js를 통과시킨다',
+        status: 'blocked',
+        origin: 'model',
+        reason: '3번 고쳤지만 검사를 통과하지 못했습니다',
+        cmd: '$ node check.js',
+        result: 'exit 1',
+        resultColor: 'del',
+        flow: [
+          ['more', '이전 4개 보기'],
+          ['fail', '검증 실패 · exit 1 · 스텝 15'],
+          ['repair', '수리 3 · 스텝 16'],
+          ['fail', '검증 실패 · exit 1 · 스텝 17'],
+          ['block', '막힘 · 스텝 17'],
+        ],
+      },
+    ],
+  };
+  const stopBanner = {
+    icon: 'octagon-pause',
+    color: 'warn',
+    title: '막혀서 멈췄습니다',
+    body: '막힌 할 일 2개. 사유를 보고 포기하거나, 메시지로 다른 방법을 알려 주세요.',
+  };
+  const pop = (x, y, w, inner) =>
+    `<Frame name="Popover" position="absolute" x={${x}} y={${y}} w={${w}} h="hug" flex="col" p={4} rounded={10} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${inner}</Frame>`;
+  const item = (icon, label) =>
+    `<Frame w="fill" h={32} flex="row" items="center" gap={8} px={10} rounded={6} bg="${c.hover}">${I(c, icon, 'ink', 14)}${T(c, 13, 18, 500, 'ink', label)}</Frame>`;
+  const menu = pop(150, 322, 176, item('circle-slash', '포기하기'));
+  const confirm = pop(
+    16,
+    300,
+    308,
+    `<Frame w="fill" h="hug" flex="col" gap={10} p={10}>${T(c, 13, 18, 600, 'ink', '이 할 일을 포기할까요?')}${T(c, 12, 18, 400, 'ink2', '포기한 할 일은 완료 판정에서 빠집니다. 같은 메뉴의 포기 취소로 되돌릴 수 있습니다.', 'w="fill" textAutoResize="height"')}<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '포기하기')}</Frame></Frame>`,
+  );
+  const fix = {
+    name: '수정',
+    open: true,
+    steps: 9,
+    todos: [
+      {
+        id: 't2',
+        title: 'math.js의 add를 덧셈으로 고친다',
+        status: 'verified',
+        cmd: '$ node check.js',
+        result: 'exit 0',
+        resultColor: 'ok',
+      },
+      {
+        id: 't3',
+        title: '음수 입력 검사를 check.js에 더한다',
+        status: 'abandoned',
+        flow: [
+          ['try', '시도 · 스텝 8'],
+          ['abandon', '포기 · 사용자 · 스텝 9'],
+        ],
+      },
+    ],
+  };
+  const docs = {
+    name: '문서',
+    steps: 2,
+    todos: [{ id: 't4', title: 'README 예제 출력을 갱신한다', status: 'abandoned' }],
+  };
+  const restore = pop(150, 378, 176, item('rotate-ccw', '포기 취소'));
+  const doneBanner = {
+    icon: 'circle-check',
+    color: 'ok',
+    title: '검증을 통과해 끝났습니다',
+    body: '검증 2개 통과 · 포기 2개',
+  };
+  const col = (caption, panel) =>
+    `<Frame w={340} h="fill" flex="col" gap={10}>${T(c, 13, 18, 600, 'ink2', caption)}<Frame w={340} h="fill" flex="col" rounded={12} overflow="hidden">${panel}</Frame></Frame>`;
+  return `<Frame name="13 Phase States · Dark" w={1480} h={900} flex="row" gap={24} p={24} bg="${c.window}" rounded={12}>
+${col('막혀서 멈춤', phasePanel(c, { banner: stopBanner, objective: PHASE_OBJECTIVE, phases: [PHASE_FIND, blocked] }))}
+${col('포기 메뉴', phasePanel(c, { banner: stopBanner, objective: PHASE_OBJECTIVE, phases: [PHASE_FIND, blocked], overlay: menu }))}
+${col('포기 확인', phasePanel(c, { banner: stopBanner, objective: PHASE_OBJECTIVE, phases: [PHASE_FIND, blocked], overlay: confirm }))}
+${col('포기가 섞인 완료 · 포기 취소 메뉴', phasePanel(c, { banner: doneBanner, objective: PHASE_OBJECTIVE, phases: [PHASE_FIND, fix, docs], overlay: restore }))}
+</Frame>`;
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -630,4 +791,6 @@ export const SCREENS = [
   { file: 'cache-dark', jsx: cacheScreen },
   { file: 'settings-accounts-dark', jsx: accountsScreen },
   { file: 'context-dark', jsx: contextScreen },
+  { file: 'phases-dark', jsx: phasesScreen },
+  { file: 'phase-states-dark', jsx: phaseStatesScreen },
 ];

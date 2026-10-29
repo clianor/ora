@@ -248,6 +248,102 @@ ${body}
 </Frame>`;
 }
 
+const PHASE_TODO_STATUS = {
+  ...TODO_STATUS,
+  blocked: ['막힘', 'octagon-pause', 'warn'],
+  abandoned: ['포기함', 'circle-slash', 'ink3'],
+};
+// 흐름 항목의 종류. [아이콘, 색]이며, 글자가 항상 함께 붙으므로 색만으로 구분하지 않는다.
+const FLOW = {
+  try: ['play', 'ink2'],
+  repair: ['wrench', 'warn'],
+  claim: ['circle-dot', 'ink2'],
+  pass: ['circle-check', 'ok'],
+  fail: ['circle-x', 'del'],
+  block: ['octagon-pause', 'warn'],
+  unblock: ['play', 'ink2'],
+  abandon: ['circle-slash', 'ink3'],
+  more: ['chevrons-up', 'ink2'],
+};
+
+/**
+ * phase로 나눈 할 일 패널. phase 카드의 머리(펼침 아이콘, 이름, 수치, 끝남 표시)는 줄 전체가 버튼 하나다.
+ * phases[].todos[].flow는 [종류, 글자] 목록이고, banner는 패널 맨 위 안내 줄이다.
+ */
+export function phasePanel(
+  c,
+  { objective = null, banner = null, phases = [], current = null, overlay = '' } = {},
+) {
+  const all = phases.flatMap((p) => p.todos);
+  const verified = all.filter((t) => t.status === 'verified').length;
+  const denom = all.filter((t) => t.status !== 'abandoned').length;
+  const bar = (n, d, w) =>
+    `<Frame w="fill" h={3} flex="row" rounded={2} bg="${c.line}">${d && n ? `<Frame w={${Math.round((w * n) / d)}} h={3} rounded={2} bg="${c.ok}" />` : ''}</Frame>`;
+  const flowRow = ([kind, text]) => {
+    const [icon, col] = FLOW[kind];
+    return `<Frame w="fill" h="hug" flex="row" items="start" gap={8} py={2}><Frame w={12} h={16} flex="row" items="center">${I(c, icon, col, 12)}</Frame>${T(c, 12, 16, 400, kind === 'more' ? 'ink2' : 'ink2', text, 'grow={1} textAutoResize="height"')}</Frame>`;
+  };
+  const todoRow = (t) => {
+    const [label, icon, col] = PHASE_TODO_STATUS[t.status];
+    const isCurrent = t.id === current;
+    const tag = isCurrent
+      ? `<Frame w="hug" h={18} flex="row" items="center" px={6} rounded={4} bg="${c.ink}">${T(c, 11, 14, 600, 'onPrimary', '작업 중')}</Frame>`
+      : '';
+    const menu =
+      t.status === 'verified'
+        ? ''
+        : `<Frame name="Menu" w={24} h={24} flex="row" items="center" justify="center" rounded={6}>${I(c, 'ellipsis', 'ink2', 16)}</Frame>`;
+    const cmd = t.cmd
+      ? `<Frame w="fill" h="hug" flex="row" items="center" gap={6}>${T(c, 12, 16, 400, 'ink2', t.cmd, 'grow={1}', M)}${T(c, 12, 16, 500, t.resultColor ?? 'ink3', t.result ?? '', '', M)}</Frame>`
+      : '';
+    const reason = t.reason
+      ? T(c, 12, 16, 400, 'ink', t.reason, 'w="fill" textAutoResize="height"')
+      : '';
+    const flow = t.flow?.length
+      ? `<Frame name="Flow" w="fill" h="hug" flex="col" pt={4}>${t.flow.map(flowRow).join('')}</Frame>`
+      : '';
+    return `<Frame name="Todo/${t.id}" w="fill" h="hug" flex="row" items="start" gap={10} px={8} py={8} rounded={8} ${isCurrent ? `bg="${c.hover}"` : ''}>
+<Frame w={16} h={20} flex="row" items="center">${I(c, icon, col, 16)}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={4}>
+<Frame w="fill" h="hug" flex="row" items="start" gap={6}>${T(c, 13, 20, 500, t.status === 'abandoned' ? 'ink3' : 'ink', t.title, 'grow={1} textAutoResize="height"')}${tag}</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={6}>${T(c, 12, 16, 500, col, label)}${t.origin ? T(c, 12, 16, 400, 'ink3', '출처 ' + t.origin) : ''}</Frame>
+${reason}${cmd}${flow}</Frame>${menu}</Frame>`;
+  };
+  const card = (p) => {
+    const done = p.todos.every((t) => t.status === 'verified' || t.status === 'abandoned');
+    const n = p.todos.filter((t) => t.status === 'verified').length;
+    const d = p.todos.filter((t) => t.status !== 'abandoned').length;
+    const gaveUp = p.todos.length - d;
+    let right;
+    if (!done) right = T(c, 12, 16, 500, 'ink2', `${n}/${d}`, '', M);
+    else if (d === 0)
+      right = `${I(c, 'circle-slash', 'ink3', 14)}${T(c, 12, 16, 500, 'ink2', '모두 포기')}`;
+    else if (gaveUp)
+      right = `${I(c, 'circle-check', 'ok', 14)}${T(c, 12, 16, 500, 'ink2', `끝남 · 포기 ${gaveUp}`)}`;
+    else right = `${I(c, 'circle-check', 'ok', 14)}${T(c, 12, 16, 500, 'ok', '통과')}`;
+    const steps = done && p.steps ? T(c, 12, 16, 400, 'ink3', `· 스텝 ${p.steps}`) : '';
+    const head = `<Frame name="PhaseHead" w="fill" h="hug" flex="row" items="center" gap={8} px={10} py={10} rounded={10}>${I(c, p.open ? 'chevron-down' : 'chevron-right', 'ink2', 14)}${T(c, 13, 18, 600, 'ink', p.name, 'grow={1}')}${right}${steps}</Frame>`;
+    const meta = done
+      ? ''
+      : `<Frame w="fill" h="hug" flex="col" gap={6} px={10} pb={${p.open ? 4 : 10}}>${p.criterion ? T(c, 12, 16, 400, 'ink2', '완료 조건 · ' + p.criterion, 'w="fill" textAutoResize="height"') : ''}${bar(n, d, 284)}</Frame>`;
+    const body = p.open
+      ? `<Frame w="fill" h="hug" flex="col" gap={2} px={4} pb={6}>${p.todos.map(todoRow).join('')}</Frame>`
+      : '';
+    return `<Frame name="Phase/${p.name}" w="fill" h="hug" flex="col" rounded={10} bg="${c.window}">${p.hover ? head.replace('rounded={10}>', `rounded={10} bg="${c.hover}">`) : head}${meta}${body}</Frame>`;
+  };
+  const bannerRow = banner
+    ? `<Frame name="Banner" w="fill" h="hug" flex="row" items="start" gap={10} px={12} py={10} rounded={10} bg="${c.raised}">${I(c, banner.icon, banner.color, 16)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 600, 'ink', banner.title)}${T(c, 12, 16, 400, 'ink2', banner.body, 'w="fill" textAutoResize="height"')}</Frame></Frame>`
+    : '';
+  const goal = objective
+    ? `<Frame name="Objective" w="fill" h="hug" flex="col" gap={2} px={8}>${T(c, 12, 16, 500, 'ink3', '목표')}${T(c, 13, 18, 400, 'ink2', objective, 'w="fill" textAutoResize="height"')}</Frame>`
+    : '';
+  return `<Frame name="Evidence" w={340} h="fill" flex="col" bg="${c.sidebar}">
+<Frame w="fill" h={48} flex="row" items="center" gap={16} px={16}>${T(c, 13, 18, 600, 'ink', '할 일')}${T(c, 13, 18, 500, 'ink3', '변경')}${T(c, 13, 18, 500, 'ink3', '파일')}${SP}${T(c, 12, 16, 500, 'ink2', `검증 ${verified}/${denom}`, '', M)}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={10} px={8} pt={4}>${bannerRow}${goal}${phases.map(card).join('')}</Frame>
+${overlay}
+</Frame>`;
+}
+
 /** overlay는 창 위에 겹쳐 그릴 JSX다. 그 안의 프레임은 position="absolute"로 창 기준 좌표에 놓는다. */
 export function windowFrame(c, name, { side, main, panel = '', overlay = '' }) {
   return `<Frame name="${name}" w={1440} h={900} flex="row" bg="${c.window}" overflow="hidden" rounded={12}>${side}<Frame w="fill" h="fill" flex="col">${main}</Frame>${panel}${overlay}</Frame>`;
