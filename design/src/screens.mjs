@@ -1464,6 +1464,303 @@ ${composerV2(c)}
   });
 }
 
+// 남은 M2 기능(복수 모델 검토, MCP, 스킬, 비용 가드레일, 데스크톱 알림)의 v3 시안이다. 2026-10-29 사용자 요청으로 그렸다.
+const hr = (c) => `<Frame w="fill" h={1} bg="${c.line}" />`;
+const v3Card = (c, { icon, iconColor, title, right = '', body }) =>
+  `<Frame w="fill" h="hug" flex="col" rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={40} flex="row" items="center" gap={8} px={14}>${I(c, icon, iconColor, 15)}${T(c, 14, 20, 600, 'ink', title)}${SP}${right}</Frame>
+${hr(c)}
+<Frame w="fill" h="hug" flex="col" gap={10} p={14}>${body}</Frame>
+</Frame>`;
+const v3Toggle = (c, on) =>
+  `<Frame w={34} h={20} flex="row" items="center" ${on ? 'justify="end"' : ''} px={2} rounded={10} bg="${on ? c.primary : c.hover}"><Ellipse w={16} h={16} bg="${on ? c.onPrimary : c.ink3}" /></Frame>`;
+const v3Badge = (c, label, color = 'ink2') =>
+  `<Frame w="hug" h={20} flex="row" items="center" px={6} rounded={6} bg="${c.hover}">${T(c, 11, 14, 500, color, label)}</Frame>`;
+const v3SettingsPage = (c, name, nav, { title, desc, body }) =>
+  windowV3(c, name, {
+    side: settingsNav(c, nav),
+    main: `<Frame w="fill" h="fill" flex="col" items="center" pt={56}><Frame w={680} h="hug" flex="col" gap={22}>
+<Frame w="fill" h="hug" flex="col" gap={6}>${T(c, 24, 32, 600, 'ink', title)}${T(c, 13, 20, 400, 'ink2', desc, 'w="fill" textAutoResize="height"')}</Frame>
+${body}
+</Frame></Frame>`,
+    status: statusBarV3(c, V3_STATUS),
+  });
+const v3Group = (c, title, note, rows) =>
+  `<Frame w="fill" h="hug" flex="col" gap={8}><Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 13, 18, 500, 'ink2', title)}${SP}${note ? T(c, 12, 16, 400, 'ink3', note, '', mono) : ''}</Frame><Frame w="fill" h="hug" flex="col" rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${rows.join(hr(c))}</Frame></Frame>`;
+
+/** 세션 탭: 스킬과 MCP 도구를 쓴 줄, 다른 모델의 검토 카드, 비용 경고. 단계는 제목 줄 대신 입력창 아래 줄에 둔다. */
+function v3ReviewScreen() {
+  const c = palette('Slate');
+  const finding = (sev, sevColor, text, where) =>
+    `<Frame w="fill" h="hug" flex="row" items="start" gap={10}>${v3Badge(c, sev, sevColor)}${T(c, 13, 20, 400, 'ink', text, 'grow={1} textAutoResize="height" w="fill"')}${T(c, 12, 20, 400, 'ink3', where, '', mono)}</Frame>`;
+  const review = v3Card(c, {
+    icon: 'scan-eye',
+    iconColor: 'ink2',
+    title: '다른 모델의 검토',
+    right: `${T(c, 12, 16, 400, 'ink3', '검토 모델')}${T(c, 12, 16, 500, 'ink2', 'gpt-5.6-luna', '', mono)}`,
+    body: `<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'circle-alert', 'warn', 15)}${T(c, 13, 18, 600, 'warn', '고칠 점 있음')}${T(c, 13, 18, 400, 'ink2', '· 지적 2건')}</Frame>
+${finding('중요', 'warn', 'check.js가 음수 입력을 검사하지 않아 a - b로 되돌려도 통과할 수 있습니다.', 'check.js:4')}
+${finding('참고', 'ink2', 'README 예제의 출력이 바뀐 동작과 다릅니다.', 'README.md:18')}
+${T(c, 12, 18, 400, 'ink3', '검토 결과는 증거로 남습니다. 할 일은 검증 명령이 통과해야 끝납니다.', 'w="fill" textAutoResize="height"')}`,
+  });
+  const blocks = [
+    userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고, 다른 모델 검토까지 받아 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'sparkles', verb: '스킬', target: 'bugfix-checklist', result: '프로젝트' })}${toolRowV2(c, { icon: 'plug', verb: 'MCP', target: 'github:get_issue #12' })}${toolRowV2(c, { icon: 'file-pen', verb: '수정', target: 'math.js', result: '+1 −1' })}${toolRowV2(c, { icon: 'square-terminal', verb: '검증', target: 'node check.js', result: 'exit 0', resultColor: 'ok' })}</Frame>`,
+    review,
+    paraV2(
+      c,
+      `검토가 짚은 대로 ${icode(c, 'check.js')}에 음수 입력 검사를 더하고, README 예제도 맞추겠습니다.`,
+    ),
+  ];
+  return windowV3(c, '28 V3 Review · Slate', {
+    side: sidebarV3(c, { groups: V3_GROUPS }),
+    main:
+      titleTabsV3(c, { tabs: V2_TABS, active: 0, right: v3Right(c) }) +
+      threadV2(c, blocks, {
+        composer: composerV2(c, { running: true }),
+        status: [
+          ['단계 Verify'],
+          ['스텝 18/50'],
+          ['격리 harness'],
+          ['컨텍스트 31%'],
+          ['캐시 적중 82%'],
+          ['비용 상한 80%', 'warn'],
+        ],
+        notice: '비용 상한의 80%를 썼습니다 · 상한에 닿으면 다음 요청을 보내지 않고 멈춥니다',
+      }),
+    panel: v3Panel(c, {
+      objective: PHASE_OBJECTIVE,
+      phases: [
+        PHASE_FIND,
+        {
+          name: '수정',
+          open: true,
+          criterion: 'node check.js가 exit 0으로 끝난다',
+          todos: [
+            {
+              id: 't2',
+              title: 'math.js의 add를 덧셈으로 고친다',
+              status: 'attempted',
+              origin: 'repo',
+              cmd: '$ node check.js',
+              result: '검토 지적 2',
+              flow: [['try', '시도 · 스텝 4']],
+            },
+            { id: 't3', title: '음수 입력 검사를 check.js에 더한다', status: 'pending' },
+          ],
+        },
+        {
+          name: '문서',
+          criterion: 'README 예제가 실제 출력과 같다',
+          todos: [{ id: 't4', title: 'README 예제 출력을 갱신한다', status: 'pending' }],
+        },
+      ],
+      current: 't2',
+    }),
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
+/** 비용 상한에 닿아 멈춘 세션. 금액 대신 상한 대비 비율과 남은 할 일을 보인다. */
+function v3CostStopScreen() {
+  const c = palette('Slate');
+  const stop = v3Card(c, {
+    icon: 'octagon-pause',
+    iconColor: 'warn',
+    title: '비용 상한에 닿아 멈췄습니다',
+    right: T(c, 12, 16, 500, 'warn', '상한의 100%', '', mono),
+    body: `${T(c, 13, 20, 400, 'ink2', '다음 모델 요청을 보내지 않았습니다. 남은 할 일은 2개이고, Learn 단계는 건너뛰었습니다.', 'w="fill" textAutoResize="height"')}
+${T(c, 13, 20, 400, 'ink2', '상한을 올리거나 지시를 바꿔 보내면 이어 갑니다. 지금까지 쓴 양은 그대로 이어받습니다.', 'w="fill" textAutoResize="height"')}
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'secondary', '비용 상한 설정 열기', { icon: 'gauge' })}</Frame>`,
+  });
+  const blocks = [
+    userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고, 다른 모델 검토까지 받아 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'file-pen', verb: '수정', target: 'math.js', result: '+1 −1' })}${toolRowV2(c, { icon: 'square-terminal', verb: '검증', target: 'node check.js', result: 'exit 0', resultColor: 'ok' })}${toolRowV2(c, { icon: 'file-pen', verb: '수정', target: 'check.js', result: '+4 −0' })}</Frame>`,
+    stop,
+  ];
+  return windowV3(c, '29 V3 Cost Stop · Slate', {
+    side: sidebarV3(c, { groups: V3_GROUPS }),
+    main:
+      titleTabsV3(c, { tabs: V2_TABS, active: 0, right: v3Right(c) }) +
+      threadV2(c, blocks, {
+        composer: composerV2(c, {
+          placeholder: '지시를 바꿔 보내면 멈춘 곳에서 이어 갑니다',
+        }),
+        status: [
+          ['멈춤 · 비용 상한', 'warn'],
+          ['스텝 22/50'],
+          ['격리 harness'],
+          ['컨텍스트 38%'],
+          ['비용 상한 100%', 'warn'],
+        ],
+      }),
+    panel: v3Panel(c, {
+      objective: PHASE_OBJECTIVE,
+      phases: [
+        PHASE_FIND,
+        {
+          name: '수정',
+          open: true,
+          criterion: 'node check.js가 exit 0으로 끝난다',
+          todos: [
+            {
+              id: 't2',
+              title: 'math.js의 add를 덧셈으로 고친다',
+              status: 'verified',
+              origin: 'repo',
+              cmd: '$ node check.js',
+              result: 'exit 0',
+            },
+            { id: 't3', title: '음수 입력 검사를 check.js에 더한다', status: 'pending' },
+          ],
+        },
+        {
+          name: '문서',
+          criterion: 'README 예제가 실제 출력과 같다',
+          todos: [{ id: 't4', title: 'README 예제 출력을 갱신한다', status: 'pending' }],
+        },
+      ],
+      current: null,
+    }),
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
+/** 설정 › MCP. 서버별 연결 상태, 장애 기록, 켜고 끄기, 서버 추가 폼. 비밀정보는 환경변수 이름만 받는다. */
+function v3McpScreen() {
+  const c = palette('Slate');
+  const server = ({ name, kind, target, state, stateColor, stateIcon, tools, on, extra = '' }) =>
+    `<Frame w="fill" h="hug" flex="col" gap={8} px={16} py={12}>
+<Frame w="fill" h="hug" flex="row" items="center" gap={12}>
+<Frame w="fill" h="hug" flex="col" gap={3}><Frame w="hug" h="hug" flex="row" items="center" gap={8}>${T(c, 14, 20, 600, 'ink', name, '', mono)}${v3Badge(c, kind)}</Frame>${T(c, 12, 16, 400, 'ink3', target, 'w="fill" maxLines={1} truncate', mono)}</Frame>
+<Frame w={130} h="hug" flex="col" gap={2}>${T(c, 12, 16, 400, 'ink3', '도구')}${T(c, 12, 16, 500, 'ink2', tools, '', mono)}</Frame>
+<Frame w={150} h="hug" flex="row" items="center" gap={6}>${I(c, stateIcon, stateColor, 14)}${T(c, 12, 16, 500, stateColor, state)}</Frame>
+${v3Toggle(c, on)}
+</Frame>${extra}</Frame>`;
+  const failure = `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={12} py={10} rounded={8} bg="${c.sunken}">${T(c, 12, 18, 400, 'ink2', '14:02 연결 시간 초과(10초). 이 서버의 도구만 껐고, 세션은 계속 진행합니다.', 'grow={1} w="fill" textAutoResize="height"')}${button(c, 'secondary', '다시 연결', { icon: 'refresh-cw' })}</Frame>`;
+  const field = (label, value, hint = '') =>
+    `<Frame w="fill" h="hug" flex="col" gap={6}>${T(c, 12, 16, 500, 'ink2', label)}<Frame w="fill" h={34} flex="row" items="center" px={10} rounded={8} bg="${c.sunken}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${T(c, 13, 18, 400, value.startsWith('예:') ? 'ink3' : 'ink', value, '', mono)}</Frame>${hint ? T(c, 12, 16, 400, 'ink3', hint, 'w="fill" textAutoResize="height"') : ''}</Frame>`;
+  const seg = `<Frame w="hug" h={30} flex="row" items="center" p={2} rounded={8} bg="${c.sunken}"><Frame w="hug" h={26} flex="row" items="center" px={12} rounded={6} bg="${c.hover}">${T(c, 13, 18, 500, 'ink', 'stdio')}</Frame><Frame w="hug" h={26} flex="row" items="center" px={12}>${T(c, 13, 18, 500, 'ink2', 'HTTP')}</Frame></Frame>`;
+  const form = `<Frame w="fill" h="hug" flex="col" gap={12} p={16}>
+<Frame w="fill" h="hug" flex="row" gap={12}>${field('이름', 'figma')}<Frame w="hug" h="hug" flex="col" gap={6}>${T(c, 12, 16, 500, 'ink2', '전송 방식')}${seg}</Frame></Frame>
+${field('실행 명령', 'npx -y figma-mcp')}
+${field('환경변수 이름', 'FIGMA_TOKEN', '값은 여기에 적지 않습니다. Ora는 실행할 때 환경변수에서 읽습니다.')}
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '추가하고 연결')}</Frame>
+</Frame>`;
+  return v3SettingsPage(c, '30 V3 Settings MCP · Slate', 'MCP', {
+    title: 'MCP',
+    desc: '외부 도구 서버를 연결합니다. 서버의 도구도 권한 모드와 승인 규칙을 똑같이 따르고, 이름은 서버명:도구명으로 보입니다.',
+    body: `${v3Group(c, '서버', '3개', [
+      server({
+        name: 'github',
+        kind: 'stdio',
+        target: 'npx -y @modelcontextprotocol/server-github',
+        state: '연결됨',
+        stateColor: 'ok',
+        stateIcon: 'circle-check',
+        tools: '26개',
+        on: true,
+      }),
+      server({
+        name: 'linear',
+        kind: 'HTTP',
+        target: 'https://mcp.linear.app/mcp',
+        state: '응답 없음 · 도구 끔',
+        stateColor: 'warn',
+        stateIcon: 'circle-alert',
+        tools: '0 / 18개',
+        on: true,
+        extra: failure,
+      }),
+      server({
+        name: 'notes',
+        kind: 'stdio',
+        target: 'node ~/tools/notes-mcp.js',
+        state: '꺼 둠',
+        stateColor: 'ink3',
+        stateIcon: 'circle-dashed',
+        tools: '—',
+        on: false,
+      }),
+    ])}
+${v3Group(c, '서버 추가', '', [form])}`,
+  });
+}
+
+/** 설정 › 스킬. 프로젝트 스킬과 전역 스킬, 가려진 스킬, 최근 회상 기록. */
+function v3SkillsScreen() {
+  const c = palette('Slate');
+  const skill = ({ name, desc, used, shadowed = false }) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={12}>
+<Frame w="fill" h="hug" flex="col" gap={3}><Frame w="hug" h="hug" flex="row" items="center" gap={8}>${I(c, 'sparkles', shadowed ? 'ink3' : 'ink2', 14)}${T(c, 14, 20, 600, shadowed ? 'ink3' : 'ink', name, '', mono)}${shadowed ? v3Badge(c, '프로젝트 스킬이 가림') : ''}</Frame>${T(c, 12, 18, 400, shadowed ? 'ink3' : 'ink2', desc, 'w="fill" textAutoResize="height"')}</Frame>
+<Frame w={130} h="hug" flex="col" gap={2}>${T(c, 12, 16, 400, 'ink3', '사용')}${T(c, 12, 16, 500, 'ink2', used)}</Frame>
+</Frame>`;
+  const recall = (session, skills, age) =>
+    `<Frame w="fill" h={40} flex="row" items="center" gap={10} px={16}>${T(c, 13, 18, 500, 'ink', session, 'maxLines={1} truncate')}${T(c, 12, 16, 400, 'ink3', '·')}${T(c, 12, 16, 400, 'ink2', skills, 'grow={1}', mono)}${T(c, 12, 16, 400, 'ink3', age)}</Frame>`;
+  return v3SettingsPage(c, '31 V3 Settings Skills · Slate', '스킬', {
+    title: '스킬',
+    desc: '모델이 읽는 절차 문서입니다. 작업을 시작할 때 목록만 읽고, 관련 있는 스킬의 본문만 넣습니다. 이름이 같으면 프로젝트 스킬을 씁니다.',
+    body: `${v3Group(c, '프로젝트 · math-demo', '.ora/skills/', [
+      skill({
+        name: 'bugfix-checklist',
+        desc: '버그를 고치기 전에 재현 명령을 먼저 만들고, 고친 뒤 같은 명령으로 확인한다.',
+        used: '3회 · 2분 전',
+      }),
+      skill({
+        name: 'readme-examples',
+        desc: 'README 예제를 바꾸면 실제 실행 출력과 대조한다.',
+        used: '없음',
+      }),
+    ])}
+${v3Group(c, '전역', '~/.ora/skills/', [
+  skill({
+    name: 'korean-commit',
+    desc: '커밋 메시지를 한국어 한 줄 제목과 본문으로 쓴다.',
+    used: '12회 · 어제',
+  }),
+  skill({
+    name: 'bugfix-checklist',
+    desc: '버그 수정 절차의 전역 판입니다.',
+    used: '—',
+    shadowed: true,
+  }),
+])}
+${v3Group(c, '최근 회상', '', [
+  recall('add 함수 버그 수정', 'bugfix-checklist', '2분 전'),
+  recall('README 예제 출력 갱신', 'readme-examples 후보 · 본문 넣지 않음', '5분 전'),
+])}`,
+  });
+}
+
+/** 설정 › 알림. 사건별 데스크톱 알림 켜기, 브라우저 권한, 알림 미리보기와 테스트 알림. */
+function v3NotifyScreen() {
+  const c = palette('Slate');
+  const row = (icon, title, desc, on) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={12}>${I(c, icon, 'ink2', 16)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 14, 20, 500, 'ink', title)}${T(c, 12, 18, 400, 'ink3', desc, 'w="fill" textAutoResize="height"')}</Frame>${v3Toggle(c, on)}</Frame>`;
+  const preview = `<Frame w={360} h="hug" flex="row" items="start" gap={10} p={12} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w={32} h={32} flex="row" items="center" justify="center" rounded={8} bg="${c.hover}">${T(c, 15, 20, 700, 'ink', 'O')}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={2}><Frame w="fill" h="hug" flex="row" items="center">${T(c, 13, 18, 600, 'ink', 'Ora · math-demo')}${SP}${T(c, 11, 14, 400, 'ink3', '지금')}</Frame>${T(c, 13, 18, 500, 'ink', '승인이 필요합니다')}${T(c, 12, 18, 400, 'ink2', 'add 함수 버그 수정 · $ node check.js', 'w="fill" textAutoResize="height"')}</Frame>
+</Frame>`;
+  return v3SettingsPage(c, '32 V3 Settings Notify · Slate', '알림', {
+    title: '알림',
+    desc: 'Ora 창을 보고 있지 않을 때 데스크톱 알림을 보냅니다. 알림을 누르면 해당 세션 탭으로 갑니다. 알림을 꺼도 기록은 남습니다.',
+    body: `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={14} py={12} rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'circle-check', 'ok', 15)}${T(c, 13, 18, 500, 'ink', '브라우저 알림 권한: 허용됨')}${SP}${button(c, 'secondary', '테스트 알림 보내기', { icon: 'bell' })}</Frame>
+${v3Group(c, '알림을 보낼 사건', '', [
+  row(
+    'shield-check',
+    '승인 대기',
+    '명령 실행이나 예외 승인을 기다립니다. 알림을 누르면 그 승인 카드로 갑니다.',
+    true,
+  ),
+  row('message-circle-question', '질문 대기', '모델이 질문 카드로 답을 기다립니다.', true),
+  row('circle-check', '완료', '세션이 모든 할 일을 검증하고 끝났습니다.', true),
+  row('octagon-pause', '실패·멈춤', '오류, blocked, 비용 상한이나 최대 스텝으로 멈췄습니다.', true),
+  row('gauge', '비용 경고', '비용 상한의 경고 비율에 닿았습니다.', true),
+])}
+<Frame w="fill" h="hug" flex="col" gap={8}>${T(c, 13, 18, 500, 'ink2', '미리보기')}${preview}</Frame>`,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -1492,4 +1789,9 @@ export const SCREENS = [
   { file: 'v3-session-slate', jsx: v3SessionScreen },
   { file: 'v3-new-tab-slate', jsx: v3NewTabScreen },
   { file: 'v3-new-session-slate', jsx: v3NewSessionScreen },
+  { file: 'v3-review-slate', jsx: v3ReviewScreen },
+  { file: 'v3-cost-stop-slate', jsx: v3CostStopScreen },
+  { file: 'v3-settings-mcp-slate', jsx: v3McpScreen },
+  { file: 'v3-settings-skills-slate', jsx: v3SkillsScreen },
+  { file: 'v3-settings-notify-slate', jsx: v3NotifyScreen },
 ];
