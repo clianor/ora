@@ -1797,3 +1797,46 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+test(
+  '검증 명령에 --dry-run 토큰이 있으면 종료 코드 0이어도 failed이고, 인용 안 문자열과 --dry-run=false는 걸리지 않는다',
+  async () => {
+    const project = createProject();
+    const spec = (id: string, command: string) => ({
+      id,
+      content: `${id} 작업`,
+      verify: { command },
+    });
+    await runCli(
+      project,
+      [
+        respond(
+          use('d1', 'todo.update', {
+            todos: [
+              spec('t1', 'node -e 0 -- --dry-run'),
+              spec('t2', `node -e "console.log('--dry-run')"`),
+              spec('t3', 'node -e 0 -- --dry-run=false'),
+            ],
+          }),
+        ),
+        respond(
+          use('d2', 'todo.update', {
+            todos: ['t1', 't2', 't3'].map((id) => ({ id, status: 'attempted' })),
+          }),
+          ...['t1', 't2', 't3'].map((id) => use(`dv${id}`, 'verify.run', { todoId: id })),
+        ),
+      ],
+      ['--permission', 'bypass-permissions'],
+    );
+
+    const { events, todos } = readSession(project);
+    expect(todos.map((todo) => todo.status)).toEqual(['failed', 'verified', 'verified']);
+    const gates = events.flatMap((event) =>
+      event.type === 'verification' ? [event.payload.gate] : [],
+    );
+    expect(gates[0]).toEqual({ passed: false, findings: ['dry-run 검증: --dry-run'] });
+    expect(gates[1]).toEqual({ passed: true, findings: [] });
+    expect(gates[2]).toEqual({ passed: true, findings: [] });
+  },
+  TEST_TIMEOUT_MS,
+);

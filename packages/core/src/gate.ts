@@ -105,6 +105,53 @@ function findNoAssertion(command: string, output: string): string[] {
   return found;
 }
 
+const DRY_RUN_FLAGS = [
+  '--dry-run',
+  '--dryrun',
+  '--dry',
+  '--check-only',
+  '--what-if',
+  '--noop',
+  '--simulate',
+];
+
+/** 인용 없이 쓴 토큰만 돌려준다. ponytail: 백슬래시 이스케이프와 중첩 인용은 풀지 않는다. */
+function splitShellTokens(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote = '';
+  let isQuoted = false;
+  const flush = () => {
+    if (current !== '' && !isQuoted) tokens.push(current);
+    current = '';
+    isQuoted = false;
+  };
+  for (const char of command) {
+    if (quote !== '') {
+      if (char === quote) quote = '';
+      else current += char;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      isQuoted = true;
+    } else if (/\s/.test(char)) {
+      flush();
+    } else {
+      current += char;
+    }
+  }
+  flush();
+  return tokens;
+}
+
+/** 실제로 실행하지 않는 dry-run 검증이다. `--dry-run=false`와 `=0`은 실행하는 값이라 잡지 않는다. */
+function findDryRun(command: string): string[] {
+  const hits = splitShellTokens(command).filter((token) => {
+    const [name = '', value] = token.split(/=(.*)/s);
+    return DRY_RUN_FLAGS.includes(name) && value !== 'false' && value !== '0';
+  });
+  return [...new Set(hits)].map((token) => `dry-run 검증: ${token}`);
+}
+
 export function judgeGate(input: {
   readonly command: string;
   readonly output: string;
@@ -115,6 +162,7 @@ export function judgeGate(input: {
     ...input.stubs,
     ...findSkips(input.output),
     ...findNoAssertion(input.command, input.output),
+    ...findDryRun(input.command),
   ];
   return { passed: findings.length === 0, findings, unchecked: input.unchecked };
 }

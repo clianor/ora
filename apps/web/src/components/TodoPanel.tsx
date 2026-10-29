@@ -115,16 +115,18 @@ function getStepSuffix(stepId: string | undefined): string {
 
 /**
  * 게이트가 찾은 항목을 종류별로 세어 짧게 적습니다.
- * 단언 없음과 건너뜀은 접두어로 가르고, 나머지는 스텁입니다. 스텁이 한 가지 패턴뿐이면 그 패턴 이름(예: TODO)을, 여러 가지면 "스텁"을 씁니다.
+ * 단언 없음, 건너뜀, dry-run은 접두어로 가르고, 나머지는 스텁입니다. 스텁이 한 가지 패턴뿐이면 그 패턴 이름(예: TODO)을, 여러 가지면 "스텁"을 씁니다.
  */
 function summarizeGateFindings(findings: readonly string[]): string {
   const stubPatterns = new Set<string>();
   let stubs = 0;
   let skips = 0;
+  let dryRuns = 0;
   let noAssertions = 0;
   for (const finding of findings) {
     if (finding.startsWith('건너뜀:')) skips += 1;
     else if (finding.startsWith('단언 없는 검사:')) noAssertions += 1;
+    else if (finding.startsWith('dry-run 검증:')) dryRuns += 1;
     else {
       stubs += 1;
       stubPatterns.add(finding.replace(/^\S+\s/, ''));
@@ -135,6 +137,7 @@ function summarizeGateFindings(findings: readonly string[]): string {
     stubs > 0 ? `${stubName} ${stubs}곳` : '',
     skips > 0 ? `건너뜀 ${skips}곳` : '',
     noAssertions > 0 ? `단언 없음 ${noAssertions}곳` : '',
+    dryRuns > 0 ? `dry-run ${dryRuns}곳` : '',
   ].filter((part) => part !== '');
   return parts.join(' · ');
 }
