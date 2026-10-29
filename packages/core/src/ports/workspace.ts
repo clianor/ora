@@ -24,4 +24,8 @@ export interface WorkspacePort {
   listScopeFiles(paths: readonly string[]): Promise<string[]>;
   /** 절대 경로 파일의 텍스트다. 없으면 `undefined`다. */
   readText(path: string): Promise<string | undefined>;
+  /** 작업 폴더 안 모든 파일의 절대 경로와 `크기:수정시각`이다. 내용은 읽지 않는다. `.git`과 `node_modules`는 뺀다. */
+  snapshotFiles(): Promise<Record<string, string>>;
+  /** 주어진 절대 경로 가운데 있는 파일만 `snapshotFiles`와 같은 형식으로 돌려준다. */
+  statFiles(paths: readonly string[]): Promise<Record<string, string>>;
 }

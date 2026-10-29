@@ -38,6 +38,7 @@ import type { SessionStore } from './ports/session-store.ts';
 import type { Clock } from './ports/system.ts';
 import type { Tool, ToolOutput } from './ports/tool.ts';
 import type { TranscriptSink } from './ports/transcript-sink.ts';
+import { NODE_TEST, classifyOrigin, commandCandidates } from './origin.ts';
 import type { WorkspacePort } from './ports/workspace.ts';
 import { assembleSystemPrompt, describeTodos } from './prompt.ts';
 import { createRecorder } from './recorder.ts';
@@ -279,6 +280,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   const instructionFiles = await workspace.readInstructionFiles();
   const harnessFiles =
     settings.isolation === 'clean-home' ? await workspace.findHarnessFiles() : [];
+  const startFiles = resume === undefined ? await workspace.snapshotFiles() : undefined;
   const recall = await memory.recall({
     query: input.task,
     tokenBudget: settings.recallTokenBudget,
@@ -692,11 +694,21 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       gate = judgeGate({ command: todo.verify.command, output, stubs, unchecked });
     }
     const passed = exitedClean && gate?.passed !== false;
+    const origin = classifyOrigin({
+      command: todo.verify.command,
+      cwd: input.cwd,
+      instructions,
+      baselines: await store.readBaselines(),
+      ...(startFiles === undefined ? {} : { start: startFiles }),
+      current: NODE_TEST.test(todo.verify.command)
+        ? await workspace.snapshotFiles()
+        : await workspace.statFiles(commandCandidates(todo.verify.command, input.cwd)),
+    });
     const evidence: Evidence = {
       command: todo.verify.command,
       ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
       summary: summarizeOutput(output, SUMMARY_MAX_CHARS),
-      origin: todo.verify.origin,
+      origin,
       ranAt: now(),
       scopeDigest: await workspace.hashFiles(todo.writeScope),
       outputRef,
@@ -724,6 +736,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const updated: Todo = {
       ...todo,
       status: passed ? 'verified' : 'failed',
+      verify: { command: todo.verify.command, origin },
       evidence,
       updatedAt: now(),
     };

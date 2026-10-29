@@ -76,6 +76,17 @@ async function expandScope(root: string, path: string): Promise<string[]> {
   return (await Promise.all(names.map((name) => expandScope(root, join(path, name))))).flat();
 }
 
+async function stamps(paths: readonly string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  await Promise.all(
+    paths.map(async (path) => {
+      const info = await stat(path).catch(() => undefined);
+      if (info?.isFile()) out[path] = `${info.size}:${info.mtimeMs}`;
+    }),
+  );
+  return out;
+}
+
 function createWorkspace(
   cwd: string,
   gitRoot: string | undefined,
@@ -131,6 +142,11 @@ function createWorkspace(
       const files = (await Promise.all(paths.map((path) => expandScope(cwd, path)))).flat();
       return [...new Set(files.map((path) => resolve(cwd, path)))].sort();
     },
+    async snapshotFiles() {
+      const files = await expandScope(cwd, '.');
+      return stamps(files.map((path) => resolve(cwd, path)));
+    },
+    statFiles: (paths) => stamps(paths),
     readText: (path) => readFile(path, 'utf8').catch(() => undefined),
   };
 }

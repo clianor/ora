@@ -122,6 +122,7 @@ function runCli(
   responses: { content: Block[] }[],
   extraArgs: string[] = [],
   config?: object,
+  task = '파일을 고친다',
 ): Promise<CliResult> {
   const scriptPath = join(project.home, 'script.json');
   writeFileSync(scriptPath, JSON.stringify({ responses }));
@@ -137,7 +138,7 @@ function runCli(
     [
       CLI_PATH,
       'run',
-      '파일을 고친다',
+      task,
       '--model-script',
       scriptPath,
       '--record-model-input',
@@ -199,7 +200,7 @@ test(
       ['--permission', 'bypass-permissions'],
     );
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('모델이 만든 검사로만 통과');
+    expect(result.stdout).not.toContain('모델이 만든 검사로만 통과');
 
     const { events, session, todos } = readSession(project);
     expect(readFileSync(join(project.dir, 'foo.js'), 'utf8')).toContain('a + b');
@@ -207,7 +208,7 @@ test(
     expect(todos).toHaveLength(1);
     expect(todos[0]).toMatchObject({
       status: 'verified',
-      evidence: { command: 'node check.js', exitCode: 0, origin: 'model' },
+      evidence: { command: 'node check.js', exitCode: 0, origin: 'repo' },
     });
     expect(todoTransitions(events)).toEqual([
       'pending',
@@ -1694,6 +1695,105 @@ test(
       findings: [expect.stringContaining('단언 없는 검사')],
     });
     expect(gates[2]).toEqual({ passed: true, findings: [] });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+const originSetup = (command: string): { content: Block[] }[] => [
+  respond(
+    use('c1', 'todo.update', {
+      objective: '파일 수정',
+      phases: [{ name: '수정', criterion: '검사 통과' }],
+      todos: [
+        {
+          id: 't1',
+          phase: '수정',
+          content: 'foo.js의 add를 고친다',
+          writeScope: ['foo.js', 'lib'],
+          verify: { command, origin: 'user' },
+        },
+      ],
+    }),
+  ),
+  ...setupResponses.slice(1),
+];
+
+async function runOriginCase(command: string, before: Block[], task?: string) {
+  const project = createProject();
+  await runCli(
+    project,
+    [
+      ...originSetup(command),
+      ...before.map((block) => respond(block)),
+      ...repairResponses('f', 'a - b', 'a + b', true),
+      ...closingResponses,
+    ],
+    ['--permission', 'bypass-permissions'],
+    undefined,
+    task,
+  );
+  return readSession(project).todos[0];
+}
+
+const expectOrigin = (todo: unknown, origin: string): void => {
+  expect(todo).toMatchObject({
+    status: 'verified',
+    verify: { origin },
+    evidence: { origin },
+  });
+};
+
+const NEW_CHECK = "const { add } = require('./foo.js');\nprocess.exit(add(1, 2) === 3 ? 0 : 1);\n";
+
+test(
+  '사용자 지시에 그대로 있는 검증 명령은 user다',
+  async () => {
+    const todo = await runOriginCase(
+      'node check.js',
+      [],
+      '버그를 고치고 node check.js 로 검증한다',
+    );
+    expectOrigin(todo, 'user');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '지시에 없고 원래 있던 파일만 가리키는 검증 명령은 repo다',
+  async () => {
+    expectOrigin(await runOriginCase('node check.js', []), 'repo');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '모델이 새로 만든 파일을 가리키는 검증 명령은 model이다',
+  async () => {
+    const write = use('w1', 'file_write', { path: 'check2.js', content: NEW_CHECK });
+    expectOrigin(await runOriginCase('node check2.js', [write]), 'model');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '모델이 고친 검사 파일을 가리키는 검증 명령은 model이다',
+  async () => {
+    const read = use('w0', 'file_read', { path: 'check.js' });
+    const edit = use('w1', 'file_edit', {
+      path: 'check.js',
+      oldText: "console.log('ok');",
+      newText: "console.log('ok!');",
+    });
+    expectOrigin(await runOriginCase('node check.js', [read, edit]), 'model');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '셸로 고친 검사 파일을 가리키는 검증 명령은 model이다',
+  async () => {
+    const shell = use('w1', 'shell', { command: "echo '// x' >> check.js" });
+    expectOrigin(await runOriginCase('node check.js', [shell]), 'model');
   },
   TEST_TIMEOUT_MS,
 );
