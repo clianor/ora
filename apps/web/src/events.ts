@@ -8,6 +8,17 @@ type JsonObject = NonNullable<ToolPart['args']>;
 
 export const stages: readonly Stage[] = stageSchema.options;
 
+export const stageLabels: Record<Stage, string> = {
+  understand: 'Understand',
+  research: 'Research',
+  decide: 'Decide',
+  plan: 'Plan',
+  execute: 'Execute',
+  verify: 'Verify',
+  operate: 'Operate',
+  learn: 'Learn',
+};
+
 export interface ToolResultView {
   status: 'ok' | 'error' | 'aborted' | 'timeout';
   summary: string;

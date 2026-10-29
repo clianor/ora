@@ -139,6 +139,29 @@ const configSchema = z.object({
   recall: z
     .object({ tokenBudget: z.number().int().nonnegative().default(2000) })
     .default({ tokenBudget: 2000 }),
+  /** 비용 가드레일이다 (SPEC 5.4절). 값은 `pricing` 단가로 환산한 금액이다. 비우면(null) 상한이 없다. */
+  session: z
+    .strictObject({
+      maxCost: z.number().positive().nullable().default(null),
+      warnCost: z.number().positive().nullable().default(null),
+    })
+    .refine(
+      ({ maxCost, warnCost }) => maxCost === null || warnCost === null || warnCost <= maxCost,
+      { error: 'session.warnCost는 session.maxCost 이하여야 합니다.', path: ['warnCost'] },
+    )
+    .default({ maxCost: null, warnCost: null }),
+  /** `<프로바이더>/<모델>`마다 100만 토큰당 단가다. 사용자가 직접 적고 가드레일 판정에만 쓴다. */
+  pricing: z
+    .record(
+      z.string().regex(/^[^/]+\/.+$/, { error: '키는 <프로바이더>/<모델> 형식입니다.' }),
+      z.strictObject({
+        inputPerMTok: z.number().nonnegative(),
+        outputPerMTok: z.number().nonnegative(),
+        cacheReadPerMTok: z.number().nonnegative().optional(),
+        cacheWritePerMTok: z.number().nonnegative().optional(),
+      }),
+    )
+    .default({}),
   /** 컨텍스트 압축 설정이다 (SPEC 4.3절). 요약 모델은 `roles.compaction` 체인이 정한다. */
   context: z
     .strictObject({
@@ -168,6 +191,14 @@ const configSchema = z.object({
   models: z.array(catalogModelSchema).default([]),
 });
 export type Config = z.infer<typeof configSchema>;
+
+/** 설정 객체가 스키마에 맞는지 검사한다. 틀리면 오류 위치를 담은 `UsageError`를 던진다. */
+export function validateConfigObject(json: unknown): void {
+  const parsed = configSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new UsageError(`설정 형식이 틀립니다.\n${z.prettifyError(parsed.error)}`);
+  }
+}
 
 export async function loadConfig(configPath: string | undefined, oraHome: string): Promise<Config> {
   const path = configPath ?? join(oraHome, 'engine.config.json');

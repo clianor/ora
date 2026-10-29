@@ -33,14 +33,16 @@ import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
 import type { MemoryPort } from './ports/memory.ts';
-import { ModelLimitError } from './ports/model.ts';
+import { CostStopError, ModelLimitError } from './ports/model.ts';
 import type {
   ModelChainEntry,
   ModelMessage,
   ModelPort,
+  ModelPricing,
   ModelRequest,
   ModelRouter,
   ModelStreamEvent,
+  ModelUsage,
 } from './ports/model.ts';
 import type { SessionStore } from './ports/session-store.ts';
 import type { Clock } from './ports/system.ts';
@@ -100,6 +102,11 @@ export interface EngineSettings {
   readonly protectToolTokens: number;
   readonly minPruneSavings: number;
   readonly methodOrder: readonly ('shake' | 'handoff' | 'summary')[];
+  /** 비용 상한이다 (SPEC 5.4절). 비우면 상한이 없다. 단위는 `pricing`과 같다. */
+  readonly maxCost?: number;
+  readonly warnCost?: number;
+  /** `<프로바이더>/<모델>`마다 100만 토큰당 단가다. 가드레일 판정에만 쓴다. */
+  readonly pricing?: Readonly<Record<string, ModelPricing>>;
 }
 
 export interface EngineDeps {
@@ -370,6 +377,67 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         used,
       ],
     });
+  };
+
+  const priceOf = (model: string): ModelPricing | undefined => {
+    const pricing = settings.pricing ?? {};
+    const key = Object.keys(pricing).find((name) => name === model || name.endsWith(`/${model}`));
+    return key === undefined ? undefined : pricing[key];
+  };
+  const costOf = (model: string, usage: ModelUsage): number => {
+    const price = priceOf(model);
+    if (price === undefined) return 0;
+    return (
+      (usage.uncachedInputTokens * price.inputPerMTok +
+        usage.cacheReadInputTokens * (price.cacheReadPerMTok ?? price.inputPerMTok) +
+        usage.cacheCreationInputTokens * (price.cacheWritePerMTok ?? price.inputPerMTok) +
+        usage.outputTokens * price.outputPerMTok) /
+      1_000_000
+    );
+  };
+  let spent = (resume?.plan.modelUsage ?? []).reduce(
+    (total, item) => total + costOf(item.model, item.usage),
+    0,
+  );
+  let costWarned = resume?.plan.costWarned ?? false;
+  const ratioPct = () => {
+    const base = settings.maxCost ?? settings.warnCost;
+    return base === undefined || base <= 0 ? undefined : Math.floor((spent / base) * 100);
+  };
+  /** 모델 요청 전에 호출한다. 상한 이상이거나 `maxCost`가 있는데 단가가 없으면 요청을 막고, 경고 비용에 처음 닿으면 한 번 기록한다. */
+  const guardCost = async (model: string) => {
+    if (settings.maxCost !== undefined) {
+      if (priceOf(model) === undefined) {
+        await emit('engine', {
+          type: 'cost_guard',
+          payload: { outcome: 'pricing_missing', model },
+        });
+        throw new CostStopError(
+          `비용 상한을 설정했지만 ${model}의 단가가 없어 요청을 보내지 않았습니다. 설정 pricing에 단가를 입력합니다.`,
+          'pricing_missing',
+        );
+      }
+      if (spent >= settings.maxCost) {
+        const pct = ratioPct() ?? 100;
+        await emit('engine', { type: 'cost_guard', payload: { outcome: 'limit', ratioPct: pct } });
+        throw new CostStopError(
+          `비용 상한의 ${pct}%에 닿아 다음 요청을 보내지 않고 멈춥니다.`,
+          'limit',
+        );
+      }
+    }
+    if (settings.warnCost !== undefined && !costWarned && spent >= settings.warnCost) {
+      costWarned = true;
+      await emit('engine', {
+        type: 'cost_guard',
+        payload: { outcome: 'warn', ratioPct: ratioPct() ?? 0 },
+      });
+    }
+  };
+  const addSpend = (model: string, usage: ModelUsage) => {
+    spent += costOf(model, usage);
+    const pct = settings.maxCost === undefined ? undefined : ratioPct();
+    return pct === undefined ? {} : { costRatioPct: pct };
   };
 
   let taskSeq = 0;
@@ -1246,6 +1314,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     }
     for (;;) {
       const port = await currentPort(role);
+      await guardCost(port.model);
       const started = clock.now().getTime();
       try {
         let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
@@ -1296,6 +1365,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         role: 'compaction',
         nativeToolCalls: completed.nativeToolCalls,
         usage: completed.usage,
+        ...addSpend(port.model, completed.usage),
         durationMs,
         purpose: 'compaction',
       },
@@ -1691,6 +1761,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           role: 'default',
           nativeToolCalls: completed.nativeToolCalls,
           usage: completed.usage,
+          ...addSpend(port.model, completed.usage),
           durationMs,
         },
       });
@@ -1814,6 +1885,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     }
   } catch (error) {
     if (signal.aborted || softStop.aborted) return await finishCancelled();
+    if (error instanceof CostStopError) {
+      await emit('engine', {
+        type: 'memory',
+        payload: { learnSkipped: true, reason: 'cost_limit' },
+      });
+      return await finish('stopped', 'cost_limit', error.message);
+    }
     return await finish('failed', 'error', error instanceof Error ? error.message : String(error));
   }
 }

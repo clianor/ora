@@ -154,3 +154,19 @@ export const infoResponseSchema = z.strictObject({
   maxSteps: z.number().int().positive(),
 });
 export type InfoResponse = z.infer<typeof infoResponseSchema>;
+
+const modelPricingSchema = z.strictObject({
+  inputPerMTok: z.number().nonnegative(),
+  outputPerMTok: z.number().nonnegative(),
+  cacheReadPerMTok: z.number().nonnegative().optional(),
+  cacheWritePerMTok: z.number().nonnegative().optional(),
+});
+
+/** 설정 › 비용 상한의 값이다. 금액은 이 화면과 설정 파일에만 있고 세션 기록에는 비율만 남는다 (SPEC 5.4절). `null`은 설정하지 않음이다. */
+export const costSettingsSchema = z.strictObject({
+  maxCost: z.number().positive().nullable(),
+  warnCost: z.number().positive().nullable(),
+  /** `<프로바이더>/<모델>` 키마다 100만 토큰당 단가다. */
+  pricing: z.record(z.string().min(1), modelPricingSchema),
+});
+export type CostSettings = z.infer<typeof costSettingsSchema>;

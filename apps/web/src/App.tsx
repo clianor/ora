@@ -4,6 +4,7 @@ import { Header } from './components/Header.tsx';
 import { AccountsPage } from './components/Accounts.tsx';
 import { HistoryScreen } from './components/History.tsx';
 import { AppearancePage, SettingsNav } from './components/Settings.tsx';
+import { CostPage, NotificationsPage } from './components/SettingsPages.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { focusTodoPanel } from './components/RightPanel.tsx';
 import { StatusBar } from './components/StatusBar.tsx';
@@ -11,6 +12,7 @@ import { EmptyWelcome } from './components/Welcome.tsx';
 import { WorktreeScreen } from './components/WorktreeScreen.tsx';
 import { togglePanel } from './lib/panel.ts';
 import { navigate, setPaletteOpen, useRouteState, type RouteState } from './lib/route.ts';
+import { useDesktopNotifications } from './lib/notify.ts';
 import { useStore } from './store.tsx';
 
 function useShortcuts(state: RouteState) {
@@ -57,7 +59,10 @@ function Screen({ state }: { state: RouteState }) {
         <>
           <SettingsNav current={page} />
           <main className="flex min-w-0 flex-1 flex-col">
-            {page === 'accounts' ? <AccountsPage /> : <AppearancePage />}
+            {page === 'accounts' && <AccountsPage />}
+            {page === 'cost' && <CostPage />}
+            {page === 'notifications' && <NotificationsPage />}
+            {page === 'appearance' && <AppearancePage />}
           </main>
         </>
       );
@@ -88,6 +93,7 @@ export function App() {
   const state = useRouteState();
   const store = useStore();
   useShortcuts(state);
+  useDesktopNotifications(store);
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <div className="flex min-h-0 flex-1">

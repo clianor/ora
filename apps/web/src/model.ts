@@ -1,6 +1,7 @@
 import type {
   AccountProvider,
   ApprovalDecision,
+  CostSettings,
   LoginState,
   OraEvent,
   PendingApproval,
@@ -153,6 +154,10 @@ export interface OraActions {
   addApiKey: (provider: AccountProvider, envName: string) => Promise<void>;
   logoutAccount: (provider: AccountProvider, name: string) => Promise<void>;
   setAccountPriority: (provider: AccountProvider, name: string, priority: number) => Promise<void>;
+  /** 설정 파일의 비용 상한과 단가를 서버에서 다시 읽습니다. */
+  refreshCostSettings: () => Promise<void>;
+  /** 비용 상한과 단가를 설정 파일에 씁니다. 서버가 형식을 거부하면 거부합니다. 다음에 시작하거나 이어 가는 세션부터 적용합니다. */
+  saveCostSettings: (next: CostSettings) => Promise<void>;
   dismissError: (sessionId: string) => void;
   /** 워크트리의 탭 목록과 그 워크트리의 터미널 목록을 서버에서 읽어 저장소에 채웁니다. */
   loadTabs: (cwd: string) => Promise<void>;
@@ -174,6 +179,13 @@ export interface AccountsData {
   status: 'loading' | 'ready' | 'error';
   errorMessage?: string;
   providers: ProviderAccounts[];
+}
+
+/** 설정 › 비용 상한 페이지가 그리는 데이터입니다. */
+export interface CostSettingsData {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  settings?: CostSettings;
 }
 
 /**
@@ -209,6 +221,7 @@ export interface OraStore {
   watchSession: (sessionId: string) => () => void;
   actions: OraActions;
   accounts: AccountsData;
+  costSettings: CostSettingsData;
 }
 
 export interface OraStoreSource {

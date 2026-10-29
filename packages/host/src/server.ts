@@ -35,6 +35,7 @@ import {
 import {
   accountProviderSchema,
   addApiKeyBodySchema,
+  costSettingsSchema,
   setPriorityBodySchema,
   startLoginBodySchema,
 } from '@ora/protocol';
@@ -60,6 +61,7 @@ import { applyTodoActionToStoppedSession, launchSession, listSessions } from './
 import type { UserTodoAction } from '@ora/core';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
 import { AccountApiError, createAccountApi } from './account-api.ts';
+import { createCostApi } from './cost-api.ts';
 import { createTerminalManager } from './terminal.ts';
 
 const COOKIE_NAME = 'ora_token';
@@ -294,6 +296,10 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         record?.accountPin === undefined ? [] : [record.accountPin],
       );
     },
+  });
+  const costApi = createCostApi({
+    env: options.env,
+    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
   });
 
   const publish = (sessionId: string, name: string | undefined, data: unknown, id?: number) => {
@@ -788,6 +794,15 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         maxSteps: config.limits.maxSteps,
       };
       reply(res, 200, info);
+      return;
+    }
+    if (segments[1] === 'cost-settings' && segments.length === 2) {
+      if (method === 'GET') {
+        reply(res, 200, await costApi.get());
+        return;
+      }
+      if (method !== 'PUT') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      reply(res, 200, await costApi.set(parseBody(costSettingsSchema, await readJson(req))));
       return;
     }
     if (segments[1] === 'accounts') {

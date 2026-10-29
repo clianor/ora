@@ -14,7 +14,6 @@ import { pickPanelTab, setPanelOpen, usePanelState } from '../lib/panel.ts';
 import { closeTab, openNewTab, selectTab, type TabContext } from '../lib/tabs.ts';
 import { useStore } from '../store.tsx';
 import { DiffStat } from '../ui/stat.tsx';
-import { StageChip } from './Header.tsx';
 import { StatusIcon } from './StatusIcon.tsx';
 
 function tabIcon(tab: WorktreeTab, status: SessionStatus | undefined): ReactNode {
@@ -27,16 +26,15 @@ function tabIcon(tab: WorktreeTab, status: SessionStatus | undefined): ReactNode
 
 interface TitleBarProps {
   context: TabContext;
-  stageIndex: number | null;
   diff: { add: number; del: number } | null;
   onToggleSidebar: () => void;
 }
 
 /**
- * 창 맨 위 제목 줄입니다. 왼쪽에 탭, 오른쪽에 단계 칩과 diff 칩, 패널이 접혔을 때의 열기 단추를 둡니다.
+ * 창 맨 위 제목 줄입니다. 왼쪽에 탭, 오른쪽에 diff 칩과 패널이 접혔을 때의 열기 단추를 둡니다.
  * 고른 탭은 본문과 같은 바탕이라 아래 내용으로 이어져 보입니다.
  */
-export function TitleBar({ context, stageIndex, diff, onToggleSidebar }: TitleBarProps) {
+export function TitleBar({ context, diff, onToggleSidebar }: TitleBarProps) {
   const store = useStore();
   const { isOpen } = usePanelState();
   const tabButtons = useRef<(HTMLButtonElement | null)[]>([]);
@@ -148,7 +146,6 @@ export function TitleBar({ context, stageIndex, diff, onToggleSidebar }: TitleBa
         <Plus aria-hidden className="size-4" />
       </button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5 px-2.5">
-        {stageIndex !== null && <StageChip index={stageIndex} />}
         {diff && (
           <button
             type="button"

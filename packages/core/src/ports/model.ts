@@ -60,6 +60,23 @@ export class ModelLimitError extends Error {
   }
 }
 
+/** 모델 하나의 100만 토큰당 단가다. 비용 가드레일 판정에만 쓴다. 캐시 단가를 비우면 입력 단가로 계산한다. */
+export interface ModelPricing {
+  readonly inputPerMTok: number;
+  readonly outputPerMTok: number;
+  readonly cacheReadPerMTok?: number;
+  readonly cacheWritePerMTok?: number;
+}
+
+/** 비용 가드레일이 모델 요청을 막았다는 신호다. 엔진이 세션을 `cost_limit`으로 멈춘다. */
+export class CostStopError extends Error {
+  readonly guard: 'limit' | 'pricing_missing';
+  constructor(message: string, guard: 'limit' | 'pricing_missing') {
+    super(message);
+    this.guard = guard;
+  }
+}
+
 export interface ModelChainEntry {
   readonly provider: string;
   readonly model: string;

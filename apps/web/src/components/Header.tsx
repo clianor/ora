@@ -1,55 +1,10 @@
-import type { Stage } from '@ora/protocol';
 import { CirclePause, GitCompare, PanelLeft } from 'lucide-react';
-import { stages } from '../events.ts';
-import { cn } from '../lib/cn.ts';
 import { DiffStat } from '../ui/stat.tsx';
-
-const stageLabel: Record<Stage, string> = {
-  understand: 'Understand',
-  research: 'Research',
-  decide: 'Decide',
-  plan: 'Plan',
-  execute: 'Execute',
-  verify: 'Verify',
-  operate: 'Operate',
-  learn: 'Learn',
-};
-
-export function StageChip({ index }: { index: number }) {
-  const current = stages[index];
-  if (!current) return null;
-  return (
-    <div
-      role="group"
-      aria-label={`단계 ${index + 1}/${stages.length}, ${stageLabel[current]}`}
-      className="flex h-7 items-center gap-2 rounded-sm bg-surface px-2.5"
-    >
-      <span aria-hidden className="flex gap-[3px]">
-        {stages.map((stage, position) => (
-          <span
-            key={stage}
-            className={cn(
-              'size-1.5 rounded-full',
-              position < index && 'bg-success',
-              position === index && 'bg-foreground',
-              position > index && 'bg-foreground-subtle',
-            )}
-          />
-        ))}
-      </span>
-      <span className="text-xs leading-4 font-medium text-foreground">{stageLabel[current]}</span>
-      <span className="text-xs leading-4 text-foreground-subtle">
-        {index + 1}/{stages.length}
-      </span>
-    </div>
-  );
-}
 
 interface HeaderProps {
   title?: string;
   repoLabel?: string;
   repoTitle?: string;
-  stageIndex?: number | null;
   diff?: { add: number; del: number } | null;
   isCrashed?: boolean;
   onToggleSidebar: () => void;
@@ -59,7 +14,6 @@ export function Header({
   title,
   repoLabel,
   repoTitle,
-  stageIndex = null,
   diff = null,
   isCrashed = false,
   onToggleSidebar,
@@ -98,7 +52,6 @@ export function Header({
         </span>
       )}
       <div className="ml-auto flex shrink-0 items-center gap-3">
-        {stageIndex !== null && <StageChip index={stageIndex} />}
         {diff && (
           <div className="flex h-7 items-center gap-1.5 rounded-sm bg-surface px-2.5">
             <GitCompare aria-hidden className="size-3.5 text-foreground-muted" />

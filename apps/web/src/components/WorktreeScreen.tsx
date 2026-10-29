@@ -1,7 +1,6 @@
 import type { WorktreeTab, WorktreeTabs } from '@ora/protocol';
 import { Globe, MessageSquare, Smartphone, SquareTerminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { getStageIndex } from '../events.ts';
 import { cn } from '../lib/cn.ts';
 import { basename } from '../lib/path.ts';
 import { navigate, type RouteState } from '../lib/route.ts';
@@ -313,7 +312,6 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
             />
             <TitleBar
               context={context}
-              stageIndex={activeView ? getStageIndex(activeView.events) : null}
               diff={diff}
               onToggleSidebar={() => {
                 setIsSidebarOpen(!isSidebarOpen);

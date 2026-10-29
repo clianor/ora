@@ -8,7 +8,7 @@ import type {
   Stage,
   Todo,
 } from '@ora/protocol';
-import type { ModelMessage } from './ports/model.ts';
+import type { ModelMessage, ModelUsage } from './ports/model.ts';
 import { applyPrune, shakeMessages, summaryMessage } from './compaction.ts';
 import type { OpenError } from './compaction.ts';
 import { ensurePhase, phaseOf } from './todos.ts';
@@ -221,6 +221,10 @@ export interface ResumePlan {
   readonly summaryFallback?: EventOf<'resume'>['payload']['summaryFallback'];
   /** 마지막 압축 요약이 `history`의 첫 메시지를 대신한다. */
   readonly hasSummary: boolean;
+  /** 지난 실행까지 모델 요청마다 쓴 토큰이다. 재개한 세션이 비용 누적을 이어받는 데 쓴다. */
+  readonly modelUsage: readonly { readonly model: string; readonly usage: ModelUsage }[];
+  /** 비용 경고를 이미 한 번 남겼는지다. */
+  readonly costWarned: boolean;
 }
 
 const BATCH_EVENT_TYPES: readonly OraEvent['type'][] = [
@@ -396,6 +400,14 @@ export function planResume(
     instructions,
     openErrors,
     hasSummary: compaction !== undefined,
+    modelUsage: events.flatMap((event) =>
+      event.type === 'model_request'
+        ? [{ model: event.payload.model, usage: event.payload.usage }]
+        : [],
+    ),
+    costWarned: events.some(
+      (event) => event.type === 'cost_guard' && event.payload.outcome === 'warn',
+    ),
     ...(missing.length === 0
       ? {}
       : {

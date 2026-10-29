@@ -1879,3 +1879,97 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+const costPricing = { 'fake/scripted': { inputPerMTok: 1, outputPerMTok: 1 } };
+
+// 요청 하나가 0.6을 쓰는 응답이다. 도구 호출이 있어 진전 없음으로 멈추지 않는다.
+function costResponse(callId: string): { content: Block[] } {
+  return {
+    ...respond(use(callId, 'file_read', { path: 'foo.js' })),
+    usage: {
+      uncachedInputTokens: 600_000,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      outputTokens: 0,
+    },
+  } as { content: Block[] };
+}
+
+function writeCostConfig(project: Project, config: object): void {
+  writeFileSync(
+    join(project.home, 'engine.config.json'),
+    JSON.stringify({ schemaVersion: 1, permissions: { mode: 'bypass-permissions' }, ...config }),
+  );
+}
+
+test(
+  '비용 상한에 닿으면 경고를 한 번 남기고 요청 없이 cost_limit로 멈추며, 재개해도 누적을 이어받는다',
+  async () => {
+    const project = createProject();
+    const result = await runCli(
+      project,
+      [costResponse('a'), costResponse('b'), costResponse('c')],
+      [],
+      { session: { maxCost: 1, warnCost: 0.5 }, pricing: costPricing },
+    );
+    expect(result.code).toBe(1);
+
+    const { session, events } = readSession(project);
+    expect(session).toMatchObject({ status: 'stopped', endReason: 'cost_limit' });
+    const requests = events.filter((event) => event.type === 'model_request');
+    expect(requests.map((event) => event.payload.costRatioPct)).toEqual([60, 120]);
+    expect(
+      events.filter((event) => event.type === 'cost_guard').map((event) => event.payload),
+    ).toEqual([
+      { outcome: 'warn', ratioPct: 60 },
+      { outcome: 'limit', ratioPct: 120 },
+    ]);
+    expect(events.find((event) => event.type === 'memory')).toMatchObject({
+      payload: { learnSkipped: true, reason: 'cost_limit' },
+    });
+    expect(JSON.stringify(events)).not.toMatch(/0\.6|1\.2/);
+
+    const same = await startResume(
+      project,
+      sessionIdOf(project),
+      'again',
+      [costResponse('d')],
+      ['--steer', '이어 간다'],
+    ).done;
+    expect(same.code).toBe(1);
+    const afterSame = readSession(project);
+    expect(afterSame.events.filter((event) => event.type === 'model_request')).toHaveLength(2);
+    expect(afterSame.events.filter((event) => event.type === 'cost_guard')).toHaveLength(3);
+
+    writeCostConfig(project, {
+      session: { maxCost: 1.5, warnCost: 0.5 },
+      pricing: costPricing,
+      limits: { maxSteps: 1 },
+    });
+    await startResume(project, sessionIdOf(project), 'raised', [costResponse('e')]).done;
+    const afterRaise = readSession(project);
+    expect(afterRaise.events.filter((event) => event.type === 'model_request')).toHaveLength(3);
+    expect(afterRaise.session).toMatchObject({ status: 'stopped', endReason: 'max_steps' });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '상한을 설정했는데 단가표에 없는 모델이면 요청을 보내지 않고 단가 입력을 요구한다',
+  async () => {
+    const project = createProject();
+    const result = await runCli(project, [finalReport], [], { session: { maxCost: 1 } });
+    expect(result.code).toBe(1);
+
+    const { session, events } = readSession(project);
+    expect(session).toMatchObject({ status: 'stopped', endReason: 'cost_limit' });
+    expect(events.filter((event) => event.type === 'model_request')).toHaveLength(0);
+    expect(events.find((event) => event.type === 'cost_guard')).toMatchObject({
+      payload: { outcome: 'pricing_missing', model: 'fake/scripted' },
+    });
+    expect(events.find((event) => event.type === 'session_end')?.payload.summary).toContain(
+      'pricing',
+    );
+  },
+  TEST_TIMEOUT_MS,
+);

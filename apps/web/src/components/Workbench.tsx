@@ -1,12 +1,16 @@
-import { TriangleAlert, X } from 'lucide-react';
+import { Gauge, TriangleAlert, X } from 'lucide-react';
 import { useEffect } from 'react';
+import { getStageIndex, stageLabels, stages } from '../events.ts';
+import { getCostView } from '../lib/cost.ts';
 import { runningStatuses } from '../lib/status.ts';
-import type { SessionView } from '../model.ts';
+import type { SessionView, StatusItem } from '../model.ts';
 import { runAction, useStore } from '../store.tsx';
 import { ApprovalCard } from './ApprovalCard.tsx';
 import { ChatProvider, Composer, StatusLine, SteerRestore, ThreadView } from './Chat.tsx';
+import { CostStopCard } from './CostStopCard.tsx';
 import { CrashedNotice } from './CrashedNotice.tsx';
 import { QuestionCard } from './QuestionCard.tsx';
+import { scrollIfRequested } from '../lib/notify.ts';
 import { ModelSwitchToast } from './ModelSwitchToast.tsx';
 
 const timeFormat = new Intl.DateTimeFormat('ko-KR', {
@@ -65,6 +69,21 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
   const errorText = view.error ?? overflowText;
   const approval = view.approvals[0];
   const question = view.questions[0];
+  const cost = getCostView(view.events, record.status);
+  const stageIndex = getStageIndex(view.events);
+  const isDone = record.status === 'completed' || record.status === 'archived';
+  const costText = cost.ratioPct === undefined ? undefined : `비용 상한 ${cost.ratioPct}%`;
+  const statusItems: StatusItem[] = [
+    ...(stageIndex === null ? [] : [`단계 ${stageLabels[stages[stageIndex] ?? 'understand']}`]),
+    ...(cost.stop ? [{ text: '멈춤 · 비용 상한', isWarning: true as const }] : []),
+    ...view.statusLine,
+    ...(costText === undefined
+      ? []
+      : [cost.isWarned || cost.stop ? { text: costText, isWarning: true as const } : costText]),
+  ];
+  const remainingTodos = view.todos.filter(
+    (todo) => todo.status !== 'verified' && todo.status !== 'abandoned',
+  ).length;
 
   return (
     <>
@@ -77,13 +96,14 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
           <SteerRestore failure={view.steerFailure} />
           <ThreadView>
             {approval && (
-              <ApprovalCard
-                key={approval.requestId}
-                request={approval.request}
-                onDecide={(decision) => {
-                  runAction(actions.decideApproval(sessionId, approval.requestId, decision));
-                }}
-              />
+              <div key={approval.requestId} ref={scrollIfRequested}>
+                <ApprovalCard
+                  request={approval.request}
+                  onDecide={(decision) => {
+                    runAction(actions.decideApproval(sessionId, approval.requestId, decision));
+                  }}
+                />
+              </div>
             )}
             {question && (
               <QuestionCard
@@ -102,6 +122,13 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
                 abortedCalls={thread.abortedCalls}
                 resumeTodo={resumeTodo ? { id: resumeTodo.id, title: resumeTodo.content } : null}
                 lastVerifiedId={lastVerified?.id ?? null}
+              />
+            )}
+            {cost.stop && (
+              <CostStopCard
+                stop={cost.stop}
+                {...(cost.ratioPct === undefined ? {} : { ratioPct: cost.ratioPct })}
+                remainingTodos={remainingTodos}
               />
             )}
           </ThreadView>
@@ -132,16 +159,26 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
                 있습니다
               </p>
             )}
+            {cost.isWarned && !cost.stop && cost.ratioPct !== undefined && !isDone && (
+              <p className="mb-2 flex w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
+                <Gauge aria-hidden className="size-3.5 text-warning" />
+                비용 상한의 {cost.ratioPct}%를 썼습니다 · 상한에 닿으면 다음 요청을 보내지 않고
+                멈춥니다
+              </p>
+            )}
             <Composer
               isRunning={isRunning}
               isStopping={view.isStopping}
-              placeholder={view.placeholder}
+              placeholder={
+                view.placeholder ??
+                (cost.stop ? '지시를 바꿔 보내면 멈춘 곳에서 이어 갑니다' : undefined)
+              }
               chips={view.chips}
               onStop={() => {
                 runAction(actions.cancelRun(sessionId, view.isStopping ? 'hard' : 'soft'));
               }}
             />
-            <StatusLine items={view.statusLine} context={view.context} cache={view.cache} />
+            <StatusLine items={statusItems} context={view.context} cache={view.cache} />
           </div>
         </ChatProvider>
       </main>

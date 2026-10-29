@@ -2,7 +2,9 @@ import { useSyncExternalStore } from 'react';
 
 export type Route = 'worktree' | 'history' | 'empty' | 'settings';
 
-export type SettingsPage = 'appearance' | 'accounts';
+export type SettingsPage = 'appearance' | 'accounts' | 'cost' | 'notifications';
+
+const settingsPages: readonly string[] = ['accounts', 'cost', 'notifications'];
 
 export interface RouteState {
   route: Route;
@@ -14,7 +16,7 @@ export interface RouteState {
   sessionId?: string;
   /** `&mode=session`은 새 탭에서 "세션"을 고른 상태입니다. */
   isSessionMode?: boolean;
-  /** `#/settings/accounts`는 계정 페이지이고, 그 밖의 `#/settings`는 모양 페이지입니다. */
+  /** `#/settings/accounts`, `#/settings/cost`, `#/settings/notifications`는 각 페이지이고, 그 밖의 `#/settings`는 모양 페이지입니다. */
   settingsPage?: SettingsPage;
   /** `&picker=1`은 새 세션 화면에서 모델 고르기 팝오버를 연 채로 엽니다. */
   isModelPickerOpen?: boolean;
@@ -39,7 +41,10 @@ function parseHash(hash: string): RouteState {
   if (fixedRoutes.includes(first)) {
     return {
       route: first as Route,
-      settingsPage: first === 'settings' && second === 'accounts' ? 'accounts' : 'appearance',
+      settingsPage:
+        first === 'settings' && second !== undefined && settingsPages.includes(second)
+          ? (second as SettingsPage)
+          : 'appearance',
       isPaletteOpen,
       paletteQuery,
     };
@@ -84,6 +89,10 @@ export function navigate(
   const base = hashFor(route, options);
   const joiner = base.includes('?') ? '&' : '?';
   window.location.hash = options.isPaletteOpen ? `${base}${joiner}palette=1` : base;
+}
+
+export function navigateToSettings(page: SettingsPage): void {
+  window.location.hash = `#/settings/${page}`;
 }
 
 /** 지금 주소에 `palette=1`을 더하거나 뺍니다. 팔레트는 어느 화면 위에도 뜹니다. */

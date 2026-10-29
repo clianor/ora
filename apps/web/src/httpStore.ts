@@ -1,5 +1,6 @@
 import {
   accountListResponseSchema,
+  costSettingsSchema,
   changesResponseSchema,
   branchResponseSchema,
   accountViewSchema,
@@ -28,6 +29,7 @@ import {
   steerFailedSchema,
   todoActionResponseSchema,
   type ApprovalDecision,
+  type CostSettings,
   type ChangesResponse,
   type OraEvent,
   type PendingApproval,
@@ -47,6 +49,7 @@ import { permissionLabel } from './lib/status.ts';
 import { getModelState } from './lib/routing.ts';
 import type {
   AccountsData,
+  CostSettingsData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -205,6 +208,7 @@ export function createHttpStore(): OraStoreSource {
   let steerFailureCount = 0;
   let accounts: AccountsData = { status: 'loading', providers: [] };
   let accountPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let costSettings: CostSettingsData = { status: 'loading' };
   const tabs = new Map<string, WorktreeTabs>();
   const terminals = new Map<string, Terminal>();
   const branches = new Map<string, string>();
@@ -305,6 +309,7 @@ export function createHttpStore(): OraStoreSource {
       watchSession,
       actions,
       accounts,
+      costSettings,
     };
   };
 
@@ -530,6 +535,22 @@ export function createHttpStore(): OraStoreSource {
     notifySoon();
   };
 
+  const refreshCostSettings = async (): Promise<void> => {
+    try {
+      costSettings = {
+        status: 'ready',
+        settings: await requestJson('/api/cost-settings', costSettingsSchema),
+      };
+    } catch (error) {
+      costSettings = {
+        status: 'error',
+        errorMessage: toMessage(error),
+        ...(costSettings.settings === undefined ? {} : { settings: costSettings.settings }),
+      };
+    }
+    notifySoon();
+  };
+
   const post = async <T>(
     id: string,
     path: string,
@@ -637,6 +658,11 @@ export function createHttpStore(): OraStoreSource {
         { method: 'POST', body: { priority } },
       );
       await refreshAccounts();
+    },
+    refreshCostSettings,
+    saveCostSettings: async (next: CostSettings) => {
+      await requestJson('/api/cost-settings', costSettingsSchema, { method: 'PUT', body: next });
+      await refreshCostSettings();
     },
     dismissError: (id) => {
       const state = sessions.get(id);
@@ -747,10 +773,12 @@ export function createHttpStore(): OraStoreSource {
     watchSession,
     actions,
     accounts,
+    costSettings,
   };
 
   refreshList().catch(() => undefined);
   refreshAccounts().catch(() => undefined);
+  refreshCostSettings().catch(() => undefined);
   requestJson('/api/routing', routingResponseSchema)
     .then((result) => {
       const chain = result.roles.default ?? [];

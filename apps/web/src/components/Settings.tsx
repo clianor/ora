@@ -35,7 +35,7 @@ const navSections: { title: string; items: NavItem[] }[] = [
       { icon: SettingsIcon, label: '일반' },
       { icon: Palette, label: '모양', page: 'appearance' },
       { icon: Keyboard, label: '키보드 단축키' },
-      { icon: Bell, label: '알림' },
+      { icon: Bell, label: '알림', page: 'notifications' },
     ],
   },
   {
@@ -45,7 +45,7 @@ const navSections: { title: string; items: NavItem[] }[] = [
       { icon: Cpu, label: '모델' },
       { icon: Shield, label: '권한' },
       { icon: Box, label: '격리' },
-      { icon: Gauge, label: '비용 상한' },
+      { icon: Gauge, label: '비용 상한', page: 'cost' },
       { icon: Plug, label: 'MCP' },
       { icon: Sparkles, label: '스킬' },
       { icon: Brain, label: '기억' },
@@ -53,7 +53,7 @@ const navSections: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-/** 설정 항목 목록입니다. 모양과 계정 페이지만 이동할 수 있고, 나머지 항목은 이름만 보여 줍니다. */
+/** 설정 항목 목록입니다. 모양, 알림, 계정, 비용 상한 페이지만 이동할 수 있고, 나머지 항목은 이름만 보여 줍니다. */
 export function SettingsNav({ current }: { current: SettingsPage }) {
   const [query, setQuery] = useState('');
   return (

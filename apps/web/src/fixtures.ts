@@ -19,6 +19,7 @@ import type {
 } from '@ora/protocol';
 import type {
   AccountsData,
+  CostSettingsData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -1228,6 +1229,92 @@ const fallbackView = createFallbackView(
   'low',
 );
 
+const costUsage = {
+  uncachedInputTokens: 300,
+  cacheReadInputTokens: 6000,
+  cacheCreationInputTokens: 0,
+  outputTokens: 200,
+};
+const createCostEvents = (
+  make: ReturnType<typeof createEventFactory>,
+  tail: (time: string) => OraEvent[],
+): OraEvent[] => [
+  sessionStart(make),
+  ...createStageEvents(make, 'verify', stageOrder),
+  make('message', '11:00', 'user', {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.' },
+    ],
+  }),
+  make('model_request', '11:01', 'engine', {
+    model: 'claude-haiku-5-5',
+    adapter: 'claude-sdk',
+    chainPosition: 0,
+    role: 'default',
+    nativeToolCalls: true,
+    usage: costUsage,
+    durationMs: 1200,
+    costRatioPct: 60,
+  }),
+  ...tail('11:20'),
+];
+
+// 비용 경고: 상한의 80%에 닿은 실행 중 세션입니다. 주소는 `#/session/cost-warn`입니다.
+const costWarnId = 's-20261029-c05tw1';
+const makeCostWarn = createEventFactory(costWarnId);
+const costWarnView: SessionView = finishView({
+  record: createRecord(costWarnId, 'add 함수 버그 수정 (비용 경고)', 'running', 'math-demo'),
+  events: createCostEvents(makeCostWarn, (time) => [
+    makeCostWarn('cost_guard', time, 'engine', { outcome: 'warn', ratioPct: 80 }),
+    makeCostWarn('model_request', time, 'engine', {
+      model: 'claude-haiku-5-5',
+      adapter: 'claude-sdk',
+      chainPosition: 0,
+      role: 'default',
+      nativeToolCalls: true,
+      usage: costUsage,
+      durationMs: 1200,
+      costRatioPct: 80,
+    }),
+  ]),
+  todos: mathTodos,
+  repoLabel: 'math-demo · main',
+  diff: { add: 1, del: 1 },
+  statusLine: ['스텝 18/50', '격리 harness'],
+});
+
+// 비용 상한으로 멈춤: 멈춤 카드와 이어 가기 안내가 보입니다. 주소는 `#/session/cost-stop`입니다.
+const costStopId = 's-20261029-c05ts1';
+const makeCostStop = createEventFactory(costStopId);
+const costStopView: SessionView = finishView({
+  record: createRecord(costStopId, 'add 함수 버그 수정 (비용 상한)', 'stopped', 'math-demo'),
+  events: createCostEvents(makeCostStop, (time) => [
+    makeCostStop('cost_guard', time, 'engine', { outcome: 'warn', ratioPct: 80 }),
+    makeCostStop('model_request', time, 'engine', {
+      model: 'claude-haiku-5-5',
+      adapter: 'claude-sdk',
+      chainPosition: 0,
+      role: 'default',
+      nativeToolCalls: true,
+      usage: costUsage,
+      durationMs: 1200,
+      costRatioPct: 100,
+    }),
+    makeCostStop('cost_guard', time, 'engine', { outcome: 'limit', ratioPct: 100 }),
+    makeCostStop('memory', time, 'engine', { learnSkipped: true, reason: 'cost_limit' }),
+    makeCostStop('session_end', time, 'engine', {
+      status: 'stopped',
+      endReason: 'cost_limit',
+      summary: '비용 상한의 100%에 닿아 다음 요청을 보내지 않고 멈춥니다.',
+    }),
+  ]),
+  todos: mathTodos,
+  repoLabel: 'math-demo · main',
+  diff: { add: 1, del: 1 },
+  statusLine: ['스텝 22/50', '격리 harness'],
+});
+
 /** 시안의 워크트리 탭 상태에 맞춰, 같은 폴더에서 도는 실행 중 세션 하나를 math-demo main에 더하고 워크트리마다 작업 폴더를 정합니다. */
 function withCwd(repoName: string, nodes: WorktreeNode[]): WorktreeNode[] {
   return nodes.map((node) => ({
@@ -1250,6 +1337,8 @@ const repos: RepoNode[] = rawRepos.map((repo) => {
               ...first.sessions,
               createSession(phasesView.record),
               createSession(fallbackView.record),
+              createSession(costWarnView.record),
+              createSession(costStopView.record),
             ],
           },
           ...others,
@@ -1296,6 +1385,8 @@ const detailedViews = new Map<string, SessionView>(
     gateApprovedView,
     gateDeniedView,
     fallbackView,
+    costWarnView,
+    costStopView,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -1311,6 +1402,8 @@ const devAliases = new Map<string, string>([
   ['gate-approved', gateApprovedView.record.id],
   ['gate-denied', gateDeniedView.record.id],
   ['fallback', fallbackView.record.id],
+  ['cost-warn', costWarnView.record.id],
+  ['cost-stop', costStopView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
@@ -1339,6 +1432,8 @@ type StatefulActionName =
   | 'addApiKey'
   | 'logoutAccount'
   | 'setAccountPriority'
+  | 'refreshCostSettings'
+  | 'saveCostSettings'
   | 'loadTabs'
   | 'loadChanges'
   | 'saveTabs'
@@ -1444,6 +1539,14 @@ export function createFixtureStore(): OraStoreSource {
 
   const listeners = new Set<() => void>();
   let accounts = fixtureAccounts;
+  let costSettings: CostSettingsData = {
+    status: 'ready',
+    settings: {
+      maxCost: 5,
+      warnCost: 4,
+      pricing: { 'claude/claude-haiku-5-5': { inputPerMTok: 1, outputPerMTok: 5 } },
+    },
+  };
   let snapshot: OraStore;
 
   const tabsByCwd = new Map(Object.entries(fixtureTabs));
@@ -1554,6 +1657,15 @@ export function createFixtureStore(): OraStoreSource {
       }));
       return Promise.resolve();
     },
+    refreshCostSettings: () => Promise.resolve(),
+    saveCostSettings: (next) => {
+      costSettings = { status: 'ready', settings: next };
+      snapshot = { ...snapshot, costSettings };
+      listeners.forEach((listener) => {
+        listener();
+      });
+      return Promise.resolve();
+    },
     setAccountPriority: (provider, name, priority) => {
       update(provider, (entry) => ({
         ...entry,
@@ -1598,6 +1710,7 @@ export function createFixtureStore(): OraStoreSource {
     },
     actions,
     accounts,
+    costSettings,
   };
   return {
     subscribe: (listener) => {

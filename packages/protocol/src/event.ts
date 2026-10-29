@@ -114,6 +114,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       purpose: z.literal('compaction').optional(),
       /** 요청이 탄 모델 체인의 역할이다. 비어 있는 역할은 `default` 체인을 타므로 `default`로 남는다. */
       role: z.string().min(1).optional(),
+      /** 비용 상한(`session.maxCost`)을 설정한 세션에서, 이 요청까지 쓴 지출이 상한의 몇 %인지 내림한 값이다. 금액은 기록하지 않는다. 상한이 없거나 이전 기록에는 없다. */
+      costRatioPct: z.number().int().nonnegative().optional(),
     }),
   ),
   defineEvent(
@@ -134,6 +136,20 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       chainPosition: z.number().int().nonnegative(),
       role: z.string().min(1),
     }),
+  ),
+  // 비용 가드레일의 판정이다 (SPEC 5.4절). 금액 없이 상한 대비 비율만 적는다. `warn`은 경고 비율에 처음 닿았을 때 한 번, `limit`은 상한에 닿아 요청을 보내지 않았을 때, `pricing_missing`은 단가표에 없는 모델이라 요청을 보내지 않았을 때다.
+  defineEvent(
+    'cost_guard',
+    z.discriminatedUnion('outcome', [
+      z.strictObject({ outcome: z.literal('warn'), ratioPct: z.number().int().nonnegative() }),
+      z.strictObject({ outcome: z.literal('limit'), ratioPct: z.number().int().nonnegative() }),
+      z.strictObject({ outcome: z.literal('pricing_missing'), model: z.string().min(1) }),
+    ]),
+  ),
+  // 기억 판정 기록이다 (SPEC 4.1.2절). 지금은 비용 상한으로 Learn의 모델 요청을 건너뛴 사실만 남긴다.
+  defineEvent(
+    'memory',
+    z.strictObject({ learnSkipped: z.literal(true), reason: z.literal('cost_limit') }),
   ),
   defineEvent('intent', z.strictObject({ text: z.string().min(1) })),
   defineEvent(
