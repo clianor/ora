@@ -763,8 +763,245 @@ function listSessionNodes(worktrees: WorktreeNode[]): SessionNode[] {
   ]);
 }
 
+interface PhaseTodoDef {
+  id: string;
+  content: string;
+  phase: string;
+  command?: string;
+}
+
+/**
+ * 할 일 패널의 phase 시안 상태를 이벤트 기록으로 만들어 세션 화면 데이터로 돌려줍니다.
+ * `run`이 이벤트를 시간순으로 쌓고, 각 할 일의 마지막 스냅샷이 화면의 할 일 목록이 됩니다.
+ */
+function createPhaseView(
+  id: string,
+  title: string,
+  status: SessionStatus,
+  endReason: SessionRecord['endReason'],
+  run: (script: PhaseScript) => void,
+): SessionView {
+  const events: OraEvent[] = [];
+  const latest: Record<string, Todo> = {};
+  const emit = (step: number | null, actor: Actor, type: OraEventType, payload: unknown): void => {
+    events.push({
+      seq: events.length + 1,
+      ts: `${day}T09:${String(events.length % 60).padStart(2, '0')}:00+09:00`,
+      sessionId: id,
+      actor,
+      ...(step === null ? {} : { stepId: `step-${step}` }),
+      type,
+      payload,
+    } as unknown as OraEvent);
+  };
+  const evidence = (command: string, exitCode: number): Todo['evidence'] => ({
+    command,
+    exitCode,
+    summary: exitCode === 0 ? '통과' : '실패',
+    origin: 'model',
+    ranAt: `${day}T09:30:00+09:00`,
+    scopeDigest: 'sha256:ab12',
+  });
+  run({
+    objective: (text) => {
+      emit(null, 'engine', 'objective', { text });
+    },
+    phase: (name, criterion) => {
+      emit(null, 'engine', 'phase', { name, criterion });
+    },
+    verify: (step, def, exitCode) => {
+      emit(step, 'engine', 'verification', {
+        todoId: def.id,
+        evidence: evidence(def.command ?? '', exitCode),
+      });
+    },
+    update: (step, def, to, options = {}) => {
+      const previous = latest[def.id];
+      const exitEvidence =
+        options.exitCode === undefined
+          ? previous?.evidence
+          : evidence(def.command ?? '', options.exitCode);
+      const todo: Todo = {
+        id: def.id,
+        content: def.content,
+        status: to,
+        attempts: previous === undefined ? 0 : previous.attempts + (to === 'attempted' ? 1 : 0),
+        writeScope: [],
+        phase: def.phase,
+        ...(def.command === undefined ? {} : { verify: { command: def.command, origin: 'model' } }),
+        ...(options.reason === undefined ? {} : { blockedReason: options.reason }),
+        ...(exitEvidence === undefined ? {} : { evidence: exitEvidence }),
+        updatedAt: `${day}T09:30:00+09:00`,
+      };
+      latest[def.id] = todo;
+      emit(step, options.actor ?? 'engine', 'todo_update', {
+        todoId: def.id,
+        ...(previous === undefined ? {} : { from: previous.status }),
+        to,
+        todo,
+        ...(options.current === undefined ? {} : { current: options.current }),
+      });
+    },
+  });
+  const todos = Object.values(latest);
+  return finishView({
+    record: {
+      ...createRecord(id, title, status, 'math-demo'),
+      ...(endReason ? { endReason } : {}),
+    },
+    events,
+    todos,
+    repoLabel: 'math-demo · main',
+    diff: { add: 1, del: 1 },
+    statusLine: ['스텝 12/50', '기본 모델 사용 중', '격리 harness'],
+  });
+}
+
+interface PhaseScript {
+  objective: (text: string) => void;
+  phase: (name: string, criterion: string | null) => void;
+  verify: (step: number, def: PhaseTodoDef, exitCode: number) => void;
+  update: (
+    step: number,
+    def: PhaseTodoDef,
+    to: Todo['status'],
+    options?: { actor?: Actor; reason?: string; current?: string | null; exitCode?: number },
+  ) => void;
+}
+
+const phaseObjective = 'add 함수가 덧셈을 하도록 고치고, 테스트와 README 예제까지 맞춘다';
+const findDef: PhaseTodoDef = {
+  id: 't1',
+  content: 'add가 뺄셈을 하는 줄을 찾는다',
+  phase: '원인 찾기',
+};
+const fixDef: PhaseTodoDef = {
+  id: 't2',
+  content: 'math.js의 add를 덧셈으로 고친다',
+  phase: '수정',
+  command: 'node check.js',
+};
+const negativeDef: PhaseTodoDef = {
+  id: 't3',
+  content: '음수 입력 검사를 check.js에 더한다',
+  phase: '수정',
+  command: 'node check.js --neg',
+};
+const readmeDef: PhaseTodoDef = { id: 't4', content: 'README 예제 출력을 갱신한다', phase: '문서' };
+const summaryDef: PhaseTodoDef = { id: 't5', content: '변경 요약을 남긴다', phase: '문서' };
+
+/** 첫 phase를 3스텝에 끝냅니다. 세 시안 상태가 모두 같은 앞부분을 씁니다. */
+function runFindPhase(script: PhaseScript): void {
+  script.update(1, findDef, 'pending', { current: 't1' });
+  script.update(2, findDef, 'attempted');
+  script.verify(3, findDef, 0);
+  script.update(3, findDef, 'verified', { exitCode: 0, current: 't2' });
+}
+
+// 실행 중: 수정 phase를 펼쳐 작업 중 할 일(t3)을 강조합니다. 주소는 `#/session/phases`입니다.
+const phasesView = createPhaseView(
+  's-20261029-ph4se1',
+  'add 함수 버그 수정',
+  'running',
+  undefined,
+  (s) => {
+    s.objective(phaseObjective);
+    runFindPhase(s);
+    s.phase('수정', 'node check.js가 exit 0으로 끝난다');
+    s.update(3, fixDef, 'pending');
+    s.update(4, fixDef, 'attempted');
+    s.verify(5, fixDef, 1);
+    s.update(5, fixDef, 'failed', { exitCode: 1 });
+    s.update(6, fixDef, 'attempted');
+    s.verify(7, fixDef, 0);
+    s.update(7, fixDef, 'verified', { exitCode: 0, current: 't3' });
+    s.update(7, negativeDef, 'pending');
+    s.update(8, negativeDef, 'attempted');
+    s.phase('문서', 'README 예제가 실제 출력과 같다');
+    s.update(7, readmeDef, 'pending');
+    s.update(7, summaryDef, 'pending');
+  },
+);
+
+// 엔진이 막힘으로 멈춘 세션: 막힌 할 일 두 개와 "이전 N개 보기"로 접힌 흐름. 주소는 `#/session/phase-blocked`입니다.
+const phaseBlockedView = createPhaseView(
+  's-20261029-ph4se2',
+  'add 함수 버그 수정',
+  'stopped',
+  'blocked',
+  (s) => {
+    s.objective(phaseObjective);
+    runFindPhase(s);
+    const appDef: PhaseTodoDef = {
+      id: 't4',
+      content: 'claude CLI로 실제 응답을 받는다',
+      phase: '실제 앱에서 확인',
+    };
+    const checkDef: PhaseTodoDef = {
+      id: 't5',
+      content: 'check.js를 통과시킨다',
+      phase: '실제 앱에서 확인',
+      command: 'node check.js',
+    };
+    s.update(8, appDef, 'pending');
+    s.update(8, checkDef, 'pending');
+    s.update(9, appDef, 'attempted');
+    s.update(10, appDef, 'blocked', {
+      reason: '격리 정책이 claude 실행을 막습니다',
+      current: null,
+    });
+    s.update(11, checkDef, 'attempted');
+    s.update(12, checkDef, 'claimed_verified');
+    s.verify(13, checkDef, 1);
+    s.update(13, checkDef, 'failed', { exitCode: 1 });
+    for (const [first, last] of [
+      [14, 16],
+      [17, 19],
+      [20, 22],
+    ] as const) {
+      s.update(first, checkDef, 'attempted');
+      s.update(first + 1, checkDef, 'claimed_verified');
+      s.verify(last, checkDef, 1);
+      s.update(last, checkDef, 'failed', { exitCode: 1 });
+    }
+    s.update(22, checkDef, 'blocked', {
+      reason: '3번 고쳤지만 검사를 통과하지 못했습니다',
+      current: null,
+    });
+  },
+);
+
+// 포기가 섞인 완료: 포기한 할 일에 "포기 취소" 메뉴가 붙습니다. 주소는 `#/session/phase-done`입니다.
+const phaseDoneView = createPhaseView(
+  's-20261029-ph4se3',
+  'add 함수 버그 수정',
+  'completed',
+  'passed',
+  (s) => {
+    s.objective(phaseObjective);
+    runFindPhase(s);
+    s.update(3, fixDef, 'pending');
+    s.update(3, negativeDef, 'pending');
+    s.update(2, readmeDef, 'pending');
+    s.update(4, fixDef, 'attempted');
+    s.verify(5, fixDef, 0);
+    s.update(5, fixDef, 'verified', { exitCode: 0 });
+    s.update(8, negativeDef, 'attempted');
+    s.update(9, negativeDef, 'abandoned', { actor: 'user' });
+    s.update(9, readmeDef, 'abandoned', { actor: 'user' });
+  },
+);
+
 const detailedViews = new Map<string, SessionView>(
-  [sessionView, questionView, crashedView, contextView].map((view) => [view.record.id, view]),
+  [
+    sessionView,
+    questionView,
+    crashedView,
+    contextView,
+    phasesView,
+    phaseBlockedView,
+    phaseDoneView,
+  ].map((view) => [view.record.id, view]),
 );
 
 // 시안을 주소로 열 수 있도록 개발용 별칭(#/question 등)도 세션 ID처럼 받습니다.
@@ -772,6 +1009,9 @@ const devAliases = new Map<string, string>([
   ['question', questionView.record.id],
   ['crashed', crashedView.record.id],
   ['context', contextView.record.id],
+  ['phases', phasesView.record.id],
+  ['phase-blocked', phaseBlockedView.record.id],
+  ['phase-done', phaseDoneView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
@@ -808,6 +1048,8 @@ const fixtureActions: Omit<OraActions, AccountActionName> = {
   decideApproval: () => Promise.resolve(),
   answerQuestions: () => Promise.resolve(),
   resumeSession: () => Promise.resolve(),
+  abandonTodo: () => Promise.resolve(true),
+  restoreTodo: () => Promise.resolve(true),
   readCompaction: () => Promise.resolve(compactionDocument),
   dismissError: () => undefined,
 };

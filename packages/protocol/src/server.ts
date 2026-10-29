@@ -87,6 +87,13 @@ export type CompactionFileResponse = z.infer<typeof compactionFileResponseSchema
 export const okResponseSchema = z.strictObject({ ok: z.literal(true) });
 export type OkResponse = z.infer<typeof okResponseSchema>;
 
+/** 포기·포기 취소 응답이다. 실행 중인 세션은 `applied: false`(스텝이 끝난 뒤 반영), 멈춘 세션은 `true`다. */
+export const todoActionResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  applied: z.boolean(),
+});
+export type TodoActionResponse = z.infer<typeof todoActionResponseSchema>;
+
 export const errorResponseSchema = z.strictObject({ error: z.string() });
 export type ErrorResponse = z.infer<typeof errorResponseSchema>;
 

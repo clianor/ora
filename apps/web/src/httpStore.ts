@@ -17,6 +17,7 @@ import {
   sessionListResponseSchema,
   sseEventNames,
   steerFailedSchema,
+  todoActionResponseSchema,
   type ApprovalDecision,
   type OraEvent,
   type PendingApproval,
@@ -534,6 +535,10 @@ export function createHttpStore(): OraStoreSource {
     resumeSession: async (id) => {
       await post(id, 'resume', {}, sessionIdResponseSchema);
     },
+    abandonTodo: async (id, todoId) =>
+      (await post(id, 'todo-abandon', { todoId }, todoActionResponseSchema)) !== null,
+    restoreTodo: async (id, todoId) =>
+      (await post(id, 'todo-restore', { todoId }, todoActionResponseSchema)) !== null,
     refreshAccounts,
     startLogin: async (provider) => {
       const state = await requestJson(`/api/accounts/${provider}/login`, loginStateSchema, {

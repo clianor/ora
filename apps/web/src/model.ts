@@ -109,6 +109,10 @@ export interface OraActions {
     answers: QuestionAnswer[],
   ) => Promise<void>;
   resumeSession: (sessionId: string) => Promise<void>;
+  /** 할 일을 포기합니다. 서버가 요청을 받으면 true입니다. 실행 중인 세션은 지금 스텝이 끝난 뒤에 반영합니다. */
+  abandonTodo: (sessionId: string, todoId: string) => Promise<boolean>;
+  /** 포기한 할 일을 대기 상태로 되돌립니다. 받아들이는 시점은 `abandonTodo`와 같습니다. */
+  restoreTodo: (sessionId: string, todoId: string) => Promise<boolean>;
   /** 압축 요약 파일의 본문을 서버에서 읽습니다. `path`는 이벤트가 가리킨 세션 디렉터리 기준 경로입니다. */
   readCompaction: (sessionId: string, path: string) => Promise<string>;
   /** 계정 목록과 진행 중인 로그인을 서버에서 다시 읽습니다. */

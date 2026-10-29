@@ -159,7 +159,7 @@ export function Workbench({ sidebar, view }: WorkbenchProps) {
           </div>
         </ChatProvider>
       </main>
-      <TodoPanel todos={view.todos} isAwaitingApproval={record.status === 'awaiting_approval'} />
+      <TodoPanel key={sessionId} record={record} events={view.events} todos={view.todos} />
     </>
   );
 }
