@@ -40,6 +40,8 @@ import {
 } from '@ora/protocol';
 import type {
   ApprovalRequest,
+  BranchResponse,
+  ChangesResponse,
   TabsFile,
   InfoResponse,
   Isolation,
@@ -131,6 +133,66 @@ function readBranch(cwd: string): Promise<string | undefined> {
     resolve(error !== null || name === '' ? undefined : name);
   });
   return promise;
+}
+
+/** git 출력 전체를 돌려준다. 명령이 실패하면 `undefined`다. -z 출력의 NUL을 지키려고 trim하지 않는다. */
+function runGit(cwd: string, args: string[]): Promise<string | undefined> {
+  const { promise, resolve } = Promise.withResolvers<string | undefined>();
+  execFile('git', ['-C', cwd, ...args], { maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+    resolve(error === null ? stdout : undefined);
+  });
+  return promise;
+}
+
+/** `origin/HEAD`가 가리키는 브랜치, 없으면 로컬 `main`, `master` 순으로 기본 브랜치를 찾는다. 찾지 못하면 `undefined`다. */
+async function readDefaultBranch(cwd: string): Promise<string | undefined> {
+  const remote = (
+    await runGit(cwd, ['symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD'])
+  )?.trim();
+  if (remote) return remote.replace(/^origin\//, '');
+  for (const name of ['main', 'master']) {
+    if ((await runGit(cwd, ['rev-parse', '--verify', '-q', `refs/heads/${name}`])) !== undefined)
+      return name;
+  }
+  return undefined;
+}
+
+/** HEAD 기준으로 바뀐 파일과 추적하지 않는 파일의 증감 줄 수를 모은다. 바이너리 파일은 0줄로 센다. */
+async function readChanges(cwd: string): Promise<ChangesResponse> {
+  if ((await runGit(cwd, ['rev-parse', '--is-inside-work-tree'])) === undefined) {
+    return { isRepo: false, files: [] };
+  }
+  const files: ChangesResponse['files'] = [];
+  const numstat = (await runGit(cwd, ['diff', '--numstat', '-z', 'HEAD'])) ?? '';
+  const fields = numstat.split('\0');
+  for (let index = 0; index < fields.length; index += 1) {
+    const match = /^(\d+|-)\t(\d+|-)\t(.*)$/.exec(fields[index] ?? '');
+    if (match === null) continue;
+    const [, add, del, path] = match;
+    // 이름을 바꾼 파일은 경로 칸이 비고 뒤에 이전 경로, 새 경로가 이어진다.
+    const target = path === '' ? fields[index + 2] : path;
+    if (path === '') index += 2;
+    if (target === undefined) continue;
+    files.push({
+      path: target,
+      add: add === '-' ? 0 : Number(add),
+      del: del === '-' ? 0 : Number(del),
+    });
+  }
+  const untracked = (
+    (await runGit(cwd, ['ls-files', '--others', '--exclude-standard', '-z'])) ?? ''
+  )
+    .split('\0')
+    .filter((path) => path !== '');
+  for (const path of untracked) {
+    const bytes = await readFile(join(cwd, path)).catch(() => undefined);
+    const isText = bytes !== undefined && !bytes.includes(0);
+    const lines = isText
+      ? bytes.toString('utf8').split('\n').length - (bytes.at(-1) === 0x0a ? 1 : 0)
+      : 0;
+    files.push({ path, add: bytes?.length === 0 ? 0 : lines, del: 0 });
+  }
+  return { isRepo: true, files };
 }
 
 /** 워크트리 키로 쓰는 경로의 단일 정규화 지점이다. `/tmp` 같은 심볼릭 링크를 풀어 한 폴더가 한 워크트리가 되게 하고, 풀지 못하면 받은 경로를 쓴다. */
@@ -700,7 +762,19 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       const { cwd } = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('cwd') ?? '' });
       await assertKnownWorktree(cwd);
       const branch = await readBranch(cwd);
-      reply(res, 200, branch === undefined ? {} : { branch });
+      const defaultBranch = await readDefaultBranch(cwd);
+      const body: BranchResponse = {
+        ...(branch === undefined ? {} : { branch }),
+        ...(defaultBranch === undefined ? {} : { defaultBranch }),
+      };
+      reply(res, 200, body);
+      return;
+    }
+    if (segments[1] === 'changes' && segments.length === 2) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const { cwd } = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('cwd') ?? '' });
+      await assertKnownWorktree(cwd);
+      reply(res, 200, await readChanges(await canonicalPath(cwd)));
       return;
     }
     if (segments[1] === 'info' && segments.length === 2) {

@@ -2,46 +2,52 @@
 name: Ora
 description: 다크 우선 중립 회색, 글 중심, 배경 밝기로 영역을 나누는 에이전트 데스크톱 셸
 colors:
-  dark-background: '#1F1F1F'
-  dark-sidebar: '#181818'
-  dark-surface: '#2A2A2A'
-  dark-surface-sunken: '#161616'
-  dark-surface-hover: '#262626'
-  dark-border: '#2C2C2C'
-  dark-foreground: '#ECECEC'
-  dark-foreground-muted: '#B4B4B4'
-  dark-foreground-subtle: '#939393'
-  dark-primary: '#ECECEC'
-  dark-primary-foreground: '#1F1F1F'
+  dark-background: '#282C33'
+  dark-sidebar: '#21252D'
+  dark-surface: '#2F333D'
+  dark-surface-sunken: '#1E2128'
+  dark-surface-hover: '#383C48'
+  dark-border: '#353A47'
+  dark-foreground: '#F2F3F6'
+  dark-foreground-muted: '#C8CCD8'
+  dark-foreground-subtle: '#A0A4B2'
+  dark-primary: '#FAFAFA'
+  dark-primary-foreground: '#21252D'
   dark-success: '#3FB950'
-  dark-success-subtle: '#12261A'
+  dark-success-subtle: '#1F3327'
   dark-danger: '#FF7B72'
-  dark-danger-subtle: '#2D1517'
+  dark-danger-subtle: '#3A2328'
   dark-warning: '#D29922'
   dark-ring: '#8AB4F8'
   dark-overlay: '#00000099'
-  dark-popover: '#333333'
-  dark-border-strong: '#4D4D4D'
+  dark-popover: '#2F333D'
+  dark-border-strong: '#4A4F5C'
+  dark-inline-code: '#D7BA7D'
+  dark-kbd: '#3D414D'
+  dark-titlebar: '#1E2128'
   light-background: '#FFFFFF'
-  light-sidebar: '#F9F9F9'
-  light-surface: '#F4F4F4'
-  light-surface-sunken: '#F7F7F8'
-  light-surface-hover: '#EFEFEF'
-  light-border: '#E8E8E8'
-  light-foreground: '#0D0D0D'
-  light-foreground-muted: '#4A4A4A'
-  light-foreground-subtle: '#6B6B6B'
-  light-primary: '#0D0D0D'
+  light-sidebar: '#F2F4F8'
+  light-surface: '#F5F6F9'
+  light-surface-sunken: '#EBEEF3'
+  light-surface-hover: '#E2E6EE'
+  light-border: '#DDE1E9'
+  light-foreground: '#151821'
+  light-foreground-muted: '#434A5A'
+  light-foreground-subtle: '#555C6E'
+  light-primary: '#151821'
   light-primary-foreground: '#FFFFFF'
   light-success: '#116329'
   light-success-subtle: '#E6F4EA'
-  light-danger: '#CF222E'
+  light-danger: '#B71C28'
   light-danger-subtle: '#FDECEC'
   light-warning: '#7D5300'
   light-ring: '#1A66D9'
   light-overlay: '#0000004D'
   light-popover: '#FFFFFF'
-  light-border-strong: '#D4D4D4'
+  light-border-strong: '#C3C9D5'
+  light-inline-code: '#7A4F00'
+  light-kbd: '#E2E5EC'
+  light-titlebar: '#EBEEF3'
 typography:
   body:
     fontFamily: 'Pretendard'
@@ -231,15 +237,15 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 
 **Key Characteristics:**
 
-- 다크 우선 중립 회색이고, 색은 성공, 위험, 경고 상태에만 씁니다.
+- 다크 우선 푸른빛 슬레이트이고, 색은 성공, 위험, 경고 상태에만 씁니다.
 - 응답은 상자 없이 글로 보여 주고, 도구 호출은 한 줄입니다.
-- 테두리 대신 배경 밝기 차이로 영역을 나눕니다.
+- 배경 밝기 차이와 1px `border` 선으로 영역을 나누고, 카드는 테두리 상자로 그립니다.
 - 글꼴은 Pretendard와 JetBrains Mono 두 가지입니다.
 - 상태는 색과 함께 아이콘과 글자를 씁니다(SPEC 8.4절).
 
 ## Colors
 
-팔레트는 순수한 중립 회색에 초록, 빨강, 황색 상태색 셋을 더한 구성입니다. 프론트매터가 값의 정본이고, 아래 설명은 쓰임만 적습니다. 키는 `dark-` 또는 `light-` 접두사에 아래 이름을 붙입니다.
+팔레트는 푸른빛 슬레이트 회색에 초록, 빨강, 황색 상태색 셋과 인라인 코드의 노란색을 더한 구성입니다(SPEC 8.5절). 프론트매터가 값의 정본이고, 아래 설명은 쓰임만 적습니다. 키는 `dark-` 또는 `light-` 접두사에 아래 이름을 붙입니다.
 
 ### Primary
 
@@ -247,12 +253,15 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 
 ### Neutral
 
-- **Window** (`background`): 대화 영역과 앱 창의 바탕입니다. 승인 카드 안의 명령 상자도 이 색을 씁니다.
+- **Window** (`background`): 대화 영역과 앱 창의 바탕입니다. 고른 제목 줄 탭도 이 색이라 본문으로 이어져 보입니다. 승인 카드 안의 명령 상자도 이 색을 씁니다.
 - **Sidebar** (`sidebar`): 사이드바와 오른쪽 할 일 패널의 바탕입니다.
 - **Raised** (`surface`): 사용자 말풍선, 승인 카드, 입력창, 헤더 칩처럼 한 단계 올라온 면입니다.
 - **Sunken** (`surface-sunken`): diff 블록처럼 한 단계 들어간 면입니다.
+- **Title Bar** (`titlebar`): 제목 줄 탭과 하단 상태 줄, 오른쪽 패널 머리의 바탕입니다.
+- **Inline Code** (`inline-code`): 모델 글 안의 인라인 코드 글자색입니다. 다크 `#D7BA7D`, 라이트 `#7A4F00`입니다.
+- **Kbd** (`kbd`): ⌘K 같은 단축키 표시의 바탕입니다.
 - **Hover** (`surface-hover`): 선택된 세션 행, 선택된 todo 행, 보조 버튼의 배경입니다.
-- **Line** (`border`): 진행 막대의 빈 트랙에 씁니다. 영역을 나누는 테두리로는 쓰지 않습니다.
+- **Line** (`border`): 영역과 카드를 나누는 1px 선입니다. 사이드바와 오른쪽 패널의 경계, 제목 줄과 상태 줄의 위아래 선, 카드 테두리에 씁니다.
 - **Ink** (`foreground`): 본문과 제목 글자색입니다.
 - **Ink Muted** (`foreground-muted`): 응답 본문, 도구 호출 줄, 저장소 이름, 보조 글자색입니다.
 - **Ink Subtle** (`foreground-subtle`): 입력창 안내문, 메타 정보, 아이콘의 기본색입니다.
@@ -273,9 +282,9 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 
 ### Popover
 
-- **Popover** (`popover`): 마우스를 올리거나 눌렀을 때 내용 위에 뜨는 작은 카드의 면입니다. 다크는 `surface`보다 한 단계 밝은 `#333333`, 라이트는 `#FFFFFF`입니다. 아래 입력창이나 카드와 같은 `surface`를 쓰면 구분이 되지 않아 따로 둡니다.
-- **Border Strong** (`border-strong`): 팝오버 둘레 1px 선입니다. 다크 `#4D4D4D`, 라이트 `#D4D4D4`입니다. 팝오버 밖에는 쓰지 않습니다.
-- 팝오버 위의 글자는 `foreground`와 `foreground-muted`만 씁니다. 다크 팝오버 위의 `foreground-subtle`은 4.11:1로 AA에 못 미칩니다. `foreground-muted`는 6.09:1입니다.
+- **Popover** (`popover`): 마우스를 올리거나 눌렀을 때 내용 위에 뜨는 작은 카드의 면입니다. 다크는 `surface`와 같은 `#2F333D`, 라이트는 `#FFFFFF`이고 둘레 선으로 구분합니다. 아래 입력창이나 카드와 같은 `surface`를 쓰면 구분이 되지 않아 따로 둡니다.
+- **Border Strong** (`border-strong`): 팝오버 둘레 1px 선입니다. 다크 `#4A4F5C`, 라이트 `#C3C9D5`입니다. 팝오버 밖에는 쓰지 않습니다.
+- 팝오버 위의 글자는 `foreground`와 `foreground-muted`만 씁니다. 다크 슬레이트에서 `foreground-subtle`은 `kbd` 바탕 위에서 4.1:1로 AA에 못 미치므로 단축키 글자는 `foreground-muted`를 씁니다.
 
 ### Named Rules
 
@@ -290,7 +299,7 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 **Body Font:** Pretendard (한글 글자체)
 **Mono Font:** JetBrains Mono (코드, 경로, 명령, 숫자 통계)
 
-**Character:** 한국어를 먼저 읽는 UI이므로 Pretendard가 본문을 맡고, 코드 조각만 고정폭 글꼴로 구분합니다. 글 안의 코드 조각은 배경 없이 JetBrains Mono 13px에 `foreground` 색을 씁니다.
+**Character:** 한국어를 먼저 읽는 UI이므로 Pretendard가 본문을 맡고, 코드 조각만 고정폭 글꼴로 구분합니다. 글 안의 코드 조각은 배경 없이 JetBrains Mono 13px에 `inline-code` 색을 씁니다.
 
 ### Hierarchy
 
@@ -321,7 +330,7 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 
 ## Elevation & Depth
 
-그림자를 쓰지 않는 평평한 시스템입니다. 깊이는 배경 밝기 층으로만 나타냅니다. 다크 기준으로 `surface-sunken`(#161616) < `sidebar`(#181818) < `background`(#1F1F1F) < `surface-hover`(#262626) < `surface`(#2A2A2A) 순서로 밝아집니다.
+그림자를 쓰지 않는 평평한 시스템입니다. 깊이는 배경 밝기 층으로만 나타냅니다. 다크 기준으로 `surface-sunken`(#1E2128) < `sidebar`(#21252D) < `background`(#282C33) < `surface`(#2F333D) < `surface-hover`(#383C48) 순서로 밝아집니다.
 
 ### Named Rules
 
@@ -496,3 +505,11 @@ Ora의 화면은 조용한 작업대입니다. 중립 회색 위에서 대화 �
 - **Don't** 컴포넌트에 hex 값을 직접 적지 않습니다. 토큰 파일에 없는 색이 필요하면 토큰을 먼저 추가합니다.
 - **Don't** 색만으로 상태를 구분하지 않습니다.
 - **Don't** 시안에 없는 컴포넌트를 이 문서에 추가하지 않습니다. 새 컴포넌트는 디자인을 먼저 그리고 승인받습니다(SPEC 8.3절).
+
+## 새 시각 언어 v3 화면 틀
+
+- **제목 줄 탭:** 창 맨 위 40px 줄입니다. 탭을 왼쪽에, 단계 칩과 diff 칩(누르면 "변경" 탭)을 오른쪽에 둡니다. 패널이 접히면 끝에 열기 단추(⌥⌘B)가 나타납니다.
+- **하단 상태 줄:** 창 전체 폭 28px 줄입니다. 왼쪽에 계정별 사용량 막대와 퍼센트, 오른쪽에 실행 중 세션 수와 터미널 수를 둡니다. 한도를 읽지 못한 계정은 "측정 안 함"입니다.
+- **사이드바:** 검색칸(⌘K), 기록(⌘Y), 저장소 → worktree 순입니다. 기본 브랜치에 "기본" 배지를 붙이고, 고른 worktree는 테두리 카드로 묶어 진행 중인 세션을 상태 아이콘·제목·경과 시간으로 보입니다.
+- **오른쪽 패널:** "할 일 · 변경 · 파일" 알약 탭입니다. "파일"은 흐리게 "곧 지원"으로 둡니다. 할 일이 없는 탭은 "변경" 탭으로 엽니다. 접힘 상태는 localStorage(`ora-right-panel`)에 저장합니다.
+- **모델 전환 알림:** `retry` 이벤트가 오면 오른쪽 위에 8초간 알림을 띄웁니다(`aria-live="polite"`). 대화 안에는 전환 표시를 넣지 않습니다.

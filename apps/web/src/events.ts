@@ -48,8 +48,9 @@ export interface CompactionMarkData {
   items: { tool: string; target: string }[];
 }
 
-/** `retry` 이벤트가 대화에 남기는 모델 전환 표시입니다. from은 전환 전에 쓰던 모델입니다. */
+/** `retry` 이벤트 하나가 만든 모델 전환입니다. 화면 오른쪽 위 알림이 씁니다. from은 전환 전에 쓰던 모델입니다. */
 export interface ModelSwitchData {
+  seq: number;
   ts: string;
   reason: Extract<OraEvent, { type: 'retry' }>['payload']['reason'];
   from: string;
@@ -83,6 +84,36 @@ export interface ThreadData {
 export function getStageIndex(events: readonly OraEvent[]): number | null {
   const entered = events.findLast((event) => event.type === 'stage');
   return entered ? stages.indexOf(entered.payload.stage) : null;
+}
+
+/** `retry` 이벤트마다 전환 전과 후의 모델을 찾습니다. 전환 전 모델은 같은 역할이 직전 체인 위치에서 마지막으로 요청한 모델입니다. */
+export function listModelSwitches(events: readonly OraEvent[]): ModelSwitchData[] {
+  const modelNames = new Map<string, string>();
+  const positions = new Map<string, number>();
+  return events.flatMap((event) => {
+    if (event.type === 'model_request') {
+      modelNames.set(
+        `${event.payload.role ?? 'default'}:${event.payload.chainPosition}`,
+        event.payload.model,
+      );
+      return [];
+    }
+    if (event.type !== 'retry') return [];
+    const { role, chainPosition, reason, message, resetAt, switchedTo } = event.payload;
+    const previous = positions.get(role) ?? 0;
+    positions.set(role, chainPosition);
+    return [
+      {
+        seq: event.seq,
+        ts: event.ts,
+        reason,
+        from: modelNames.get(`${role}:${previous}`) ?? (previous === 0 ? '첫 모델' : '이전 모델'),
+        to: switchedTo,
+        ...(message === undefined ? {} : { message }),
+        ...(resetAt === undefined ? {} : { resetAt }),
+      },
+    ];
+  });
 }
 
 /**
@@ -121,21 +152,6 @@ export function buildThread(
       });
     }
   }
-  const modelNames = new Map<string, string>();
-  for (const event of events) {
-    if (event.type === 'model_request') {
-      modelNames.set(
-        `${event.payload.role ?? 'default'}:${event.payload.chainPosition}`,
-        event.payload.model,
-      );
-    } else if (event.type === 'retry') {
-      modelNames.set(
-        `${event.payload.role}:${event.payload.chainPosition}`,
-        event.payload.switchedTo,
-      );
-    }
-  }
-  const positions = new Map<string, number>();
   /** `history.read`가 가리키는 원문의 이름입니다. 호출 ID면 그 호출의 대상과 동사, 범위면 seq 범위입니다. */
   const describeHistoryRead = (args: Record<string, unknown>): string => {
     if (typeof args.callId === 'string') {
@@ -198,19 +214,6 @@ export function buildThread(
         }),
       };
       assistantContent.push({ type: 'data-compaction', data });
-    } else if (event.type === 'retry') {
-      const { role, chainPosition, reason, message, resetAt, switchedTo } = event.payload;
-      const previous = positions.get(role) ?? 0;
-      positions.set(role, chainPosition);
-      const data: ModelSwitchData = {
-        ts: event.ts,
-        reason,
-        from: modelNames.get(`${role}:${previous}`) ?? (previous === 0 ? '첫 모델' : '이전 모델'),
-        to: switchedTo,
-        ...(message === undefined ? {} : { message }),
-        ...(resetAt === undefined ? {} : { resetAt }),
-      };
-      assistantContent.push({ type: 'data-model-switch', data });
     } else if (event.type === 'tool_call' && !waitingCallIds.has(event.payload.callId)) {
       const { callId, tool, args } = event.payload;
       if (controlTools.has(tool) && (results.get(callId)?.status ?? 'ok') === 'ok') continue;

@@ -51,7 +51,13 @@ const components = {
     />
   ),
   code: ({ className, ...props }: ComponentPropsWithoutRef<'code'>) => (
-    <code {...omitNode(props)} className={cn('font-mono text-[13px] text-foreground', className)} />
+    <code
+      {...omitNode(props)}
+      className={cn(
+        'font-mono text-[13px] text-foreground [:not(pre)>&]:text-inline-code',
+        className,
+      )}
+    />
   ),
   table: (props: ComponentPropsWithoutRef<'table'>) => (
     <div className="my-2 overflow-x-auto">

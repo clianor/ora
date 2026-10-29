@@ -6,6 +6,7 @@ import type {
   PendingApproval,
   PendingQuestion,
   ProviderAccounts,
+  ChangesResponse,
   QuestionAnswer,
   RoutingResponse,
   SessionRecord,
@@ -155,6 +156,8 @@ export interface OraActions {
   dismissError: (sessionId: string) => void;
   /** 워크트리의 탭 목록과 그 워크트리의 터미널 목록을 서버에서 읽어 저장소에 채웁니다. */
   loadTabs: (cwd: string) => Promise<void>;
+  /** 워크트리에서 바뀐 파일 목록을 서버에서 읽어 저장소에 채웁니다. */
+  loadChanges: (cwd: string) => Promise<void>;
   /** 탭 목록을 저장소에 먼저 반영하고 서버 파일에 씁니다. */
   saveTabs: (cwd: string, tabs: WorktreeTabs) => Promise<void>;
   /** 워크트리 폴더에서 셸을 열고 터미널 ID를 돌려줍니다. */
@@ -193,8 +196,12 @@ export interface OraStore {
   getTabs: (cwd: string) => WorktreeTabs | undefined;
   /** `loadTabs`가 읽은 터미널입니다. 서버가 다시 떠서 사라진 터미널은 undefined입니다. */
   getTerminal: (terminalId: string) => Terminal | undefined;
-  /** `loadTabs`가 읽은 워크트리의 브랜치입니다. git 저장소가 아니거나 detached HEAD면 undefined입니다. */
+  /** 워크트리의 브랜치입니다. 목록을 읽을 때와 `loadTabs`가 서버에서 읽어 채웁니다. git 저장소가 아니거나 detached HEAD면 undefined입니다. */
   getBranch: (cwd: string) => string | undefined;
+  /** 서버가 알려 준 저장소의 기본 브랜치입니다. 찾지 못했으면 undefined입니다. */
+  getDefaultBranch: (cwd: string) => string | undefined;
+  /** `loadChanges`가 읽은 변경 목록입니다. 읽기 전에는 undefined입니다. */
+  getChanges: (cwd: string) => ChangesResponse | undefined;
   /** 작업 폴더가 없는 옛 세션입니다. 사이드바에는 없고 기록 화면에만 보입니다. */
   sessionsWithoutFolder: SessionNode[];
   getSession: (sessionId: string) => SessionView | undefined;

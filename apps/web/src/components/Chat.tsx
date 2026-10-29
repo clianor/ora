@@ -5,27 +5,22 @@ import {
   ThreadPrimitive,
   useAui,
   useExternalStoreRuntime,
-  type DataMessagePartProps,
   type TextMessagePartProps,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
 import {
-  ArrowRight,
-  ArrowRightLeft,
   ArrowUp,
   Check,
   ChevronDown,
   CircleAlert,
   Cpu,
-  Paperclip,
+  Plus,
   Shield,
   Square,
   TriangleAlert,
-  Undo2,
 } from 'lucide-react';
 import { Popover } from 'radix-ui';
 import { useEffect, type ReactNode } from 'react';
-import type { ModelSwitchData } from '../events.ts';
 import type { ComposerChips, Effort, RoutingModel, SessionView, StatusItem } from '../model.ts';
 import { cn } from '../lib/cn.ts';
 import type { CacheView } from '../lib/cache.ts';
@@ -78,8 +73,8 @@ function UserText({ text }: TextMessagePartProps) {
 
 function UserMessage() {
   return (
-    <MessagePrimitive.Root className="flex justify-end">
-      <div className="max-w-[520px] rounded-xl bg-surface px-4 py-2.5">
+    <MessagePrimitive.Root>
+      <div className="w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-sm leading-[22px]">
         <MessagePrimitive.Parts components={{ Text: UserText }} />
       </div>
     </MessagePrimitive.Root>
@@ -110,7 +105,7 @@ function AssistantMessage() {
           tools: { Fallback: ToolLine },
           ToolGroup,
           data: {
-            by_name: { compaction: CompactionMark, 'model-switch': ModelSwitchMark },
+            by_name: { compaction: CompactionMark },
             Fallback: WarningNote,
           },
         }}
@@ -146,9 +141,6 @@ function Chip({ children }: { children: ReactNode }) {
     </span>
   );
 }
-
-/** 체인 한 항목에 사용자가 직접 골랐는지를 더한 값입니다. */
-export type PreviewEntry = RoutingModel & { isPicked?: boolean };
 
 interface ComposerRouting {
   /** `default` 역할의 체인입니다. */
@@ -239,7 +231,7 @@ function ModelChip({ routing }: { routing: ComposerRouting }) {
         >
           {(
             [
-              ['역할 default의 체인', chain],
+              ['모델', chain],
               ['다른 모델', others],
             ] as const
           ).map(([title, list]) => (
@@ -260,8 +252,8 @@ function ModelChip({ routing }: { routing: ComposerRouting }) {
             </div>
           ))}
           <p className="px-2.5 pt-1 pb-1.5 text-xs leading-[18px] text-foreground-muted">
-            고른 모델을 이 세션 체인의 맨 앞에 두고, 세션 기록에 "직접 고름"으로 남깁니다. 나머지
-            체인은 폴백으로 그대로 씁니다.
+            고른 모델로 세션을 시작하고, 세션 기록에 "직접 고름"으로 남깁니다. 한도에 걸리면 엔진이
+            다른 모델로 바꾸고 알림을 띄웁니다.
           </p>
         </Popover.Content>
       </Popover.Portal>
@@ -307,69 +299,6 @@ function EffortChip({ routing }: { routing: ComposerRouting }) {
   );
 }
 
-/** 입력창 아래의 한 줄입니다. 이번 세션이 쓸 역할과 모델 체인, 추론 강도, 로그인 상태를 보입니다(SPEC 2.4절). */
-export function RoutingPreview({ role, chain }: { role: string; chain: readonly PreviewEntry[] }) {
-  return (
-    <div className="flex min-h-5 w-[720px] max-w-full flex-wrap items-center gap-x-2 gap-y-1 px-3.5 text-xs leading-4 text-foreground-subtle">
-      <span className="font-medium">역할 {role}</span>
-      <span>·</span>
-      {chain.flatMap((entry, index) => [
-        ...(index === 0
-          ? []
-          : [<ArrowRight key={`arrow-${index}`} aria-hidden className="size-3" />]),
-        <span key={`${entry.provider}/${entry.model}`} className="flex items-center gap-1.5">
-          <span className="font-mono font-medium">{index + 1}</span>
-          <span className="font-mono font-medium text-foreground">{entry.model}</span>
-          {entry.effort && <span className="text-foreground-muted">{entry.effort}</span>}
-          {entry.isPicked && <span className="font-medium text-foreground-muted">· 직접 고름</span>}
-          {!entry.hasAccount && <NeedLogin />}
-        </span>,
-      ])}
-    </div>
-  );
-}
-
-const switchTimeFormat = new Intl.DateTimeFormat('ko-KR', {
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-  timeZone: 'Asia/Seoul',
-});
-
-const switchReasons: Record<ModelSwitchData['reason'], string> = {
-  'usage-limit': '사용 한도',
-  error: '오류',
-  revert: '사용 한도가 풀림',
-};
-
-/** 모델이 바뀐 자리에 놓는 가는 선과 글입니다. 오류 원문은 마우스를 올렸을 때 title로만 보입니다. */
-function ModelSwitchMark({ data }: DataMessagePartProps) {
-  const mark = data as ModelSwitchData;
-  const isRevert = mark.reason === 'revert';
-  const Icon = isRevert ? Undo2 : ArrowRightLeft;
-  return (
-    <div className="flex items-center gap-2.5" title={mark.message}>
-      <div className="h-px flex-1 bg-border" />
-      <div className="flex items-center gap-1.5 text-xs leading-4">
-        <Icon aria-hidden className="size-3.5 text-warning" />
-        <span className="font-medium text-foreground-muted">
-          {isRevert ? '첫 모델로 돌아왔습니다' : '모델을 바꿨습니다'}
-        </span>
-        <span className="font-mono font-medium text-foreground">{mark.from}</span>
-        <ArrowRight aria-hidden className="size-3 text-foreground-subtle" />
-        <span className="font-mono font-medium text-foreground">{mark.to}</span>
-        <span className="text-foreground-subtle">
-          · {switchReasons[mark.reason]}
-          {mark.resetAt !== undefined &&
-            ` · ${switchTimeFormat.format(new Date(mark.resetAt))}에 풀림`}{' '}
-          · {switchTimeFormat.format(new Date(mark.ts))}
-        </span>
-      </div>
-      <div className="h-px flex-1 bg-border" />
-    </div>
-  );
-}
-
 interface ComposerProps {
   isRunning: boolean;
   /** 소프트 스톱을 보낸 뒤 멈추기를 기다리는 중입니다. 이때 한 번 더 중지하면 하드 킬입니다. */
@@ -401,7 +330,7 @@ export function Composer({
   const buttonClass =
     'flex size-[30px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors duration-(--duration-fast) ease-(--ease-out) hover:bg-foreground-muted';
   return (
-    <ComposerPrimitive.Root className="flex w-[720px] max-w-full flex-col gap-2.5 rounded-xl bg-surface px-3.5 pt-3 pb-2.5">
+    <ComposerPrimitive.Root className="flex w-[720px] max-w-full flex-col gap-2.5 rounded-xl border border-border bg-surface px-3.5 pt-3 pb-2.5">
       <ComposerPrimitive.Input
         rows={1}
         cancelOnEscape={false}
@@ -410,7 +339,7 @@ export function Composer({
         className="w-full resize-none bg-transparent text-[15px] leading-[22px] text-foreground outline-none placeholder:text-foreground-subtle"
       />
       <div className="flex h-7 items-center gap-1.5">
-        <Paperclip aria-hidden className="size-4 text-foreground-subtle" />
+        <Plus aria-hidden className="size-4 text-foreground-subtle" />
         {routing ? (
           <>
             <ModelChip routing={routing} />
@@ -427,13 +356,13 @@ export function Composer({
             {chips?.effort && <Chip>{chips.effort}</Chip>}
           </>
         )}
-        {chips?.permission && (
-          <Chip>
-            <Shield aria-hidden className="size-3.5 text-foreground-muted" />
-            {chips.permission}
-          </Chip>
-        )}
         <div className="ml-auto flex items-center gap-2">
+          {chips?.permission && (
+            <Chip>
+              <Shield aria-hidden className="size-3.5 text-foreground-muted" />
+              {chips.permission}
+            </Chip>
+          )}
           {isRunning && onStop && (
             <button
               type="button"
@@ -456,7 +385,7 @@ export function Composer({
   );
 }
 
-/** 입력창 바로 아래의 한 줄입니다. 스텝 수, 사용 모델, 격리 옵션, 컨텍스트 사용, 캐시 적중을 가운뎃점으로 나눕니다. */
+/** 입력창 바로 아래의 한 줄입니다. 스텝 수, 격리 옵션, 컨텍스트 사용, 캐시 적중을 가운뎃점으로 나눕니다. */
 export function StatusLine({
   items,
   context,

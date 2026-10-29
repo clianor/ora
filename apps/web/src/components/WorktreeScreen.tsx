@@ -1,34 +1,19 @@
-import type { SessionStatus, WorktreeTab, WorktreeTabs } from '@ora/protocol';
-import {
-  Globe,
-  MessageSquare,
-  Plus,
-  Smartphone,
-  SquarePen,
-  SquareTerminal,
-  TriangleAlert,
-  X,
-} from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { WorktreeTab, WorktreeTabs } from '@ora/protocol';
+import { Globe, MessageSquare, Smartphone, SquareTerminal } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { getStageIndex } from '../events.ts';
 import { cn } from '../lib/cn.ts';
 import { basename } from '../lib/path.ts';
 import { navigate, type RouteState } from '../lib/route.ts';
+import { usePanelState } from '../lib/panel.ts';
 import { runningStatuses } from '../lib/status.ts';
-import {
-  closeTab,
-  openNewTab,
-  openTerminalTab,
-  selectTab,
-  turnIntoSessionTab,
-  type TabContext,
-} from '../lib/tabs.ts';
+import { openNewTab, openTerminalTab, turnIntoSessionTab, type TabContext } from '../lib/tabs.ts';
 import { findWorktreeOfSession, listWorktrees } from '../lib/worktrees.ts';
 import { runAction, useStore } from '../store.tsx';
-import { Header } from './Header.tsx';
+import { RightPanel } from './RightPanel.tsx';
 import { Sidebar } from './Sidebar.tsx';
-import { StatusIcon } from './StatusIcon.tsx';
 import { TerminalTab } from './TerminalTab.tsx';
+import { TitleBar } from './TitleBar.tsx';
 import { NewSessionWelcome } from './Welcome.tsx';
 import { Workbench } from './Workbench.tsx';
 
@@ -44,7 +29,7 @@ function Notice({ title, detail }: { title: string; detail: string }) {
 }
 
 const chooserRowClass =
-  'flex h-9 w-full items-center gap-2.5 rounded-sm bg-surface px-3 text-[13px] leading-[18px]';
+  'flex h-9 w-full items-center gap-2.5 rounded-md border border-border bg-surface px-3 text-[13px] leading-[18px]';
 
 function NewTabChooser({
   title,
@@ -66,7 +51,9 @@ function NewTabChooser({
         >
           <MessageSquare aria-hidden className="size-4 text-foreground-muted" />
           <span className="flex-1 text-left">세션</span>
-          <kbd className="font-sans text-xs font-normal text-foreground-subtle">⇧⌘S</kbd>
+          <kbd className="rounded-[5px] bg-kbd px-1.5 font-sans text-xs font-normal text-foreground-muted">
+            ⇧⌘S
+          </kbd>
         </button>
         <button
           type="button"
@@ -75,7 +62,9 @@ function NewTabChooser({
         >
           <SquareTerminal aria-hidden className="size-4 text-foreground-muted" />
           <span className="flex-1 text-left">터미널</span>
-          <kbd className="font-sans text-xs font-normal text-foreground-subtle">⇧⌘T</kbd>
+          <kbd className="rounded-[5px] bg-kbd px-1.5 font-sans text-xs font-normal text-foreground-muted">
+            ⇧⌘T
+          </kbd>
         </button>
         <button
           type="button"
@@ -108,133 +97,13 @@ function NewTabChooser({
   );
 }
 
-function tabIcon(tab: WorktreeTab, status: SessionStatus | undefined): ReactNode {
-  if (tab.kind === 'terminal') {
-    return <SquareTerminal aria-hidden className="size-3.5 shrink-0 text-foreground-muted" />;
-  }
-  if (tab.kind === 'session' && status) return <StatusIcon status={status} />;
-  return <SquarePen aria-hidden className="size-3.5 shrink-0 text-foreground-subtle" />;
-}
-
-function TabBar({ context, runningCount }: { context: TabContext; runningCount: number }) {
-  const store = useStore();
-  const tabButtons = useRef<(HTMLButtonElement | null)[]>([]);
-  const { tabs, activeTabId } = context;
-  return (
-    <div className="flex h-[38px] shrink-0 items-center gap-0.5 px-3.5">
-      <div
-        role="tablist"
-        aria-label="워크트리 탭"
-        className="flex min-w-0 items-center gap-0.5"
-        onKeyDown={(event) => {
-          const count = tabs.tabs.length;
-          const index = tabs.tabs.findIndex((tab) => tab.id === activeTabId);
-          const moves: Record<string, number | undefined> = {
-            ArrowRight: (index + 1) % count,
-            ArrowLeft: (index - 1 + count) % count,
-            Home: 0,
-            End: count - 1,
-          };
-          const target = moves[event.key];
-          const tab = target === undefined ? undefined : tabs.tabs[target];
-          if (target === undefined || !tab) return;
-          event.preventDefault();
-          selectTab(context, tab.id);
-          tabButtons.current[target]?.focus();
-        }}
-      >
-        {tabs.tabs.map((tab, index) => {
-          const isActive = tab.id === activeTabId;
-          const session = tab.kind === 'session' ? store.getSession(tab.sessionId) : undefined;
-          const terminalNumber =
-            tabs.tabs
-              .filter((item) => item.kind === 'terminal')
-              .findIndex((item) => item.id === tab.id) + 1;
-          const titles = {
-            session: session?.record.title ?? '세션',
-            terminal: `터미널 ${String(terminalNumber)}`,
-            new: '새 탭',
-          };
-          const title = titles[tab.kind];
-          return (
-            <div
-              key={tab.id}
-              className={cn(
-                'group flex h-[30px] max-w-[220px] min-w-0 items-center rounded-sm',
-                isActive ? 'bg-surface' : 'hover:bg-surface-hover',
-              )}
-            >
-              <button
-                ref={(element) => {
-                  tabButtons.current[index] = element;
-                }}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                tabIndex={isActive ? 0 : -1}
-                onClick={() => {
-                  selectTab(context, tab.id);
-                }}
-                className={cn(
-                  'flex h-full min-w-0 items-center gap-1.5 pr-1 pl-2.5 text-[13px] leading-[18px]',
-                  isActive ? 'font-medium text-foreground' : 'text-foreground-muted',
-                )}
-              >
-                {tabIcon(tab, session?.record.status)}
-                <span className="truncate">{title}</span>
-              </button>
-              <button
-                type="button"
-                aria-label="탭 닫기"
-                onClick={() => {
-                  const isTerminalRunning =
-                    tab.kind === 'terminal' &&
-                    store.getTerminal(tab.terminalId)?.status === 'running';
-                  if (
-                    isTerminalRunning &&
-                    !window.confirm('실행 중인 터미널을 종료하고 탭을 닫을까요?')
-                  ) {
-                    return;
-                  }
-                  closeTab(context, tab, isTerminalRunning);
-                }}
-                className={cn(
-                  'mr-1.5 flex size-[18px] shrink-0 items-center justify-center rounded-[4px] text-foreground-subtle hover:text-foreground focus-visible:opacity-100',
-                  isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
-                )}
-              >
-                <X aria-hidden className="size-3" />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <button
-        type="button"
-        aria-label="새 탭"
-        onClick={() => {
-          openNewTab(context);
-        }}
-        className="flex size-7 shrink-0 items-center justify-center rounded-sm text-foreground-muted hover:bg-surface-hover hover:text-foreground"
-      >
-        <Plus aria-hidden className="size-[15px]" />
-      </button>
-      {runningCount >= 2 && (
-        <span className="ml-auto flex h-[26px] shrink-0 items-center gap-1.5 rounded-sm bg-surface px-2.5 text-xs leading-4 font-medium text-foreground">
-          <TriangleAlert aria-hidden className="size-[13px] text-warning" />
-          세션 {runningCount}개 동시 실행
-        </span>
-      )}
-    </div>
-  );
-}
-
 function TabContent({
   tab,
   cwd,
   context,
   runningCount,
   title,
+  repoName,
   isSessionMode,
   isModelPickerOpen,
 }: {
@@ -243,6 +112,7 @@ function TabContent({
   context: TabContext;
   runningCount: number;
   title: string;
+  repoName: string;
   isSessionMode: boolean;
   isModelPickerOpen: boolean;
 }) {
@@ -269,6 +139,7 @@ function TabContent({
     return (
       <main className="flex min-w-0 flex-1 flex-col">
         <NewSessionWelcome
+          repoName={repoName}
           context={store.getNewSessionContext(cwd)}
           cwd={cwd}
           isPickerOpen={isModelPickerOpen}
@@ -357,6 +228,7 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
   const store = useStore();
   const { actions, sidebar } = store;
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const { isOpen: isPanelOpen } = usePanelState();
 
   const explicitView =
     state.sessionId === undefined ? undefined : store.getSession(state.sessionId);
@@ -382,6 +254,12 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
   useEffect(() => {
     if (cwd) runAction(actions.loadTabs(cwd));
   }, [actions, cwd]);
+
+  const revision = activeView?.events.filter((event) => event.type === 'tool_result').length ?? 0;
+  /** 변경 목록은 서버의 git 상태라서, 워크트리를 열 때와 세션의 도구 호출이 끝날 때마다 다시 읽어야 합니다. */
+  useEffect(() => {
+    if (cwd) runAction(actions.loadChanges(cwd));
+  }, [actions, cwd, revision]);
 
   if (store.status === 'loading') {
     return (
@@ -411,31 +289,21 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
     );
   }
 
-  const repoName = ref?.repo.name ?? basename(cwd);
-  const worktreeName = ref?.node.name ?? basename(cwd);
   const runningCount = ref
     ? ref.node.sessions.filter((session) => runningStatuses.has(session.record.status)).length
     : 0;
-  const diff =
-    ref?.node.add !== undefined && ref.node.del !== undefined
-      ? { add: ref.node.add, del: ref.node.del }
-      : null;
+  const changes = store.getChanges(cwd);
+  const diff = changes?.isRepo
+    ? {
+        add: changes.files.reduce((sum, file) => sum + file.add, 0),
+        del: changes.files.reduce((sum, file) => sum + file.del, 0),
+      }
+    : null;
 
   return (
     <>
       {isSidebarOpen && <Sidebar data={sidebar} selectedCwd={cwd} />}
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header
-          title={repoName}
-          repoLabel={store.getBranch(cwd) ?? (worktreeName === repoName ? undefined : worktreeName)}
-          repoTitle={cwd}
-          diff={diff}
-          stageIndex={activeView ? getStageIndex(activeView.events) : null}
-          isCrashed={activeView?.record.status === 'crashed'}
-          onToggleSidebar={() => {
-            setIsSidebarOpen(!isSidebarOpen);
-          }}
-        />
         {context ? (
           <>
             <TabEffects
@@ -443,8 +311,15 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
               activeTab={activeTab}
               sessionId={explicitView?.record.id}
             />
-            <TabBar context={context} runningCount={runningCount} />
-            <div className="flex min-h-0 flex-1 border-t border-border">
+            <TitleBar
+              context={context}
+              stageIndex={activeView ? getStageIndex(activeView.events) : null}
+              diff={diff}
+              onToggleSidebar={() => {
+                setIsSidebarOpen(!isSidebarOpen);
+              }}
+            />
+            <div className="flex min-h-0 flex-1">
               <TabContent
                 tab={
                   activeTab ??
@@ -455,7 +330,8 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
                 cwd={cwd}
                 context={context}
                 runningCount={runningCount}
-                title={`${repoName} · ${worktreeName}`}
+                title={`${ref?.repo.name ?? basename(cwd)} · ${ref?.node.name ?? basename(cwd)}`}
+                repoName={ref?.repo.name ?? basename(cwd)}
                 isSessionMode={state.isSessionMode === true}
                 isModelPickerOpen={state.isModelPickerOpen === true}
               />
@@ -465,6 +341,18 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
           <Notice title="탭을 불러오는 중입니다" detail="" />
         )}
       </div>
+      {isPanelOpen && (
+        <RightPanel
+          cwd={cwd}
+          session={
+            activeView && {
+              record: activeView.record,
+              events: activeView.events,
+              todos: activeView.todos,
+            }
+          }
+        />
+      )}
     </>
   );
 }

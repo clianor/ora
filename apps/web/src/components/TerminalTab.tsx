@@ -38,7 +38,7 @@ function TerminalView({ terminalId, onRestart }: { terminalId: string; onRestart
       fontFamily: `${readToken('--font-mono')}, ${nerdFonts}`,
       fontSize: 13,
       theme: {
-        background: readToken('--surface-sunken'),
+        background: readToken('--background'),
         foreground: readToken('--foreground'),
         cursor: readToken('--foreground'),
         selectionBackground: readToken('--border-strong'),

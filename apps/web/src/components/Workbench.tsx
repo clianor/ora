@@ -7,7 +7,7 @@ import { ApprovalCard } from './ApprovalCard.tsx';
 import { ChatProvider, Composer, StatusLine, SteerRestore, ThreadView } from './Chat.tsx';
 import { CrashedNotice } from './CrashedNotice.tsx';
 import { QuestionCard } from './QuestionCard.tsx';
-import { TodoPanel } from './TodoPanel.tsx';
+import { ModelSwitchToast } from './ModelSwitchToast.tsx';
 
 const timeFormat = new Intl.DateTimeFormat('ko-KR', {
   hour: '2-digit',
@@ -68,7 +68,8 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
 
   return (
     <>
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        <ModelSwitchToast events={view.events} />
         <ChatProvider
           messages={thread.messages}
           onSend={(text) => actions.sendMessage(sessionId, text)}
@@ -144,7 +145,6 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
           </div>
         </ChatProvider>
       </main>
-      <TodoPanel key={sessionId} record={record} events={view.events} todos={view.todos} />
     </>
   );
 }

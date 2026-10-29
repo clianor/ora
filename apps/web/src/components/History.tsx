@@ -75,7 +75,7 @@ export function HistoryScreen() {
       <main className="flex min-w-0 flex-1 flex-col items-center overflow-y-auto">
         <div className="flex w-[676px] max-w-full flex-col gap-4 px-5 pt-8 pb-10">
           <h1 className="text-xl leading-7 font-semibold text-foreground">기록</h1>
-          <label className="flex h-10 items-center gap-2 rounded-md bg-surface px-3">
+          <label className="flex h-10 items-center gap-2 rounded-md border border-border bg-surface px-3">
             <Search aria-hidden className="size-3.5 shrink-0 text-foreground-subtle" />
             <input
               value={query}

@@ -399,7 +399,7 @@ function ProviderCard({
         </h2>
         <span className="ml-auto text-xs leading-4 text-foreground-subtle">{note}</span>
       </div>
-      <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg bg-surface">
+      <div className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface">
         {accounts.map((account) => (
           <AccountRow key={account.name} provider={provider} account={account} />
         ))}

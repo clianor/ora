@@ -5,18 +5,24 @@ import { AccountsPage } from './components/Accounts.tsx';
 import { HistoryScreen } from './components/History.tsx';
 import { AppearancePage, SettingsNav } from './components/Settings.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
-import { focusTodoPanel } from './components/TodoPanel.tsx';
+import { focusTodoPanel } from './components/RightPanel.tsx';
+import { StatusBar } from './components/StatusBar.tsx';
 import { EmptyWelcome } from './components/Welcome.tsx';
 import { WorktreeScreen } from './components/WorktreeScreen.tsx';
+import { togglePanel } from './lib/panel.ts';
 import { navigate, setPaletteOpen, useRouteState, type RouteState } from './lib/route.ts';
 import { useStore } from './store.tsx';
 
 function useShortcuts(state: RouteState) {
-  /** 창 전체에서 키보드 단축키(⌘K, ⌘Y, ⌘,, ⌘1)를 받으려면 window 이벤트를 구독해야 합니다. */
+  /** 창 전체에서 키보드 단축키(⌘K, ⌘Y, ⌘,, ⌘1, ⌥⌘B)를 받으려면 window 이벤트를 구독해야 합니다. */
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!event.metaKey && !event.ctrlKey) return;
-      if (event.key === 'k') {
+      // ⌥를 누르면 event.key가 다른 글자로 바뀌므로 물리 키(code)로 판정합니다.
+      if (event.altKey && event.code === 'KeyB') {
+        event.preventDefault();
+        togglePanel();
+      } else if (event.key === 'k') {
         event.preventDefault();
         setPaletteOpen(!state.isPaletteOpen);
       } else if (event.key === 'y') {
@@ -83,8 +89,11 @@ export function App() {
   const store = useStore();
   useShortcuts(state);
   return (
-    <div className="flex h-full overflow-hidden bg-background">
-      <Screen key={state.route} state={state} />
+    <div className="flex h-full flex-col overflow-hidden bg-background">
+      <div className="flex min-h-0 flex-1">
+        <Screen key={state.route} state={state} />
+      </div>
+      <StatusBar />
       {state.isPaletteOpen && (
         <CommandPalette
           repos={store.sidebar.repos}

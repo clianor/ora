@@ -196,7 +196,7 @@ export function AppearancePage() {
           <h2 className="text-[13px] leading-[18px] font-medium text-foreground-muted">
             화면 스타일
           </h2>
-          <div className="flex items-center gap-4 rounded-lg bg-surface px-4 py-3.5">
+          <div className="flex items-center gap-4 rounded-lg border border-border bg-surface px-4 py-3.5">
             <div className="flex flex-1 flex-col gap-0.5">
               <p id="theme-mode-label" className="text-sm leading-5 font-medium text-foreground">
                 모드

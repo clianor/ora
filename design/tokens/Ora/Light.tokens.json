@@ -6,39 +6,39 @@
     },
     "sidebar": {
       "$type": "color",
-      "$value": "#F9F9F9"
+      "$value": "#F2F4F8"
     },
     "surface": {
       "$type": "color",
-      "$value": "#F4F4F4"
+      "$value": "#F5F6F9"
     },
     "surface-sunken": {
       "$type": "color",
-      "$value": "#F7F7F8"
+      "$value": "#EBEEF3"
     },
     "surface-hover": {
       "$type": "color",
-      "$value": "#EFEFEF"
+      "$value": "#E2E6EE"
     },
     "border": {
       "$type": "color",
-      "$value": "#E8E8E8"
+      "$value": "#DDE1E9"
     },
     "foreground": {
       "$type": "color",
-      "$value": "#0D0D0D"
+      "$value": "#151821"
     },
     "foreground-muted": {
       "$type": "color",
-      "$value": "#4A4A4A"
+      "$value": "#434A5A"
     },
     "foreground-subtle": {
       "$type": "color",
-      "$value": "#6B6B6B"
+      "$value": "#555C6E"
     },
     "primary": {
       "$type": "color",
-      "$value": "#0D0D0D"
+      "$value": "#151821"
     },
     "primary-foreground": {
       "$type": "color",
@@ -54,7 +54,7 @@
     },
     "danger": {
       "$type": "color",
-      "$value": "#CF222E"
+      "$value": "#B71C28"
     },
     "danger-subtle": {
       "$type": "color",
@@ -78,7 +78,19 @@
     },
     "border-strong": {
       "$type": "color",
-      "$value": "#D4D4D4"
+      "$value": "#C3C9D5"
+    },
+    "inline-code": {
+      "$type": "color",
+      "$value": "#7A4F00"
+    },
+    "kbd": {
+      "$type": "color",
+      "$value": "#E2E5EC"
+    },
+    "titlebar": {
+      "$type": "color",
+      "$value": "#EBEEF3"
     }
   },
   "radius": {

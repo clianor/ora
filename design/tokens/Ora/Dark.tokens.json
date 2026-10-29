@@ -2,47 +2,47 @@
   "color": {
     "background": {
       "$type": "color",
-      "$value": "#1F1F1F"
+      "$value": "#282C33"
     },
     "sidebar": {
       "$type": "color",
-      "$value": "#181818"
+      "$value": "#21252D"
     },
     "surface": {
       "$type": "color",
-      "$value": "#2A2A2A"
+      "$value": "#2F333D"
     },
     "surface-sunken": {
       "$type": "color",
-      "$value": "#161616"
+      "$value": "#1E2128"
     },
     "surface-hover": {
       "$type": "color",
-      "$value": "#262626"
+      "$value": "#383C48"
     },
     "border": {
       "$type": "color",
-      "$value": "#2C2C2C"
+      "$value": "#353A47"
     },
     "foreground": {
       "$type": "color",
-      "$value": "#ECECEC"
+      "$value": "#F2F3F6"
     },
     "foreground-muted": {
       "$type": "color",
-      "$value": "#B4B4B4"
+      "$value": "#C8CCD8"
     },
     "foreground-subtle": {
       "$type": "color",
-      "$value": "#939393"
+      "$value": "#A0A4B2"
     },
     "primary": {
       "$type": "color",
-      "$value": "#ECECEC"
+      "$value": "#FAFAFA"
     },
     "primary-foreground": {
       "$type": "color",
-      "$value": "#1F1F1F"
+      "$value": "#21252D"
     },
     "success": {
       "$type": "color",
@@ -50,7 +50,7 @@
     },
     "success-subtle": {
       "$type": "color",
-      "$value": "#12261A"
+      "$value": "#1F3327"
     },
     "danger": {
       "$type": "color",
@@ -58,7 +58,7 @@
     },
     "danger-subtle": {
       "$type": "color",
-      "$value": "#2D1517"
+      "$value": "#3A2328"
     },
     "warning": {
       "$type": "color",
@@ -74,11 +74,23 @@
     },
     "popover": {
       "$type": "color",
-      "$value": "#333333"
+      "$value": "#2F333D"
     },
     "border-strong": {
       "$type": "color",
-      "$value": "#4D4D4D"
+      "$value": "#4A4F5C"
+    },
+    "inline-code": {
+      "$type": "color",
+      "$value": "#D7BA7D"
+    },
+    "kbd": {
+      "$type": "color",
+      "$value": "#3D414D"
+    },
+    "titlebar": {
+      "$type": "color",
+      "$value": "#1E2128"
     }
   },
   "radius": {

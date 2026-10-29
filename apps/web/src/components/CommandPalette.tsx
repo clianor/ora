@@ -11,7 +11,7 @@ import { Dialog } from 'radix-ui';
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from '../lib/cn.ts';
 import { navigate, type Route } from '../lib/route.ts';
-import { focusTodoPanel } from './TodoPanel.tsx';
+import { focusTodoPanel } from './RightPanel.tsx';
 import type { RepoNode, SessionNode, WorktreeNode } from '../model.ts';
 
 interface PaletteItem {
@@ -140,7 +140,7 @@ export function CommandPalette({ repos, initialQuery, onClose }: CommandPaletteP
         <Dialog.Overlay className="fixed inset-0 bg-overlay" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed top-[120px] left-1/2 flex w-[640px] max-w-[calc(100%-32px)] -translate-x-1/2 flex-col overflow-hidden rounded-lg bg-surface"
+          className="fixed top-[120px] left-1/2 flex w-[640px] max-w-[calc(100%-32px)] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-border-strong bg-popover"
         >
           <Dialog.Title className="sr-only">명령 팔레트</Dialog.Title>
           <div className="flex h-[52px] items-center gap-2.5 px-4">
@@ -162,11 +162,11 @@ export function CommandPalette({ repos, initialQuery, onClose }: CommandPaletteP
               aria-label="명령 검색"
               className="min-w-0 flex-1 bg-transparent text-[15px] leading-[22px] text-foreground outline-none"
             />
-            <kbd className="flex h-[22px] items-center rounded-[6px] bg-background px-1.5 font-mono text-[11px] leading-[14px] font-medium text-foreground-subtle">
+            <kbd className="flex h-[22px] items-center rounded-[6px] bg-kbd px-1.5 font-mono text-[11px] leading-[14px] font-medium text-foreground-muted">
               Esc
             </kbd>
           </div>
-          <div className="h-px bg-background" />
+          <div className="h-px bg-border" />
           <div
             id="palette-results"
             role="listbox"

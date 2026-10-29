@@ -55,7 +55,10 @@ export function QuestionCard({ request, draft, onAnswer }: QuestionCardProps) {
   };
 
   return (
-    <section aria-label="질문" className="flex flex-col gap-3 rounded-lg bg-surface p-4">
+    <section
+      aria-label="질문"
+      className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
+    >
       <Tabs.Root
         value={String(current)}
         onValueChange={(value) => {

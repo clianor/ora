@@ -15,7 +15,7 @@ const stageLabel: Record<Stage, string> = {
   learn: 'Learn',
 };
 
-function StageChip({ index }: { index: number }) {
+export function StageChip({ index }: { index: number }) {
   const current = stages[index];
   if (!current) return null;
   return (

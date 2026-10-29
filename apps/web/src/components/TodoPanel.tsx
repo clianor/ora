@@ -77,16 +77,6 @@ const flowStyle: Record<FlowKind, { icon: LucideIcon; color: string }> = {
 /** 흐름이 이 개수를 넘으면 앞부분을 접고 마지막 `flowFoldLimit`개만 보입니다. */
 const flowFoldLimit = 12;
 
-const panelId = 'todo-panel';
-
-/**
- * `⌘1`과 명령 팔레트가 패널 밖에서 포커스를 옮겨야 하는데 패널의 ref를 넘길 길이 없어 id로 찾습니다.
- * 패널이 없는 화면에서는 아무 일도 하지 않습니다.
- */
-export function focusTodoPanel(): void {
-  document.getElementById(panelId)?.focus();
-}
-
 interface FlowItem {
   kind: FlowKind;
   label: string;
@@ -678,11 +668,22 @@ interface TodoPanelProps {
   todos: readonly Todo[];
 }
 
+/** 오른쪽 패널 "할 일" 탭의 내용입니다. 완료 개수 합산은 패널 머리가 같은 함수로 하므로 여기서도 그 함수를 씁니다. */
+export function getVerifiedProgress(todos: readonly Todo[]): {
+  verified: number;
+  denominator: number;
+} {
+  return {
+    verified: todos.filter((todo) => todo.status === 'verified').length,
+    denominator: todos.filter((todo) => todo.status !== 'abandoned').length,
+  };
+}
+
 /**
- * 오른쪽 "할 일" 패널입니다. phase 카드마다 진행과 할 일별 흐름을 보여 줍니다.
+ * phase 카드마다 진행과 할 일별 흐름을 보여 줍니다.
  * 사용자가 카드를 펼치거나 접은 선택은 작업 중 할 일이 다른 phase로 옮겨 가면 버립니다.
  */
-export function TodoPanel({ record, events, todos }: TodoPanelProps) {
+export function TodoPanelBody({ record, events, todos }: TodoPanelProps) {
   const [choice, setChoice] = useState<{ anchor: string; open: Record<string, boolean> }>({
     anchor: '',
     open: {},
@@ -702,79 +703,63 @@ export function TodoPanel({ record, events, todos }: TodoPanelProps) {
   const picked = choice.anchor === anchor ? choice.open : {};
   const isOpen = (name: string): boolean => picked[name] ?? name === defaultOpen;
 
-  const verified = todos.filter((todo) => todo.status === 'verified').length;
-  const denominator = todos.filter((todo) => todo.status !== 'abandoned').length;
+  const { verified, denominator } = getVerifiedProgress(todos);
   const abandoned = todos.length - denominator;
   const blocked = todos.filter((todo) => todo.status === 'blocked').length;
   const isBlockedStop = record.status === 'stopped' && record.endReason === 'blocked';
   const isDoneWithAbandoned = record.status === 'completed' && abandoned > 0;
 
   return (
-    <aside
-      id={panelId}
-      tabIndex={-1}
-      aria-label="할 일"
-      className="flex w-[340px] shrink-0 flex-col bg-sidebar outline-none"
-    >
-      <div className="flex h-12 shrink-0 items-center gap-4 px-4">
-        <h2 className="text-[13px] leading-[18px] font-semibold text-foreground">할 일</h2>
-        <span className="text-[13px] leading-[18px] font-medium text-foreground-subtle">변경</span>
-        <span className="text-[13px] leading-[18px] font-medium text-foreground-subtle">파일</span>
-        <span className="ml-auto font-mono text-xs leading-4 font-medium text-foreground-muted">
-          검증 {verified}/{denominator}
-        </span>
-      </div>
-      <div className="flex min-h-0 flex-col gap-2.5 overflow-y-auto px-2 pt-1 pb-4">
-        {isBlockedStop && (
-          <Banner
-            icon={OctagonPause}
-            color="text-warning"
-            title="막혀서 멈췄습니다"
-            body={`막힌 할 일 ${blocked}개. 사유를 보고 포기하거나, 메시지로 다른 방법을 알려 주세요.`}
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-2 pt-1 pb-4">
+      {isBlockedStop && (
+        <Banner
+          icon={OctagonPause}
+          color="text-warning"
+          title="막혀서 멈췄습니다"
+          body={`막힌 할 일 ${blocked}개. 사유를 보고 포기하거나, 메시지로 다른 방법을 알려 주세요.`}
+        />
+      )}
+      {isDoneWithAbandoned && (
+        <Banner
+          icon={CircleCheck}
+          color="text-success"
+          title="검증을 통과해 끝났습니다"
+          body={`검증 ${verified}개 통과 · 포기 ${abandoned}개`}
+        />
+      )}
+      {data.objective !== '' && (
+        <div className="flex flex-col gap-0.5 px-2">
+          <p className="text-xs leading-4 font-medium text-foreground-subtle">목표</p>
+          <p className="text-[13px] leading-[18px] text-foreground-muted">{data.objective}</p>
+        </div>
+      )}
+      {todos.length === 0 ? (
+        <div className="flex flex-col gap-1 px-2 pt-1">
+          <p className="text-[13px] leading-[18px] font-medium text-foreground-muted">
+            할 일이 아직 없습니다
+          </p>
+          <p className="w-[300px] text-xs leading-4 text-foreground-subtle">
+            Plan 단계에서 Ora가 할 일과 검증 명령을 정하면 여기에 쌓입니다.
+          </p>
+        </div>
+      ) : (
+        phases.map((phase) => (
+          <PhaseCard
+            key={phase.name}
+            sessionId={record.id}
+            phase={phase}
+            criterion={data.criteria.get(phase.name)}
+            steps={data.steps.get(phase.name) ?? 0}
+            isOpen={isOpen(phase.name)}
+            onToggle={() => {
+              setChoice({ anchor, open: { ...picked, [phase.name]: !isOpen(phase.name) } });
+            }}
+            currentId={currentId}
+            isAwaitingApproval={record.status === 'awaiting_approval'}
+            flows={data.flows}
           />
-        )}
-        {isDoneWithAbandoned && (
-          <Banner
-            icon={CircleCheck}
-            color="text-success"
-            title="검증을 통과해 끝났습니다"
-            body={`검증 ${verified}개 통과 · 포기 ${abandoned}개`}
-          />
-        )}
-        {data.objective !== '' && (
-          <div className="flex flex-col gap-0.5 px-2">
-            <p className="text-xs leading-4 font-medium text-foreground-subtle">목표</p>
-            <p className="text-[13px] leading-[18px] text-foreground-muted">{data.objective}</p>
-          </div>
-        )}
-        {todos.length === 0 ? (
-          <div className="flex flex-col gap-1 px-2 pt-1">
-            <p className="text-[13px] leading-[18px] font-medium text-foreground-muted">
-              할 일이 아직 없습니다
-            </p>
-            <p className="w-[300px] text-xs leading-4 text-foreground-subtle">
-              Plan 단계에서 Ora가 할 일과 검증 명령을 정하면 여기에 쌓입니다.
-            </p>
-          </div>
-        ) : (
-          phases.map((phase) => (
-            <PhaseCard
-              key={phase.name}
-              sessionId={record.id}
-              phase={phase}
-              criterion={data.criteria.get(phase.name)}
-              steps={data.steps.get(phase.name) ?? 0}
-              isOpen={isOpen(phase.name)}
-              onToggle={() => {
-                setChoice({ anchor, open: { ...picked, [phase.name]: !isOpen(phase.name) } });
-              }}
-              currentId={currentId}
-              isAwaitingApproval={record.status === 'awaiting_approval'}
-              flows={data.flows}
-            />
-          ))
-        )}
-      </div>
-    </aside>
+        ))
+      )}
+    </div>
   );
 }

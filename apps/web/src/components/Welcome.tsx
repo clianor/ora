@@ -1,11 +1,9 @@
 import { ChevronDown, Folder, GitBranch } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { basename } from '../lib/path.ts';
 import { navigate } from '../lib/route.ts';
 import { useStore } from '../store.tsx';
 import type { ComposerChips, Effort, OraStore, RoutingModel, WorktreeContext } from '../model.ts';
-import { DiffStat } from '../ui/stat.tsx';
-import { ChatProvider, Composer, RoutingPreview, type PreviewEntry } from './Chat.tsx';
+import { ChatProvider, Composer } from './Chat.tsx';
 
 function Shortcut({ keys, label }: { keys: string; label: string }) {
   return (
@@ -24,12 +22,14 @@ interface Picked {
 /** 첫 입력으로 새 세션을 만들고 만든 세션 ID를 `onCreated`로 알립니다. 사용자가 고른 모델은 세션을 만들 때 `model`로 보냅니다. */
 function Welcome({
   context,
+  subtitle,
   cwd,
   chips,
   isPickerOpen,
   onCreated,
 }: {
-  context: ReactNode;
+  context?: ReactNode;
+  subtitle?: string;
   cwd?: string;
   chips?: ComposerChips;
   isPickerOpen?: boolean;
@@ -41,18 +41,6 @@ function Welcome({
   const base = picked.entry ?? routing?.chain[0];
   const selected = base && { ...base, effort: picked.effort ?? base.effort };
   const isPicked = picked.entry !== undefined || picked.effort !== undefined;
-  let previewChain: PreviewEntry[] = routing?.chain ?? [];
-  if (routing && selected && isPicked) {
-    previewChain = [
-      { ...selected, isPicked: true },
-      ...routing.chain.filter(
-        (entry) =>
-          entry.provider !== selected.provider ||
-          entry.model !== selected.model ||
-          entry.effort !== selected.effort,
-      ),
-    ];
-  }
   const create = async (task: string) => {
     try {
       setError(null);
@@ -72,11 +60,12 @@ function Welcome({
         <div className="flex w-[720px] max-w-full flex-col gap-1.5">
           <h2 className="text-2xl leading-8 font-semibold text-foreground">무엇을 할까요?</h2>
           <p className="text-sm leading-[22px] text-foreground-subtle">
-            Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를 보고합니다.
+            {subtitle && `${subtitle} `}Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를
+            보고합니다.
           </p>
         </div>
         <div className="flex w-[720px] max-w-full flex-col gap-2">
-          <div className="flex items-center gap-1.5">{context}</div>
+          {context && <div className="flex items-center gap-1.5">{context}</div>}
           {error && (
             <p role="alert" className="px-3.5 text-xs leading-4 text-danger">
               {error}
@@ -102,65 +91,44 @@ function Welcome({
                 : undefined
             }
           />
-          {previewChain.length > 0 && <RoutingPreview role="default" chain={previewChain} />}
         </div>
-        <div className="flex w-[720px] max-w-full gap-5 px-3.5">
-          <Shortcut keys="⌘K" label="명령 팔레트" />
-          <Shortcut keys="⌘N" label="새 세션" />
-          <Shortcut keys="⌘," label="설정" />
-        </div>
+        {context && (
+          <div className="flex w-[720px] max-w-full gap-5 px-3.5">
+            <Shortcut keys="⌘K" label="명령 팔레트" />
+            <Shortcut keys="⌘N" label="새 세션" />
+            <Shortcut keys="⌘," label="설정" />
+          </div>
+        )}
       </div>
     </ChatProvider>
   );
 }
 
-const chipClass = 'flex h-7 items-center gap-1.5 rounded-sm bg-surface px-2.5';
-
-/** 워크트리별 새 세션 화면입니다. 맥락 칩은 고르지 않는 고정 칩이고 워크트리 경로와 변경 통계를 보여 줍니다. */
+/** 워크트리별 새 세션 화면입니다. 부제목이 이 폴더와 브랜치에서 시작한다고 알립니다. */
 export function NewSessionWelcome({
   context,
+  repoName,
   cwd,
   isPickerOpen,
   onCreated,
 }: {
   context: WorktreeContext;
+  repoName: string;
   cwd?: string;
   isPickerOpen?: boolean;
   onCreated: (sessionId: string) => void;
 }) {
+  const place =
+    context.path === undefined
+      ? '서버가 정한 폴더'
+      : [repoName, context.branch].filter(Boolean).join(' · ');
   return (
     <Welcome
       cwd={cwd}
       onCreated={onCreated}
       isPickerOpen={isPickerOpen}
       chips={context.chips}
-      context={
-        <>
-          <span className={chipClass} title={context.path}>
-            <Folder aria-hidden className="size-3.5 text-foreground-muted" />
-            <span className="font-mono text-[13px] leading-[18px] font-medium text-foreground-muted">
-              {context.path === undefined ? '서버 기본 작업 폴더' : basename(context.path)}
-              {context.path !== undefined && context.path !== basename(context.path) && (
-                <span className="sr-only"> ({context.path})</span>
-              )}
-            </span>
-          </span>
-          {context.branch !== undefined && (
-            <span className={chipClass}>
-              <GitBranch aria-hidden className="size-3.5 text-foreground-muted" />
-              <span className="font-mono text-[13px] leading-[18px] font-medium text-foreground-muted">
-                {context.branch}
-              </span>
-              {context.add !== undefined && context.del !== undefined && (
-                <DiffStat add={context.add} del={context.del} />
-              )}
-            </span>
-          )}
-          <span className="pl-1.5 text-xs leading-4 text-foreground-subtle">
-            {context.path ? '이 폴더에서 시작합니다' : '서버가 정한 폴더에서 시작합니다'}
-          </span>
-        </>
-      }
+      subtitle={`${place}에서 시작합니다.`}
     />
   );
 }

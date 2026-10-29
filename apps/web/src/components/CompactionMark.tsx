@@ -39,7 +39,7 @@ function sortSections(sections: readonly SummarySection[]): SummarySection[] {
 
 function SummaryBody({ sections }: { sections: readonly SummarySection[] }) {
   return (
-    <div className="flex flex-col gap-3 rounded-md bg-surface-sunken p-3.5">
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-sunken p-3.5">
       {sections.map((section) => (
         <section key={section.title} className="flex flex-col gap-1">
           <h3 className="text-xs leading-4 font-semibold text-foreground">{section.title}</h3>
@@ -130,7 +130,7 @@ export function CompactionMark({ data }: DataMessagePartProps) {
       {isOpen && (
         <div id={bodyId}>
           {mark.method === 'prune' && (
-            <ul className="flex flex-col gap-1 rounded-md bg-surface-sunken p-3.5">
+            <ul className="flex flex-col gap-1 rounded-lg border border-border bg-surface-sunken p-3.5">
               {mark.items.map((item, index) => (
                 <li key={index} className="flex gap-2 text-xs leading-[18px]">
                   <span className="text-foreground-muted">{item.tool}</span>

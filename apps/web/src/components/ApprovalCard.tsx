@@ -36,7 +36,7 @@ export function ApprovalCard({ request, onDecide }: ApprovalCardProps) {
     return (
       <section
         aria-label="검증 예외 승인"
-        className="flex flex-col gap-3 rounded-lg bg-surface p-4"
+        className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
       >
         <div className="flex items-center gap-2">
           <ShieldQuestionMark aria-hidden className="size-4 text-warning" />
@@ -96,7 +96,10 @@ export function ApprovalCard({ request, onDecide }: ApprovalCardProps) {
   }
 
   return (
-    <section aria-label="실행 승인" className="flex flex-col gap-3 rounded-lg bg-surface p-4">
+    <section
+      aria-label="실행 승인"
+      className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
+    >
       <div className="flex items-center gap-2">
         <ShieldCheck aria-hidden className="size-4 text-warning" />
         <h2 className="text-sm leading-5 font-semibold text-foreground">{titles[detail.kind]}</h2>

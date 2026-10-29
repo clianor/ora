@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tabsResponseSchema } from '@ora/protocol';
@@ -85,4 +85,30 @@ test('심볼릭 링크로 가리킨 폴더의 탭은 실제 경로와 같은 워
     `/api/tabs?cwd=${encodeURIComponent(realpathSync(join(home, 'real')))}`,
   );
   expect(tabsResponseSchema.parse(reread.json).tabs).toEqual(tabs);
+});
+
+test('변경 목록은 HEAD 기준 증감과 추적하지 않는 파일을 돌려주고 git 저장소가 아니면 isRepo를 끈다', async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'ora-changes-')));
+  const call = await boot(home);
+  const url = `/api/changes?cwd=${encodeURIComponent(home)}`;
+  expect((await call(url)).json).toEqual({ isRepo: false, files: [] });
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', home, '-c', 'user.email=a@b.c', '-c', 'user.name=t', ...args]);
+  git('init', '-q', '-b', 'main');
+  writeFileSync(join(home, 'a.txt'), 'one\ntwo\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'init');
+  writeFileSync(join(home, 'a.txt'), 'one\nTWO\nthree\n');
+  writeFileSync(join(home, 'b b.txt'), 'x\ny\n');
+  expect((await call(url)).json).toEqual({
+    isRepo: true,
+    files: [
+      { path: 'a.txt', add: 2, del: 1 },
+      { path: 'b b.txt', add: 2, del: 0 },
+    ],
+  });
+  expect((await call(`/api/branch?cwd=${encodeURIComponent(home)}`)).json).toEqual({
+    branch: 'main',
+    defaultBranch: 'main',
+  });
 });

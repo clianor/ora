@@ -1,5 +1,6 @@
 import {
   accountListResponseSchema,
+  changesResponseSchema,
   branchResponseSchema,
   accountViewSchema,
   loginStateSchema,
@@ -27,6 +28,7 @@ import {
   steerFailedSchema,
   todoActionResponseSchema,
   type ApprovalDecision,
+  type ChangesResponse,
   type OraEvent,
   type PendingApproval,
   type PendingQuestion,
@@ -42,7 +44,7 @@ import { buildCacheView } from './lib/cache.ts';
 import { buildContextView, type ContextLimits } from './lib/context.ts';
 import { basename } from './lib/path.ts';
 import { permissionLabel } from './lib/status.ts';
-import { buildModelItems, getModelState } from './lib/routing.ts';
+import { getModelState } from './lib/routing.ts';
 import type {
   AccountsData,
   OraActions,
@@ -156,18 +158,13 @@ function buildRepos(records: readonly SessionRecord[], startCwd: string | undefi
   });
 }
 
-function buildStatusLine(
-  events: readonly OraEvent[],
-  maxSteps: number | undefined,
-  modelItems: StatusItem[],
-): StatusItem[] {
+function buildStatusLine(events: readonly OraEvent[], maxSteps: number | undefined): StatusItem[] {
   const requests = events.filter((event) => event.type === 'model_request');
   const start = events.find((event) => event.type === 'session_start');
   return [
     ...(requests.length > 0
       ? [`스텝 ${requests.length}${maxSteps === undefined ? '' : `/${maxSteps}`}`]
       : []),
-    ...modelItems,
     ...(start ? [`격리 ${start.payload.isolation}`] : []),
   ];
 }
@@ -211,11 +208,35 @@ export function createHttpStore(): OraStoreSource {
   const tabs = new Map<string, WorktreeTabs>();
   const terminals = new Map<string, Terminal>();
   const branches = new Map<string, string>();
+  const defaultBranches = new Map<string, string>();
+  const changes = new Map<string, ChangesResponse>();
+  const requestedBranches = new Set<string>();
   let terminalInputChain: Promise<unknown> = Promise.resolve();
+
+  /** 워크트리의 브랜치와 저장소 기본 브랜치를 읽어 사이드바 배지에 씁니다. 읽지 못하면 폴더 이름만 보입니다. */
+  const loadBranch = async (cwd: string): Promise<void> => {
+    const head = await requestJson(
+      `/api/branch?cwd=${encodeURIComponent(cwd)}`,
+      branchResponseSchema,
+    ).catch(() => undefined);
+    if (head === undefined) return;
+    if (head.branch !== undefined) branches.set(cwd, head.branch);
+    if (head.defaultBranch !== undefined) defaultBranches.set(cwd, head.defaultBranch);
+    notifySoon();
+  };
+
+  /** 아직 묻지 않은 폴더만 서버에 묻습니다. 목록을 다시 읽을 때마다 호출해도 폴더당 한 번만 요청합니다. */
+  const requestBranches = (cwds: readonly string[]): void => {
+    for (const cwd of cwds) {
+      if (requestedBranches.has(cwd)) continue;
+      requestedBranches.add(cwd);
+      loadBranch(cwd).catch(() => undefined);
+    }
+  };
 
   /** 폴더를 고르지 않은 새 세션은 서버가 알려 준 기본 작업 폴더와 브랜치를 보여 줍니다. */
   function getNewSessionContext(cwd?: string): WorktreeContext {
-    if (cwd !== undefined) return { path: cwd };
+    if (cwd !== undefined) return { path: cwd, branch: branches.get(cwd) };
     return {
       path: info?.cwd,
       branch: info?.branch,
@@ -231,7 +252,7 @@ export function createHttpStore(): OraStoreSource {
     ]);
     const built = buildThread(state.events, waitingCallIds);
     state.lastMessages = reuseMessages(state.lastMessages, built.messages);
-    const modelState = getModelState(state.events, state.record, routing?.chain);
+    const modelState = getModelState(state.events, state.record);
     state.view = {
       record: state.record,
       events: state.events,
@@ -242,11 +263,7 @@ export function createHttpStore(): OraStoreSource {
       repoLabel: state.record.repo === undefined ? '' : basename(state.record.repo),
       repoTitle: state.record.repo,
       diff: null,
-      statusLine: buildStatusLine(
-        state.events,
-        state.maxSteps ?? info?.maxSteps,
-        buildModelItems(modelState),
-      ),
+      statusLine: buildStatusLine(state.events, state.maxSteps ?? info?.maxSteps),
       cache: buildCacheView(state.events),
       context: buildContextView(state.events, state.limits),
       chips: {
@@ -276,6 +293,8 @@ export function createHttpStore(): OraStoreSource {
         .filter((record) => record.repo === undefined)
         .map((record) => ({ record, todoTitles: [] })),
       getBranch: (cwd) => branches.get(cwd),
+      getDefaultBranch: (cwd) => defaultBranches.get(cwd),
+      getChanges: (cwd) => changes.get(cwd),
       getNewSessionContext: getNewSessionContext,
       empty: { repos: [], branches: [] },
       routing,
@@ -335,6 +354,9 @@ export function createHttpStore(): OraStoreSource {
         sessions.delete(id);
       }
       for (const record of list.sessions) ensureState(record);
+      requestBranches(
+        list.sessions.flatMap((record) => (record.repo === undefined ? [] : [record.repo])),
+      );
       listLoaded = 'ready';
       listError = undefined;
     } catch (error) {
@@ -624,16 +646,20 @@ export function createHttpStore(): OraStoreSource {
     },
     loadTabs: async (cwd) => {
       const query = `?cwd=${encodeURIComponent(cwd)}`;
-      const [saved, listed, head] = await Promise.all([
+      const [saved, listed] = await Promise.all([
         requestJson(`/api/tabs${query}`, tabsResponseSchema),
         requestJson(`/api/terminals${query}`, terminalListResponseSchema),
-        requestJson(`/api/branch${query}`, branchResponseSchema).catch(() => ({
-          branch: undefined,
-        })),
+        loadBranch(cwd),
       ]);
-      if (head.branch !== undefined) branches.set(cwd, head.branch);
       tabs.set(cwd, saved.tabs);
       for (const terminal of listed.terminals) terminals.set(terminal.id, terminal);
+      notifyNow();
+    },
+    loadChanges: async (cwd) => {
+      changes.set(
+        cwd,
+        await requestJson(`/api/changes?cwd=${encodeURIComponent(cwd)}`, changesResponseSchema),
+      );
       notifyNow();
     },
     saveTabs: async (cwd, next) => {
@@ -709,6 +735,8 @@ export function createHttpStore(): OraStoreSource {
     sidebar: { repos: [], deviceName: '이 컴퓨터' },
     sessionsWithoutFolder: [],
     getBranch: () => undefined,
+    getDefaultBranch: () => undefined,
+    getChanges: () => undefined,
     getNewSessionContext: getNewSessionContext,
     empty: { repos: [], branches: [] },
     routing,
@@ -740,6 +768,7 @@ export function createHttpStore(): OraStoreSource {
   requestJson('/api/info', infoResponseSchema)
     .then((result) => {
       info = result;
+      requestBranches([result.cwd]);
       for (const state of sessions.values()) state.view = null;
       notifySoon();
     })

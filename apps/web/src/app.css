@@ -16,6 +16,9 @@
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-popover: var(--popover);
+  --color-inline-code: var(--inline-code);
+  --color-kbd: var(--kbd);
+  --color-titlebar: var(--titlebar);
   --color-foreground: var(--foreground);
   --color-foreground-muted: var(--foreground-muted);
   --color-foreground-subtle: var(--foreground-subtle);

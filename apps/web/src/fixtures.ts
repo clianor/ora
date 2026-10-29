@@ -1,8 +1,8 @@
 import { buildThread } from './events.ts';
 import { buildCacheView } from './lib/cache.ts';
 import { buildContextView } from './lib/context.ts';
-import { buildModelItems, getModelState } from './lib/routing.ts';
-import type { AccountProvider, LoginState, ProviderAccounts } from '@ora/protocol';
+import { listWorktrees } from './lib/worktrees.ts';
+import type { AccountProvider, ChangesResponse, LoginState, ProviderAccounts } from '@ora/protocol';
 import type {
   Actor,
   EventOf,
@@ -343,7 +343,7 @@ const sessionView: SessionView = finishView(
     todos: mathTodos,
     repoLabel: 'math-demo · main',
     diff: { add: 1, del: 1 },
-    statusLine: ['스텝 12/50', '기본 모델 사용 중', '격리 harness'],
+    statusLine: ['스텝 12/50', '격리 harness'],
   },
   {
     approvals: [
@@ -481,7 +481,7 @@ const contextView: SessionView = finishView({
   todos: mathTodos,
   repoLabel: 'math-demo · main',
   diff: { add: 3, del: 2 },
-  statusLine: ['스텝 31/50', '기본 모델 사용 중', '격리 harness'],
+  statusLine: ['스텝 31/50', '격리 harness'],
 });
 
 const compactionDocument = [
@@ -549,7 +549,7 @@ const questionView: SessionView = finishView(
     todos: [],
     repoLabel: 'notes · main',
     diff: null,
-    statusLine: ['스텝 3/50', '기본 모델 사용 중', '격리 harness'],
+    statusLine: ['스텝 3/50', '격리 harness'],
     placeholder: '질문에 답하거나, 다른 내용을 적어 보냅니다',
     initialSearch: { query: '타임아웃' },
     questionDraft: { current: 1, picks: [[0], [0, 1]] },
@@ -671,7 +671,7 @@ const crashedView: SessionView = finishView({
   ],
   repoLabel: 'math-demo · docs/readme-pnpm',
   diff: { add: 12, del: 3 },
-  statusLine: ['스텝 9/50', '기본 모델', '격리 harness'],
+  statusLine: ['스텝 9/50', '격리 harness'],
   placeholder: '재개할 때 함께 보낼 조향 메시지를 적습니다',
 });
 
@@ -867,7 +867,7 @@ function createPhaseView(
       todos,
       repoLabel: 'math-demo · main',
       diff: { add: 1, del: 1 },
-      statusLine: ['스텝 12/50', '기본 모델 사용 중', '격리 harness'],
+      statusLine: ['스텝 12/50', '격리 harness'],
     },
     { approvals },
   );
@@ -1203,42 +1203,30 @@ const fallbackEvents: OraEvent[] = [
   }),
   fallbackRequest('18:12', 'claude-haiku-5-5', 'claude-sdk', 0),
 ];
-const fallbackModelState = getModelState(
-  fallbackEvents,
-  {
-    ...createRecord(fallbackId, 'add 함수 버그 수정', 'running', 'math-demo'),
-    models: [
-      {
-        model: 'claude-haiku-5-5',
-        provider: 'claude',
-        role: 'default',
-        chainPosition: 0,
-        effort: 'medium',
-        source: 'config',
-      },
-      {
-        model: 'gpt-5.6-luna',
-        provider: 'codex',
-        role: 'default',
-        chainPosition: 1,
-        effort: 'low',
-        source: 'fallback',
-      },
-    ],
-  },
-  fixtureRouting.chain,
-);
-const fallbackView: SessionView = {
+const firstRetry = fallbackEvents.findIndex((event) => event.type === 'retry');
+const revertRetry = fallbackEvents.findLastIndex((event) => event.type === 'retry');
+const createFallbackView = (events: OraEvent[], model: string, effort: string): SessionView => ({
   ...finishView({
-    record: createRecord(fallbackId, 'add 함수 버그 수정', 'running', 'math-demo'),
-    events: fallbackEvents,
+    record: createRecord(fallbackId, 'add 함수 버그 수정 (폴백)', 'running', 'math-demo'),
+    events,
     todos: mathTodos,
     repoLabel: 'math-demo · main',
     diff: { add: 1, del: 1 },
-    statusLine: ['스텝 14/50', ...buildModelItems(fallbackModelState), '격리 harness'],
+    statusLine: ['스텝 14/50', '격리 harness'],
   }),
-  chips: { model: 'claude-haiku-5-5', effort: 'medium', permission: '승인 생략' },
-};
+  chips: { model, effort, permission: '승인 생략' },
+});
+/** 폴백이 일어나기 전 상태입니다. 화면을 연 뒤 800ms가 지나면 `fallbackView`로 바뀌면서 알림이 뜹니다. */
+const fallbackStartView = createFallbackView(
+  fallbackEvents.slice(0, firstRetry),
+  'claude-haiku-5-5',
+  'medium',
+);
+const fallbackView = createFallbackView(
+  fallbackEvents.slice(0, revertRetry),
+  'gpt-5.6-luna',
+  'low',
+);
 
 /** 시안의 워크트리 탭 상태에 맞춰, 같은 폴더에서 도는 실행 중 세션 하나를 math-demo main에 더하고 워크트리마다 작업 폴더를 정합니다. */
 function withCwd(repoName: string, nodes: WorktreeNode[]): WorktreeNode[] {
@@ -1255,7 +1243,17 @@ const repos: RepoNode[] = rawRepos.map((repo) => {
   const [first, ...others] = repo.worktrees;
   const worktrees =
     repo.name === 'math-demo' && first
-      ? [{ ...first, sessions: [...first.sessions, createSession(phasesView.record)] }, ...others]
+      ? [
+          {
+            ...first,
+            sessions: [
+              ...first.sessions,
+              createSession(phasesView.record),
+              createSession(fallbackView.record),
+            ],
+          },
+          ...others,
+        ]
       : repo.worktrees;
   return { ...repo, worktrees: withCwd(repo.name, worktrees) };
 });
@@ -1273,6 +1271,7 @@ const fixtureTabs: Record<string, WorktreeTabs> = {
   '~/projects/math-demo': {
     tabs: [
       { id: 'run1', kind: 'session', sessionId: phasesView.record.id },
+      { id: 'fb1', kind: 'session', sessionId: fallbackView.record.id },
       { id: 'appr1', kind: 'session', sessionId: sessionView.record.id },
       { id: 'term1', kind: 'terminal', terminalId: fixtureTerminal.id },
       { id: 'new1', kind: 'new' },
@@ -1341,6 +1340,7 @@ type StatefulActionName =
   | 'logoutAccount'
   | 'setAccountPriority'
   | 'loadTabs'
+  | 'loadChanges'
   | 'saveTabs'
   | 'createTerminal'
   | 'killTerminal'
@@ -1429,6 +1429,19 @@ const fixtureAccounts: AccountsData = {
 
 /** 엔진 연결 없이 고정 예시 데이터로 화면을 확인하는 저장소입니다. 계정 화면의 조작은 이 메모리 안에서만 바뀝니다. */
 export function createFixtureStore(): OraStoreSource {
+  const worktreeNames = new Map(listWorktrees(repos).map(({ cwd, node }) => [cwd, node.name]));
+  const liveViews = new Map<string, SessionView>([[fallbackId, fallbackStartView]]);
+  const noChanges: ChangesResponse = { isRepo: true, files: [] };
+  const fixtureChanges: Record<string, ChangesResponse> = {
+    '~/projects/math-demo': {
+      isRepo: true,
+      files: [
+        { path: 'math.js', add: 1, del: 1 },
+        { path: 'check.js', add: 4, del: 0 },
+      ],
+    },
+  };
+
   const listeners = new Set<() => void>();
   let accounts = fixtureAccounts;
   let snapshot: OraStore;
@@ -1466,6 +1479,7 @@ export function createFixtureStore(): OraStoreSource {
       refresh();
       return Promise.resolve();
     },
+    loadChanges: () => Promise.resolve(),
     saveTabs: (cwd, next) => {
       tabsByCwd.set(cwd, next);
       refresh();
@@ -1555,13 +1569,12 @@ export function createFixtureStore(): OraStoreSource {
     status: 'ready',
     sidebar: { repos, deviceName: 'MacBook-Pro' },
     sessionsWithoutFolder: [],
-    getBranch: (cwd) =>
-      cwd.startsWith('~/projects/') && !cwd.includes('docs/') ? 'main' : undefined,
-    getNewSessionContext: () => ({
-      path: '~/Desktop/ora',
-      branch: 'main',
-      add: 4,
-      del: 0,
+    getBranch: (cwd) => worktreeNames.get(cwd),
+    getDefaultBranch: (cwd) => (worktreeNames.has(cwd) ? 'main' : undefined),
+    getChanges: (cwd) => fixtureChanges[cwd] ?? (worktreeNames.has(cwd) ? noChanges : undefined),
+    getNewSessionContext: (cwd = '~/Desktop/ora') => ({
+      path: cwd,
+      branch: worktreeNames.get(cwd),
       chips: designChips,
     }),
     empty: { repos: ['math-demo', 'ora', 'notes'], branches: ['main'], chips: designChips },
@@ -1571,9 +1584,18 @@ export function createFixtureStore(): OraStoreSource {
     getTerminal: (id) => terminalsById.get(id),
     getSession: (sessionId) => {
       const id = devAliases.get(sessionId) ?? sessionId;
-      return detailedViews.get(id) ?? plainViews.get(id);
+      return liveViews.get(id) ?? detailedViews.get(id) ?? plainViews.get(id);
     },
-    watchSession: () => () => undefined,
+    watchSession: (id) => {
+      if (id !== fallbackId || liveViews.get(id) === fallbackView) return () => undefined;
+      const timer = setTimeout(() => {
+        liveViews.set(id, fallbackView);
+        refresh();
+      }, 800);
+      return () => {
+        clearTimeout(timer);
+      };
+    },
     actions,
     accounts,
   };

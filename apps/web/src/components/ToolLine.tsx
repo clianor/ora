@@ -86,7 +86,7 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
           {target}
         </span>
         {editTools.has(toolName) && (rows.length > 0 || typeof input.add === 'number') && (
-          <DiffStat add={add} del={del} />
+          <DiffStat add={add} del={del} className="ml-auto" />
         )}
         {!outcome && (
           <span className="ml-auto flex items-center gap-1.5 text-xs leading-4 font-medium text-foreground-subtle">
@@ -112,7 +112,7 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
           </span>
         )}
       </div>
-      {rows.length > 0 && <DiffBlock rows={rows} />}
+      {rows.length > 0 && <DiffBlock path={target} rows={rows} />}
     </>
   );
 }

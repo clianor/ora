@@ -39,8 +39,25 @@ export const putTabsBodySchema = z.strictObject({
 });
 export type PutTabsBody = z.infer<typeof putTabsBodySchema>;
 
-export const branchResponseSchema = z.strictObject({ branch: z.string().optional() });
+export const branchResponseSchema = z.strictObject({
+  branch: z.string().optional(),
+  /** 이 저장소의 기본 브랜치다. `origin/HEAD`, 없으면 로컬 `main`, `master` 순으로 찾고, 못 찾으면 없다. */
+  defaultBranch: z.string().optional(),
+});
 export type BranchResponse = z.infer<typeof branchResponseSchema>;
+
+export const changedFileSchema = z.strictObject({
+  path: z.string(),
+  add: z.number().int().nonnegative(),
+  del: z.number().int().nonnegative(),
+});
+
+/** `GET /api/changes`의 응답이다. `isRepo`가 false면 git 저장소가 아니다. */
+export const changesResponseSchema = z.strictObject({
+  isRepo: z.boolean(),
+  files: z.array(changedFileSchema),
+});
+export type ChangesResponse = z.infer<typeof changesResponseSchema>;
 
 export const tabsResponseSchema = z.strictObject({ tabs: worktreeTabsSchema });
 export type TabsResponse = z.infer<typeof tabsResponseSchema>;
