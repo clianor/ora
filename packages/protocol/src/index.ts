@@ -6,3 +6,4 @@ export * from './server.ts';
 export * from './session.ts';
 export * from './todo.ts';
 export * from './worker.ts';
+export * from './terminal.ts';

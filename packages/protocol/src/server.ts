@@ -28,8 +28,15 @@ export const routingEntrySchema = z.strictObject({
   /** 그 프로바이더에 로그인한 계정이 하나 이상 있는지다. */
   hasAccount: z.boolean(),
 });
+/** 카탈로그에 있는 모델이다. 새 세션이 체인 밖의 모델을 고를 수 있게 한다. */
+export const routingCatalogEntrySchema = z.strictObject({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  hasAccount: z.boolean(),
+});
 export const routingResponseSchema = z.strictObject({
   roles: z.record(z.string(), z.array(routingEntrySchema)),
+  catalog: z.array(routingCatalogEntrySchema),
   fallback: z.strictObject({
     on: z.enum(['any', 'usage-limit', 'except-usage-limit']),
     revertPolicy: z.enum(['cooldown-expiry', 'never']),

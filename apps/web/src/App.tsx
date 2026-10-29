@@ -40,7 +40,7 @@ function useShortcuts(state: RouteState) {
   }, [state.route, state.sessionId, state.isPaletteOpen]);
 }
 
-function NewScreen({ cwd }: { cwd?: string }) {
+function NewScreen({ cwd, isPickerOpen }: { cwd?: string; isPickerOpen?: boolean }) {
   const store = useStore();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const context = store.getNewSessionContext(cwd);
@@ -64,7 +64,7 @@ function NewScreen({ cwd }: { cwd?: string }) {
             {store.infoError}
           </p>
         )}
-        <NewSessionWelcome context={context} cwd={cwd} />
+        <NewSessionWelcome context={context} cwd={cwd} isPickerOpen={isPickerOpen} />
       </main>
     </>
   );
@@ -118,7 +118,7 @@ function Screen({ state }: { state: RouteState }) {
       );
     }
     case 'new':
-      return <NewScreen cwd={state.cwd} />;
+      return <NewScreen cwd={state.cwd} isPickerOpen={state.isModelPickerOpen} />;
     case 'empty':
       if (store.empty.repos.length === 0) return <NewScreen />;
       return (

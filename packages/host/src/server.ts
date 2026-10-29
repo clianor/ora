@@ -5,17 +5,22 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
-import { createAccountStore, createCatalog } from '@ora/adapters';
+import { BUILTIN_MODELS, createAccountStore, createCatalog } from '@ora/adapters';
 import {
   answerBodySchema,
   approvalBodySchema,
   cancelBodySchema,
   createSessionBodySchema,
+  createTerminalBodySchema,
   messageBodySchema,
   oraEventSchema,
   resumeSessionBodySchema,
   sessionIdSchema,
   sseEventNames,
+  terminalIdSchema,
+  terminalInputBodySchema,
+  terminalResizeBodySchema,
+  terminalSseEventNames,
   todoActionBodySchema,
 } from '@ora/protocol';
 import {
@@ -43,6 +48,7 @@ import { applyTodoActionToStoppedSession, launchSession, listSessions } from './
 import type { UserTodoAction } from '@ora/core';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
 import { AccountApiError, createAccountApi } from './account-api.ts';
+import { createTerminalManager } from './terminal.ts';
 
 const COOKIE_NAME = 'ora_token';
 const MAX_BODY_BYTES = 1_048_576;
@@ -486,6 +492,128 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     throw new HttpError(404, '알 수 없는 API입니다.');
   };
 
+  const terminals = createTerminalManager(options.env);
+
+  /** 서버 시작 폴더, 세션 기록의 저장소, 그 저장소들의 git worktree와 그 하위 폴더만 터미널 작업 폴더로 허용한다. */
+  const assertKnownWorktree = async (cwd: string) => {
+    const real = await realpath(cwd).catch(() => undefined);
+    if (real === undefined || !(await stat(real)).isDirectory())
+      throw new HttpError(400, `폴더가 없습니다: ${cwd}`);
+    const sessions = await listSessions(options.env, options.configPath);
+    const roots = new Set([
+      options.cwd,
+      ...sessions.flatMap((session) => (session.repo === undefined ? [] : [session.repo])),
+    ]);
+    const worktrees = await Promise.all(
+      [...roots].map((root) => {
+        const { promise, resolve } = Promise.withResolvers<string[]>();
+        execFile('git', ['-C', root, 'worktree', 'list', '--porcelain'], (error, stdout) => {
+          resolve(
+            error === null
+              ? stdout
+                  .split('\n')
+                  .flatMap((line) => (line.startsWith('worktree ') ? [line.slice(9)] : []))
+              : [],
+          );
+        });
+        return promise;
+      }),
+    );
+    const known = [...roots, ...worktrees.flat()];
+    for (const root of known) {
+      const realRoot = await realpath(root).catch(() => undefined);
+      if (realRoot !== undefined && (real === realRoot || real.startsWith(realRoot + sep))) return;
+    }
+    throw new HttpError(403, `알려진 worktree 밖의 폴더입니다: ${cwd}`);
+  };
+
+  const streamTerminal = (id: string, req: IncomingMessage, res: ServerResponse) => {
+    if (terminals.get(id) === undefined) throw new HttpError(404, `터미널이 없습니다: ${id}`);
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    res.on('error', () => undefined);
+    openStreams.add(res);
+    const send = (name: string, data: unknown) => {
+      res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const subscription = terminals.subscribe(id, {
+      onOutput: (chunk) => {
+        send(terminalSseEventNames.output, { data: chunk.toString('base64') });
+      },
+      onExit: (exitCode) => {
+        send(terminalSseEventNames.exit, { exitCode });
+        res.end();
+      },
+    });
+    if (subscription === undefined) {
+      res.end();
+      return;
+    }
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
+    heartbeat.unref();
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      subscription.unsubscribe();
+      openStreams.delete(res);
+    });
+    if (subscription.snapshot.length > 0) {
+      send(terminalSseEventNames.output, { data: subscription.snapshot.toString('base64') });
+    }
+    if (subscription.exitCode !== undefined) {
+      send(terminalSseEventNames.exit, { exitCode: subscription.exitCode });
+      res.end();
+    }
+  };
+
+  const routeTerminals = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    method: string,
+    segments: string[],
+  ) => {
+    const [, , rawId, action] = segments;
+    if (rawId === undefined) {
+      if (method === 'GET') {
+        const cwd = url.searchParams.get('cwd');
+        reply(res, 200, {
+          terminals: terminals.list().filter((terminal) => cwd === null || terminal.cwd === cwd),
+        });
+        return;
+      }
+      if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const body = parseBody(createTerminalBodySchema, await readJson(req));
+      if (closing) throw new HttpError(503, '서버를 닫는 중입니다.');
+      await assertKnownWorktree(body.cwd);
+      reply(res, 201, { terminal: terminals.create(body) });
+      return;
+    }
+    const parsedId = terminalIdSchema.safeParse(rawId);
+    const terminal = parsedId.success ? terminals.get(parsedId.data) : undefined;
+    if (terminal === undefined) throw new HttpError(404, `터미널이 없습니다: ${rawId}`);
+    if (action === 'output' && method === 'GET') {
+      streamTerminal(terminal.id, req, res);
+      return;
+    }
+    if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+    if (action !== 'input' && action !== 'resize' && action !== 'kill')
+      throw new HttpError(404, '알 수 없는 API입니다.');
+    if (terminal.status === 'exited')
+      throw new HttpError(409, `이미 끝난 터미널입니다: ${terminal.id}`);
+    if (action === 'input') {
+      terminals.write(terminal.id, parseBody(terminalInputBodySchema, await readJson(req)).data);
+    } else if (action === 'resize') {
+      const body = parseBody(terminalResizeBodySchema, await readJson(req));
+      terminals.resize(terminal.id, body.cols, body.rows);
+    } else {
+      terminals.kill(terminal.id);
+    }
+    reply(res, 200, { ok: true });
+  };
+
   const route = async (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const method = req.method ?? 'GET';
     const segments = url.pathname.split('/').filter((part) => part !== '');
@@ -509,8 +637,20 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
           })),
         );
       }
-      const routing: RoutingResponse = { roles, fallback: config.fallback };
+      const catalogModels = new Map([...BUILTIN_MODELS, ...config.models].map((m) => [m.id, m]));
+      const catalog = await Promise.all(
+        [...catalogModels.values()].map(async ({ provider, id }) => ({
+          provider,
+          model: id,
+          hasAccount: (await store.list(provider)).length > 0,
+        })),
+      );
+      const routing: RoutingResponse = { roles, catalog, fallback: config.fallback };
       reply(res, 200, routing);
+      return;
+    }
+    if (segments[1] === 'terminals') {
+      await routeTerminals(req, res, url, method, segments);
       return;
     }
     if (segments[1] === 'info' && segments.length === 2) {
@@ -788,6 +928,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     port,
     async close() {
       await accountApi.close();
+      await terminals.closeAll();
       closing = true;
       for (const session of live.values()) session.handle.cancel('soft');
       await Promise.allSettled([...live.values()].map((session) => session.handle.result));

@@ -12,6 +12,7 @@ import {
   errorResponseSchema,
   infoResponseSchema,
   type InfoResponse,
+  routingResponseSchema,
   sessionDetailResponseSchema,
   sessionIdResponseSchema,
   sessionListResponseSchema,
@@ -32,12 +33,15 @@ import { buildCacheView } from './lib/cache.ts';
 import { buildContextView, type ContextLimits } from './lib/context.ts';
 import { basename } from './lib/path.ts';
 import { permissionLabel } from './lib/status.ts';
+import { buildModelItems, getModelState } from './lib/routing.ts';
 import type {
   AccountsData,
   OraActions,
   OraStore,
   OraStoreSource,
   RepoNode,
+  RoutingData,
+  StatusItem,
   WorktreeContext,
   SessionView,
   WorktreeNode,
@@ -139,15 +143,18 @@ function buildRepos(records: readonly SessionRecord[]): RepoNode[] {
   });
 }
 
-function buildStatusLine(events: readonly OraEvent[], maxSteps: number | undefined): string[] {
+function buildStatusLine(
+  events: readonly OraEvent[],
+  maxSteps: number | undefined,
+  modelItems: StatusItem[],
+): StatusItem[] {
   const requests = events.filter((event) => event.type === 'model_request');
   const start = events.find((event) => event.type === 'session_start');
-  const lastModel = requests.at(-1);
   return [
     ...(requests.length > 0
       ? [`스텝 ${requests.length}${maxSteps === undefined ? '' : `/${maxSteps}`}`]
       : []),
-    ...(lastModel ? [lastModel.payload.model] : []),
+    ...modelItems,
     ...(start ? [`격리 ${start.payload.isolation}`] : []),
   ];
 }
@@ -180,6 +187,7 @@ export function createHttpStore(): OraStoreSource {
   let listLoaded: 'loading' | 'ready' | 'error' = 'loading';
   let listError: string | undefined;
   let info: InfoResponse | null = null;
+  let routing: RoutingData | null = null;
   let infoError: string | undefined;
   let snapshot: OraStore;
   let notifyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -206,6 +214,7 @@ export function createHttpStore(): OraStoreSource {
     ]);
     const built = buildThread(state.events, waitingCallIds);
     state.lastMessages = reuseMessages(state.lastMessages, built.messages);
+    const modelState = getModelState(state.events, state.record, routing?.chain);
     state.view = {
       record: state.record,
       events: state.events,
@@ -216,11 +225,16 @@ export function createHttpStore(): OraStoreSource {
       repoLabel: state.record.repo === undefined ? '' : basename(state.record.repo),
       repoTitle: state.record.repo,
       diff: null,
-      statusLine: buildStatusLine(state.events, state.maxSteps ?? info?.maxSteps),
+      statusLine: buildStatusLine(
+        state.events,
+        state.maxSteps ?? info?.maxSteps,
+        buildModelItems(modelState),
+      ),
       cache: buildCacheView(state.events),
       context: buildContextView(state.events, state.limits),
       chips: {
-        model: state.record.models[0]?.model,
+        model: modelState.model,
+        effort: modelState.effort,
         permission: permissionLabel[state.record.permissionMode],
       },
       isStopping: state.isStopping,
@@ -243,6 +257,7 @@ export function createHttpStore(): OraStoreSource {
       sidebar: { repos: buildRepos(records), deviceName: '이 컴퓨터' },
       getNewSessionContext: getNewSessionContext,
       empty: { repos: [], branches: [] },
+      routing,
       defaultSessionId: records[0]?.id,
       getSession: (id) => views.get(id),
       watchSession,
@@ -490,10 +505,10 @@ export function createHttpStore(): OraStoreSource {
   };
 
   const actions: OraActions = {
-    createSession: async (task, cwd) => {
+    createSession: async (task, cwd, model) => {
       const created = await requestJson('/api/sessions', sessionIdResponseSchema, {
         method: 'POST',
-        body: { task, ...(cwd ? { cwd } : {}) },
+        body: { task, ...(cwd ? { cwd } : {}), ...(model ? { model } : {}) },
       });
       // 서버가 세션 기록을 쓰기 전에 목록을 읽을 수 있어서, 새 세션이 목록에 보일 때까지 다시 읽습니다.
       for (let attempt = 0; attempt < createListRetries; attempt += 1) {
@@ -591,6 +606,7 @@ export function createHttpStore(): OraStoreSource {
     sidebar: { repos: [], deviceName: '이 컴퓨터' },
     getNewSessionContext: getNewSessionContext,
     empty: { repos: [], branches: [] },
+    routing,
     defaultSessionId: undefined,
     getSession: () => undefined,
     watchSession,
@@ -600,6 +616,20 @@ export function createHttpStore(): OraStoreSource {
 
   refreshList().catch(() => undefined);
   refreshAccounts().catch(() => undefined);
+  requestJson('/api/routing', routingResponseSchema)
+    .then((result) => {
+      const chain = result.roles.default ?? [];
+      routing = {
+        chain,
+        others: result.catalog.filter(
+          (entry) =>
+            !chain.some((item) => item.provider === entry.provider && item.model === entry.model),
+        ),
+      };
+      for (const state of sessions.values()) state.view = null;
+      notifySoon();
+    })
+    .catch(() => undefined);
   requestJson('/api/info', infoResponseSchema)
     .then((result) => {
       info = result;

@@ -3,9 +3,9 @@ import { useState, type ReactNode } from 'react';
 import { basename } from '../lib/path.ts';
 import { navigate } from '../lib/route.ts';
 import { useStore } from '../store.tsx';
-import type { ComposerChips, OraStore, WorktreeContext } from '../model.ts';
+import type { ComposerChips, Effort, OraStore, RoutingModel, WorktreeContext } from '../model.ts';
 import { DiffStat } from '../ui/stat.tsx';
-import { ChatProvider, Composer } from './Chat.tsx';
+import { ChatProvider, Composer, RoutingPreview, type PreviewEntry } from './Chat.tsx';
 
 function Shortcut({ keys, label }: { keys: string; label: string }) {
   return (
@@ -16,22 +16,49 @@ function Shortcut({ keys, label }: { keys: string; label: string }) {
   );
 }
 
-/** 첫 입력으로 새 세션을 만들고 그 세션 화면으로 이동합니다. */
+interface Picked {
+  entry?: RoutingModel;
+  effort?: Effort;
+}
+
+/** 첫 입력으로 새 세션을 만들고 그 세션 화면으로 이동합니다. 사용자가 고른 모델은 세션을 만들 때 `model`로 보냅니다. */
 function Welcome({
   context,
   cwd,
   chips,
+  isPickerOpen,
 }: {
   context: ReactNode;
   cwd?: string;
   chips?: ComposerChips;
+  isPickerOpen?: boolean;
 }) {
-  const { actions } = useStore();
+  const { actions, routing } = useStore();
   const [error, setError] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Picked>({});
+  const base = picked.entry ?? routing?.chain[0];
+  const selected = base && { ...base, effort: picked.effort ?? base.effort };
+  const isPicked = picked.entry !== undefined || picked.effort !== undefined;
+  let previewChain: PreviewEntry[] = routing?.chain ?? [];
+  if (routing && selected && isPicked) {
+    previewChain = [
+      { ...selected, isPicked: true },
+      ...routing.chain.filter(
+        (entry) =>
+          entry.provider !== selected.provider ||
+          entry.model !== selected.model ||
+          entry.effort !== selected.effort,
+      ),
+    ];
+  }
   const create = async (task: string) => {
     try {
       setError(null);
-      const sessionId = await actions.createSession(task, cwd);
+      const model =
+        isPicked && selected
+          ? `${selected.provider}/${selected.model}${selected.effort ? `:${selected.effort}` : ''}`
+          : undefined;
+      const sessionId = await actions.createSession(task, cwd, model);
       navigate('session', { sessionId });
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -53,7 +80,27 @@ function Welcome({
               {error}
             </p>
           )}
-          <Composer isRunning={false} chips={chips} />
+          <Composer
+            isRunning={false}
+            chips={chips}
+            routing={
+              routing && selected
+                ? {
+                    chain: routing.chain,
+                    others: routing.others,
+                    selected,
+                    defaultOpen: isPickerOpen,
+                    onPickModel: (entry) => {
+                      setPicked({ entry });
+                    },
+                    onPickEffort: (effort) => {
+                      setPicked((previous) => ({ ...previous, effort }));
+                    },
+                  }
+                : undefined
+            }
+          />
+          {previewChain.length > 0 && <RoutingPreview role="default" chain={previewChain} />}
         </div>
         <div className="flex w-[720px] max-w-full gap-5 px-3.5">
           <Shortcut keys="⌘K" label="명령 팔레트" />
@@ -68,10 +115,19 @@ function Welcome({
 const chipClass = 'flex h-7 items-center gap-1.5 rounded-sm bg-surface px-2.5';
 
 /** 워크트리별 새 세션 화면입니다. 맥락 칩은 고르지 않는 고정 칩이고 워크트리 경로와 변경 통계를 보여 줍니다. */
-export function NewSessionWelcome({ context, cwd }: { context: WorktreeContext; cwd?: string }) {
+export function NewSessionWelcome({
+  context,
+  cwd,
+  isPickerOpen,
+}: {
+  context: WorktreeContext;
+  cwd?: string;
+  isPickerOpen?: boolean;
+}) {
   return (
     <Welcome
       cwd={cwd}
+      isPickerOpen={isPickerOpen}
       chips={context.chips}
       context={
         <>

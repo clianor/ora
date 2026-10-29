@@ -12,6 +12,8 @@ export interface RouteState {
   cwd?: string;
   /** `#/settings/accounts`는 계정 페이지이고, 그 밖의 `#/settings`는 모양 페이지입니다. */
   settingsPage?: SettingsPage;
+  /** `#/new?picker=1`은 새 세션 화면에서 모델 고르기 팝오버를 연 채로 엽니다. */
+  isModelPickerOpen?: boolean;
   isPaletteOpen: boolean;
   paletteQuery: string;
 }
@@ -35,6 +37,7 @@ function parseHash(hash: string): RouteState {
       cwd: params.get('cwd') ?? undefined,
       settingsPage: first === 'settings' && second === 'accounts' ? 'accounts' : 'appearance',
       isPaletteOpen,
+      isModelPickerOpen: params.get('picker') === '1',
       paletteQuery,
     };
   }

@@ -1,6 +1,7 @@
 import { buildThread } from './events.ts';
 import { buildCacheView } from './lib/cache.ts';
 import { buildContextView } from './lib/context.ts';
+import { buildModelItems, getModelState } from './lib/routing.ts';
 import type { AccountProvider, LoginState, ProviderAccounts } from '@ora/protocol';
 import type {
   Actor,
@@ -22,6 +23,7 @@ import type {
   RepoNode,
   SessionNode,
   SessionView,
+  RoutingData,
   WorktreeNode,
 } from './model.ts';
 
@@ -1103,6 +1105,132 @@ const gateDeniedView = createPhaseView(
     runGate(s, 'denied');
   },
 );
+const fixtureRouting: RoutingData = {
+  chain: [
+    { provider: 'claude', model: 'claude-haiku-5-5', effort: 'medium', hasAccount: true },
+    { provider: 'codex', model: 'gpt-5.6-luna', effort: 'low', hasAccount: true },
+  ],
+  others: [
+    { provider: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', hasAccount: true },
+    { provider: 'grok', model: 'grok-5', effort: 'medium', hasAccount: false },
+  ],
+};
+
+const fallbackId = 's-20261028-f4llb1';
+const makeFallback = createEventFactory(fallbackId);
+const fallbackUsage = {
+  uncachedInputTokens: 300,
+  cacheReadInputTokens: 6000,
+  cacheCreationInputTokens: 0,
+  outputTokens: 200,
+};
+const fallbackRequest = (time: string, model: string, adapter: string, chainPosition: number) =>
+  makeFallback('model_request', time, 'engine', {
+    model,
+    adapter,
+    chainPosition,
+    role: 'default',
+    nativeToolCalls: true,
+    usage: fallbackUsage,
+    durationMs: 1200,
+  });
+const fallbackEvents: OraEvent[] = [
+  sessionStart(makeFallback),
+  ...createStageEvents(makeFallback, 'execute', stageOrder),
+  makeFallback('message', '17:30', 'user', {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.' },
+    ],
+  }),
+  fallbackRequest('17:31', 'claude-haiku-5-5', 'claude-sdk', 0),
+  makeFallback('tool_call', '17:32', 'model', {
+    callId: 'f1',
+    tool: 'file_read',
+    args: { path: 'math.js' },
+    tier: 'read',
+  }),
+  makeFallback('tool_result', '17:32', 'tool', {
+    callId: 'f1',
+    status: 'ok',
+    summary: '12줄',
+    durationMs: 8,
+  }),
+  makeFallback('tool_call', '17:41', 'model', {
+    callId: 'f2',
+    tool: 'file_edit',
+    args: { path: 'math.js', add: 1, del: 1 },
+    tier: 'write',
+  }),
+  makeFallback('tool_result', '17:41', 'tool', {
+    callId: 'f2',
+    status: 'ok',
+    summary: '수정함',
+    durationMs: 20,
+  }),
+  makeFallback('retry', '17:42', 'engine', {
+    layer: 'session',
+    attempt: 1,
+    reason: 'usage-limit',
+    message: '429 usage limit reached. resets at 18:10',
+    delayMs: 0,
+    switchedTo: 'gpt-5.6-luna',
+    chainPosition: 1,
+    role: 'default',
+  }),
+  fallbackRequest('17:43', 'gpt-5.6-luna', 'codex', 1),
+  makeFallback('message', '17:43', 'model', {
+    role: 'assistant',
+    content: [{ type: 'text', text: '이어서 `node check.js`로 검증하겠습니다.' }],
+  }),
+  makeFallback('retry', '18:11', 'engine', {
+    layer: 'session',
+    attempt: 1,
+    reason: 'revert',
+    delayMs: 0,
+    switchedTo: 'claude-haiku-5-5',
+    chainPosition: 0,
+    role: 'default',
+  }),
+  fallbackRequest('18:12', 'claude-haiku-5-5', 'claude-sdk', 0),
+];
+const fallbackModelState = getModelState(
+  fallbackEvents,
+  {
+    ...createRecord(fallbackId, 'add 함수 버그 수정', 'running', 'math-demo'),
+    models: [
+      {
+        model: 'claude-haiku-5-5',
+        provider: 'claude',
+        role: 'default',
+        chainPosition: 0,
+        effort: 'medium',
+        source: 'config',
+      },
+      {
+        model: 'gpt-5.6-luna',
+        provider: 'codex',
+        role: 'default',
+        chainPosition: 1,
+        effort: 'low',
+        source: 'fallback',
+      },
+    ],
+  },
+  fixtureRouting.chain,
+);
+const fallbackView: SessionView = {
+  ...finishView({
+    record: createRecord(fallbackId, 'add 함수 버그 수정', 'running', 'math-demo'),
+    events: fallbackEvents,
+    todos: mathTodos,
+    repoLabel: 'math-demo · main',
+    diff: { add: 1, del: 1 },
+    statusLine: ['스텝 14/50', ...buildModelItems(fallbackModelState), '격리 harness'],
+  }),
+  chips: { model: 'claude-haiku-5-5', effort: 'medium', permission: '승인 생략' },
+};
+
 const detailedViews = new Map<string, SessionView>(
   [
     sessionView,
@@ -1115,6 +1243,7 @@ const detailedViews = new Map<string, SessionView>(
     gateWaiverView,
     gateApprovedView,
     gateDeniedView,
+    fallbackView,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -1129,6 +1258,7 @@ const devAliases = new Map<string, string>([
   ['gate-waiver', gateWaiverView.record.id],
   ['gate-approved', gateApprovedView.record.id],
   ['gate-denied', gateDeniedView.record.id],
+  ['fallback', fallbackView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
@@ -1324,6 +1454,7 @@ export function createFixtureStore(): OraStoreSource {
       chips: designChips,
     }),
     empty: { repos: ['math-demo', 'ora', 'notes'], branches: ['main'], chips: designChips },
+    routing: fixtureRouting,
     defaultSessionId: sessionView.record.id,
     getSession: (sessionId) => {
       const id = devAliases.get(sessionId) ?? sessionId;

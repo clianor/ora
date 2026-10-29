@@ -7,12 +7,26 @@ import type {
   PendingQuestion,
   ProviderAccounts,
   QuestionAnswer,
+  RoutingResponse,
   SessionRecord,
   Todo,
 } from '@ora/protocol';
 import type { ThreadData } from './events.ts';
 import type { CacheView } from './lib/cache.ts';
 import type { ContextView } from './lib/context.ts';
+
+/** 체인 한 항목입니다. 로그인한 계정이 없으면 hasAccount가 false입니다. */
+export type RoutingModel = RoutingResponse['roles'][string][number];
+export type Effort = NonNullable<RoutingModel['effort']>;
+
+/** 새 세션 화면의 라우팅 미리보기에 쓰는 데이터입니다. others는 체인 밖의 카탈로그 모델입니다. */
+export interface RoutingData {
+  chain: RoutingModel[];
+  others: RoutingModel[];
+}
+
+/** 상태 표시줄 항목입니다. 경고 항목은 색과 함께 글자로 알립니다. */
+export type StatusItem = string | { text: string; isWarning: true };
 
 /** 입력창 칩에 적는 글자입니다. 서버가 주지 않는 값은 비워 두고, 비어 있으면 칩을 그리지 않습니다. */
 export interface ComposerChips {
@@ -74,7 +88,7 @@ export interface SessionView {
   /** repoLabel이 폴더 이름만 보여 줄 때의 전체 경로입니다. 툴팁과 스크린리더에 씁니다. */
   repoTitle?: string;
   diff: { add: number; del: number } | null;
-  statusLine: string[];
+  statusLine: StatusItem[];
   /** 프롬프트 캐시 적중 정보입니다. 계산할 수 없으면 null이고 상태 표시줄에서 숨깁니다. */
   cache: CacheView | null;
   /** 컨텍스트 사용 정보입니다. 창 크기를 모르거나 스텝 요청이 없으면 null이고 상태 표시줄에서 숨깁니다. */
@@ -94,8 +108,8 @@ export interface SessionView {
 
 /** 화면이 엔진에 요청하는 동작입니다. */
 export interface OraActions {
-  /** 새 세션을 만들고 세션 ID를 돌려줍니다. cwd가 없으면 서버의 기본 작업 폴더를 씁니다. */
-  createSession: (task: string, cwd?: string) => Promise<string>;
+  /** 새 세션을 만들고 세션 ID를 돌려줍니다. cwd가 없으면 서버의 기본 작업 폴더를 씁니다. model은 `<프로바이더>/<모델>[:<추론 강도>]`이고 체인 맨 앞에 들어갑니다. */
+  createSession: (task: string, cwd?: string, model?: string) => Promise<string>;
   sendMessage: (sessionId: string, text: string) => Promise<void>;
   cancelRun: (sessionId: string, mode: 'soft' | 'hard') => Promise<void>;
   decideApproval: (
@@ -146,6 +160,8 @@ export interface OraStore {
   sidebar: SidebarData;
   getNewSessionContext: (cwd?: string) => WorktreeContext;
   empty: { repos: string[]; branches: string[]; chips?: ComposerChips };
+  /** 서버의 라우팅 정보입니다. 읽지 못했으면 null이고 새 세션 화면은 모델 고르기를 숨깁니다. */
+  routing: RoutingData | null;
   /** 경로에 세션 ID가 없을 때 여는 세션입니다. 세션이 없으면 undefined입니다. */
   defaultSessionId: string | undefined;
   getSession: (sessionId: string) => SessionView | undefined;

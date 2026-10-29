@@ -48,6 +48,16 @@ export interface CompactionMarkData {
   items: { tool: string; target: string }[];
 }
 
+/** `retry` 이벤트가 대화에 남기는 모델 전환 표시입니다. from은 전환 전에 쓰던 모델입니다. */
+export interface ModelSwitchData {
+  ts: string;
+  reason: Extract<OraEvent, { type: 'retry' }>['payload']['reason'];
+  from: string;
+  to: string;
+  /** 실패한 요청의 오류 원문입니다. 표시의 title로만 보입니다. */
+  message?: string;
+}
+
 /** 상태를 헤더와 할 일 패널이 이미 보여 주는 제어 도구입니다. 실패했을 때만 줄로 보입니다. */
 const controlTools = new Set(['ask_user', 'todo.update', 'stage.advance', 'memory.propose']);
 
@@ -109,6 +119,21 @@ export function buildThread(
       });
     }
   }
+  const modelNames = new Map<string, string>();
+  for (const event of events) {
+    if (event.type === 'model_request') {
+      modelNames.set(
+        `${event.payload.role ?? 'default'}:${event.payload.chainPosition}`,
+        event.payload.model,
+      );
+    } else if (event.type === 'retry') {
+      modelNames.set(
+        `${event.payload.role}:${event.payload.chainPosition}`,
+        event.payload.switchedTo,
+      );
+    }
+  }
+  const positions = new Map<string, number>();
   /** `history.read`가 가리키는 원문의 이름입니다. 호출 ID면 그 호출의 대상과 동사, 범위면 seq 범위입니다. */
   const describeHistoryRead = (args: Record<string, unknown>): string => {
     if (typeof args.callId === 'string') {
@@ -171,6 +196,18 @@ export function buildThread(
         }),
       };
       assistantContent.push({ type: 'data-compaction', data });
+    } else if (event.type === 'retry') {
+      const { role, chainPosition, reason, message, switchedTo } = event.payload;
+      const previous = positions.get(role) ?? 0;
+      positions.set(role, chainPosition);
+      const data: ModelSwitchData = {
+        ts: event.ts,
+        reason,
+        from: modelNames.get(`${role}:${previous}`) ?? (previous === 0 ? '첫 모델' : '이전 모델'),
+        to: switchedTo,
+        ...(message === undefined ? {} : { message }),
+      };
+      assistantContent.push({ type: 'data-model-switch', data });
     } else if (event.type === 'tool_call' && !waitingCallIds.has(event.payload.callId)) {
       const { callId, tool, args } = event.payload;
       if (controlTools.has(tool) && (results.get(callId)?.status ?? 'ok') === 'ok') continue;
