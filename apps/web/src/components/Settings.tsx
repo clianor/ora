@@ -62,16 +62,15 @@ export function SettingsNav({ current }: { current: SettingsPage }) {
       className="flex w-[264px] shrink-0 flex-col gap-4 bg-sidebar px-2 pt-4 pb-3"
     >
       <div className="h-5" />
-      <div className="flex items-center gap-2 px-1.5 pt-1.5">
+      <h2 className="px-1.5 pt-1.5 text-lg leading-[26px] font-semibold text-foreground">
         <a
           href="#/session"
-          aria-label="설정에서 나가기"
-          className="rounded-sm text-foreground-muted hover:text-foreground"
+          className="flex items-center gap-2 rounded-sm hover:text-foreground-muted"
         >
-          <ArrowLeft aria-hidden className="size-4" />
+          <ArrowLeft aria-hidden className="size-4 text-foreground-muted" />
+          설정<span className="sr-only">에서 나가기</span>
         </a>
-        <h2 className="text-lg leading-[26px] font-semibold text-foreground">설정</h2>
-      </div>
+      </h2>
       <label className="flex h-8 items-center gap-2 rounded-sm bg-surface px-2.5">
         <Search aria-hidden className="size-3.5 shrink-0 text-foreground-subtle" />
         <input

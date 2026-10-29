@@ -11,7 +11,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { AccountProvider, AccountView, LoginState, ProviderAccounts } from '@ora/protocol';
 import { cn } from '../lib/cn.ts';
 import { useNow } from '../lib/now.ts';
@@ -82,6 +82,7 @@ function AccountRow({ provider, account }: { provider: AccountProvider; account:
   const actions = useActions();
   const [mode, setMode] = useState<'view' | 'priority' | 'logout'>('view');
   const [priority, setPriority] = useState(String(account.priority));
+  const priorityId = useId();
   const [error, setError] = useState<string | null>(null);
   const status = statusViews[account.status];
   const StatusIcon = status.icon;
@@ -165,7 +166,9 @@ function AccountRow({ provider, account }: { provider: AccountProvider; account:
         <span className="text-xs leading-4 font-medium">{status.label(account)}</span>
       </div>
       <div className="flex w-[52px] flex-col gap-0.5">
-        <span className="text-xs leading-4 text-foreground-subtle">우선순위</span>
+        <label htmlFor={priorityId} className="text-xs leading-4 text-foreground-subtle">
+          우선순위
+        </label>
         {mode === 'priority' ? (
           <form
             onSubmit={(event) => {
@@ -174,6 +177,7 @@ function AccountRow({ provider, account }: { provider: AccountProvider; account:
             }}
           >
             <input
+              id={priorityId}
               type="number"
               step={1}
               min={-99}

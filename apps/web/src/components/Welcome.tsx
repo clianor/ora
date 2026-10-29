@@ -114,12 +114,14 @@ function ContextSelect({
   options: readonly string[];
 }) {
   return (
-    <label className={chipClass}>
-      {icon}
+    <label className="relative flex h-7 items-center rounded-sm bg-surface">
+      <span aria-hidden className="pointer-events-none absolute left-2.5 flex">
+        {icon}
+      </span>
       <select
         aria-label={label}
         defaultValue={options[0]}
-        className="appearance-none bg-transparent text-[13px] leading-[18px] font-medium text-foreground-muted outline-none"
+        className="h-full appearance-none rounded-sm bg-transparent pr-7 pl-[30px] text-[13px] leading-[18px] font-medium text-foreground-muted outline-none"
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -127,7 +129,10 @@ function ContextSelect({
           </option>
         ))}
       </select>
-      <ChevronDown aria-hidden className="size-3 text-foreground-subtle" />
+      <ChevronDown
+        aria-hidden
+        className="pointer-events-none absolute right-2.5 size-3 text-foreground-subtle"
+      />
     </label>
   );
 }
