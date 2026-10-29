@@ -262,6 +262,7 @@ interface OpenStream {
   readonly seqs: number[];
   readonly types: string[];
   readonly named: string[];
+  readonly namedData: { name: string; data: unknown }[];
   close(): void;
 }
 
@@ -273,6 +274,7 @@ function openStream(
   const seqs: number[] = [];
   const types: string[] = [];
   const named: string[] = [];
+  const namedData: { name: string; data: unknown }[] = [];
   const req = httpRequest(
     {
       host: '127.0.0.1',
@@ -294,6 +296,7 @@ function openStream(
           const name = lines.find((line) => line.startsWith('event: '));
           if (name !== undefined) {
             named.push(name.slice(7));
+            namedData.push({ name: name.slice(7), data: JSON.parse(data.slice(6)) });
             continue;
           }
           const event = oraEventSchema.parse(JSON.parse(data.slice(6)));
@@ -305,7 +308,7 @@ function openStream(
   );
   req.on('error', () => undefined);
   req.end();
-  return { seqs, types, named, close: () => req.destroy() };
+  return { seqs, types, named, namedData, close: () => req.destroy() };
 }
 
 // SPEC 9.1절 M1 인수 기준(로컬 서버 보안, 승인, ask_user, 조향, 이벤트 스트림)을 가장 바깥에서 하나씩 확인한다.
@@ -549,6 +552,58 @@ test(
           hasUserText('둘째 지시'),
       );
       expect(readdirSync(join(running.home, 'sessions'))).toEqual([sessionId]);
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '다른 호스트가 세션 락을 쥐고 있어 조향 재개가 실패하면 steer_failed로 오류와 메시지를 돌려주고 세션은 interrupted로 남는다',
+  async () => {
+    const running = await startServer([
+      respond(use('f1', 'shell', { command: 'echo started >> started.txt; sleep 2' })),
+      finalText,
+    ]);
+    try {
+      const reply = await post(running, '/api/sessions', {
+        task: '일을 한다',
+        cwd: running.dir,
+        permissionMode: 'bypass-permissions',
+      });
+      const sessionId = (JSON.parse(reply.text) as { sessionId: string }).sessionId;
+      await waitFor(() => existsSync(join(running.dir, 'started.txt')));
+      const stream = openStream(running, sessionId);
+
+      // 살아 있는 다른 프로세스가 같은 세션을 재개하는 중인 상황이다. 이 서버는 락을 잡지 못해 재개를 거부한다.
+      writeFileSync(join(sessionDirOf(running, sessionId), 'session.lock'), String(process.pid));
+      const steer = await post(running, `/api/sessions/${sessionId}/message`, {
+        text: '실패할 지시',
+      });
+      expect(steer.status).toBe(202);
+
+      await waitFor(() => stream.named.includes('steer_failed'));
+      stream.close();
+      const failed = stream.namedData.find((entry) => entry.name === 'steer_failed');
+      expect(failed?.data).toEqual({
+        error: expect.stringMatching(/\S/) as string,
+        texts: ['실패할 지시'],
+      });
+
+      const current = await detail(running, sessionId);
+      expect(current.live).toBe(false);
+      expect(current.session.status).toBe('interrupted');
+      const events = readEvents(running, sessionId);
+      expect(events.some((event) => event.type === 'resume')).toBe(false);
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'message' &&
+            event.actor === 'user' &&
+            JSON.stringify(event.payload.content).includes('실패할 지시'),
+        ),
+      ).toBe(false);
     } finally {
       await stopServer(running);
     }
