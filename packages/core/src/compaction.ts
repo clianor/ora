@@ -268,12 +268,14 @@ export function buildSummaryInput(messages: readonly ModelMessage[], previous?: 
   return `${prior}<conversation>\n${renderForSummary(messages)}\n</conversation>`;
 }
 
-const NARRATIVE_HEADING = '## 결정 기록과 작업 경과';
+const SUMMARY_HEADING = '## 결정 기록과 작업 경과';
+const HANDOFF_HEADING = '## 인계 문서';
+const NARRATIVE_HEADINGS = /^## (?:결정 기록과 작업 경과|인계 문서)$/gm;
 
-/** 앞선 요약 문서에서 모델이 쓴 서술 부분이다. 엔진이 붙인 절은 매번 새로 만들므로 뺀다. */
+/** 앞선 요약 문서에서 모델이 쓴 서술 부분이다. 엔진이 붙인 절은 매번 새로 만들므로 뺀다. 두 방식의 제목을 모두 읽는다. */
 export function narrativeOf(document: string): string {
-  const index = document.lastIndexOf(NARRATIVE_HEADING);
-  return index < 0 ? document : document.slice(index + NARRATIVE_HEADING.length).trim();
+  const last = [...document.matchAll(NARRATIVE_HEADINGS)].at(-1);
+  return last === undefined ? document : document.slice(last.index + last[0].length).trim();
 }
 
 export interface OpenError {
@@ -286,8 +288,21 @@ export interface SummaryParts {
   readonly todos: readonly Todo[];
   readonly openErrors: readonly OpenError[];
   readonly narrative: string;
+  /** 서술을 쓴 방식이다. 방식에 맞는 제목 하나만 쓴다. 없으면 `summary`다. */
+  readonly method?: 'handoff' | 'summary';
   /** 턴 중간에서 잘랐을 때 그 턴 앞부분의 요약이다. */
   readonly turnPrefix?: string;
+}
+
+const OUTPUT_FRAMING = /^(?:exit code:|---)/;
+
+/** 여러 줄 출력에서 첫 실제 줄을 한 줄로 줄인다. `exit code:`와 `--- stdout ---` 같은 틀 줄은 건너뛴다. */
+function firstLine(text: string, max: number): string {
+  const line = text
+    .split('\n')
+    .map((candidate) => candidate.trim())
+    .find((candidate) => candidate !== '' && !OUTPUT_FRAMING.test(candidate));
+  return clip(line ?? '', max);
 }
 
 /** 요약 파일 본문이다. 모델이 쓴 `narrative`와 `turnPrefix` 밖의 절은 모두 엔진이 기록에서 만든 값이다. */
@@ -300,24 +315,35 @@ export function buildSummaryDocument(parts: SummaryParts): string {
       ? '없음'
       : parts.todos
           .map((todo) => {
-            const evidence =
-              todo.evidence === undefined
+            const { evidence } = todo;
+            const output = evidence === undefined ? '' : firstLine(evidence.summary, 120);
+            const line =
+              evidence === undefined
                 ? '증거 없음'
-                : `증거: \`${todo.evidence.command}\` 종료 코드 ${todo.evidence.exitCode ?? '없음'}, ${todo.evidence.summary}`;
-            return `- ${todo.id} [${todo.status}] ${todo.content}\n  - ${evidence}`;
+                : `증거: \`${evidence.command}\` 종료 코드 ${evidence.exitCode ?? '없음'}${output === '' ? '' : ` · ${output}`}`;
+            return `- ${todo.id} [${todo.status}] ${todo.content}\n  - ${line}`;
           })
           .join('\n');
   const errors =
     parts.openErrors.length === 0
       ? '없음'
-      : parts.openErrors.map((error) => `- ${error.tool}: ${clip(error.summary, 300)}`).join('\n');
+      : parts.openErrors
+          .map((error) => `- ${error.tool}: ${firstLine(error.summary, 200)}`)
+          .join('\n');
+  const handoff = parts.method === 'handoff';
+  const heading = handoff ? HANDOFF_HEADING : SUMMARY_HEADING;
+  // 인계 응답이 같은 제목으로 시작하면 중복이므로 벗긴다.
+  const narrative = parts.narrative
+    .trim()
+    .replace(/^## 인계 문서\s*\n/, '')
+    .trim();
   return [
     '# 컨텍스트 압축 요약',
     '이 문서가 압축한 이전 대화를 대신한다. 모델이 쓴 절을 뺀 나머지는 엔진이 기록에서 직접 만들었다.',
     `## 사용자 지시 (원문)\n${instructions}`,
     `## todo 상태\n${todos}`,
     `## 해결하지 못한 오류\n${errors}`,
-    `${NARRATIVE_HEADING}\n${parts.narrative.trim()}`,
+    ...(narrative === '' ? [] : [`${heading}\n${narrative}`]),
     ...(parts.turnPrefix === undefined
       ? []
       : [`## 진행 중인 턴 앞부분\n${parts.turnPrefix.trim()}`]),

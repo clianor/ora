@@ -900,6 +900,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         openErrors: [...lastResults]
           .filter(([, result]) => result.isError)
           .map(([tool, result]) => ({ tool, summary: result.text })),
+        method,
         ...parts,
       }),
     ).text;

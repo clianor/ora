@@ -924,6 +924,11 @@ test(
 
     const summary = readFileSync(join(dir, 'compactions', '1.md'), 'utf8');
     expect(summary.match(/^## /gm)).toHaveLength(4);
+    expect(summary).toContain('## 결정 기록과 작업 경과');
+    expect(summary).not.toContain('## 인계 문서');
+    // 증거는 한 줄이라 검증 출력의 틀 줄이 목록 밖으로 새지 않는다.
+    expect(summary).not.toMatch(/^(exit code:|---)/m);
+    expect(summary).toMatch(/^ {2}- 증거: `node check\.js` 종료 코드 1 · add\(1, 2\) failed$/m);
     expect(summary).toContain('파일을 고친다');
     const [todo] = todos as {
       id: string;
@@ -1202,7 +1207,11 @@ test(
     expect(existsSync(join(project.dir, 'hx.txt'))).toBe(false);
     const compaction = events.find((event) => event.type === 'compaction');
     expect(compaction?.payload.method).toBe('handoff');
-    expect(readFileSync(join(dir, compaction?.payload.path ?? ''), 'utf8')).toContain('ZZ-인계');
+    const doc = readFileSync(join(dir, compaction?.payload.path ?? ''), 'utf8');
+    expect(doc).toContain('ZZ-인계');
+    expect(doc.match(/^## .*/gm)).toContain('## 인계 문서');
+    expect(doc).not.toContain('## 결정 기록과 작업 경과');
+    expect(doc).not.toMatch(/^## .*\n+## /m);
   },
   TEST_TIMEOUT_MS,
 );
