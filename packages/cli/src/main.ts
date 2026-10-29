@@ -14,6 +14,7 @@ import {
   loginAccount,
   logoutAccount,
   startLocalServer,
+  runEval,
 } from '@ora/host';
 import type { LaunchRequest, SessionResult } from '@ora/host';
 
@@ -25,8 +26,8 @@ const USAGE = `사용법:
   ora sessions [--config <경로>] [--json]
   ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>] [--isolation <none|harness|clean-home>]
   ora login <claude|codex|grok> [--name <계정 이름>] [--api-key-env <환경변수 이름> (API 키 계정을 만든다. 키 값은 저장하지 않는다)] [--device (codex 전용)]
-  ora logout <claude|codex|grok> [--name <계정 이름>]
-  ora accounts`;
+  ora accounts
+  ora eval <작업 세트 경로> --model <모델>... [--config <경로>] [--out <폴더>] [--model-script <경로>]`;
 
 const EXIT_CODES = { passed: 0, failed: 1, usage: 2, cancelled: 130 } as const;
 
@@ -110,6 +111,8 @@ async function main(): Promise<number> {
         port: { type: 'string' },
         name: { type: 'string' },
         'api-key-env': { type: 'string' },
+        model: { type: 'string', multiple: true },
+        out: { type: 'string' },
         device: { type: 'boolean', default: false },
       },
     });
@@ -217,6 +220,29 @@ async function main(): Promise<number> {
       process.once('SIGINT', onStop);
       process.once('SIGTERM', onStop);
       await closed.promise;
+      return EXIT_CODES.passed;
+    }
+
+    if (command === 'eval') {
+      if (argument === undefined || extra.length > 0) {
+        return usageError('작업 세트 경로가 필요합니다.');
+      }
+      if (values.model === undefined || values.model.length === 0) {
+        return usageError('--model을 하나 이상 줍니다.');
+      }
+      const resultDir = await runEval({
+        setPath: argument,
+        models: values.model,
+        cwd: process.cwd(),
+        env: process.env,
+        ...(values.config === undefined ? {} : { configPath: values.config }),
+        ...(values.out === undefined ? {} : { outDir: values.out }),
+        ...(values['model-script'] === undefined
+          ? {}
+          : { modelScriptPath: values['model-script'] }),
+        log: (line) => process.stderr.write(`${line}\n`),
+      });
+      process.stdout.write(`${resultDir}\n`);
       return EXIT_CODES.passed;
     }
 

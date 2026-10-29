@@ -10,6 +10,7 @@ export default defineConfig(
     '**/dist/',
     '**/coverage/',
     'tmp/',
+    'eval/tasks/',
     'pnpm-lock.yaml',
     '.claude/skills/impeccable/',
   ]),

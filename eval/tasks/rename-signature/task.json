@@ -1,0 +1,4 @@
+{
+  "instruction": "price.js의 calc(price, rate) 함수 이름을 applyDiscount로 바꾸고, 인자를 객체 { price, rate }로 받게 바꿉니다. 호출하는 cart.js도 함께 고칩니다. `node check.js`가 통과해야 합니다.",
+  "hiddenCheck": "node hidden-check.js"
+}

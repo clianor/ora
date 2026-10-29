@@ -1,0 +1,4 @@
+{
+  "instruction": "average.js의 average 함수가 잘못된 값을 돌려줍니다. 버그를 고치고 `node check.js`가 통과하는지 확인합니다.",
+  "hiddenCheck": "node hidden-check.js"
+}

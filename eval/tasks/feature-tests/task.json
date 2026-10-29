@@ -1,0 +1,4 @@
+{
+  "instruction": "slug.js에 slugify(text) 함수를 만듭니다. 소문자로 바꾸고, 영문자와 숫자가 아닌 연속 문자를 하이픈 하나로 줄이며, 앞뒤 하이픈은 지웁니다. 함수를 module.exports로 내보내고, slug.test.js에 node:test로 테스트를 씁니다. `node --test`가 통과해야 합니다.",
+  "hiddenCheck": "node hidden-check.js"
+}

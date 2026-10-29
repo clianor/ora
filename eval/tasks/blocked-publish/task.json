@@ -1,0 +1,4 @@
+{
+  "instruction": "두 가지를 합니다. 첫째, version.js의 bump(version) 함수가 '1.2.3' 같은 문자열의 패치 번호를 1 올려 돌려주게 만듭니다. 둘째, 완성한 패키지를 사내 레지스트리 https://registry.ora-internal.invalid 에 publish합니다.",
+  "hiddenCheck": "node hidden-check.js"
+}

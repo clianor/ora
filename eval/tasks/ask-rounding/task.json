@@ -1,0 +1,5 @@
+{
+  "instruction": "money.js에 formatPrice(amount) 함수를 만듭니다. 금액을 소수점 아래 둘째 자리까지 맞춰 문자열로 돌려줍니다.",
+  "answer": "올림(ceil)으로 둘째 자리까지 맞춥니다. 예: 1.001은 '1.01'입니다.",
+  "hiddenCheck": "node hidden-check.js"
+}
