@@ -88,6 +88,15 @@ function repos({ worktree = null, session = null, patch = {} } = {}) {
   return REPOS.map((g) => ({ ...g, worktrees: g.worktrees.map(mark(g.repo)) }));
 }
 const STATUS = [['스텝 12/50'], ['기본 모델 사용 중'], ['격리 harness'], ['캐시 적중 82%']];
+const CONTEXT_STATUS = (pct) => [
+  ['스텝 31/50'],
+  ['기본 모델 사용 중'],
+  ['격리 harness'],
+  [`컨텍스트 ${pct}`],
+  ['캐시 적중 82%'],
+];
+// "컨텍스트 NN%" 글자의 왼쪽 끝 x다. 11 Context 시안을 내보낸 이미지에서 쟀다(1280px 이미지의 533px → 1440px 프레임의 600px).
+const CONTEXT_CARD_X = 600;
 
 function sessionMain(c) {
   return (
@@ -162,6 +171,68 @@ ${T(c, 12, 16, 400, 'ink2', '적중한 토큰은 모델이 다시 처리하지 �
     side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
     main: sessionMain(c),
     panel: evidence(c, { todos: SESSION_TODOS, current: 't1' }),
+    overlay: card,
+  });
+}
+
+/** 대화에서 컨텍스트를 줄인 자리. 도구 출력 생략은 목록만, 압축(인계 문서나 요약)은 펼치면 엔진이 붙인 필수 항목과 모델이 쓴 부분을 보여 준다(SPEC 4.3절). */
+function compactionMark(c, { label, time, open = null }) {
+  const rule = `<Frame w="fill" h={1} bg="${c.line}" />`;
+  const toggle =
+    open === null
+      ? button(c, 'ghost', '목록 보기', { icon: 'chevron-down' })
+      : button(c, 'ghost', open ? '접기' : '펼치기', {
+          icon: open ? 'chevron-up' : 'chevron-down',
+        });
+  const head = `<Frame w="fill" h="hug" flex="row" items="center" gap={10}>${rule}<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${I(c, 'fold-vertical', 'ink3', 14)}${T(c, 12, 16, 500, 'ink2', label)}${T(c, 12, 16, 400, 'ink3', `· ${time}`)}</Frame>${toggle}${rule}</Frame>`;
+  if (open !== true) return head;
+  const line = (s) => T(c, 12, 18, 400, 'ink2', s, 'w="fill" textAutoResize="height"');
+  const cd = (s) => `<Span font="${mono}" size={12} color="${c.ink}">${s}</Span>`;
+  const section = (title, lines) =>
+    `<Frame w="fill" h="hug" flex="col" gap={4}>${T(c, 12, 16, 600, 'ink', title)}${lines.join('')}</Frame>`;
+  const body = `<Frame w="fill" h="hug" flex="col" gap={12} p={14} rounded={10} bg="${c.sunken}">
+${section('할 일', [line(`${cd('t1 verified')} math.js의 add를 덧셈으로 고친다 · ${cd('node check.js → exit 0')}`), line(`${cd('t2 attempted')} README 예제 출력을 갱신한다`)])}
+${section('사용자 지시', [line('“math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.”'), line('“README 예제도 실제 출력으로 맞춰 주세요.”')])}
+${section('남은 오류', [line('없음')])}
+${section('인계 문서', [line('check.js로 검증했고 t1은 끝났다. README 예제는 node examples/sum.js의 실제 출력으로 맞추는 중이다. 출력 형식은 예제 3개 모두 같다.')])}
+</Frame>`;
+  return `<Frame w="fill" h="hug" flex="col" gap={8}>${head}${body}</Frame>`;
+}
+
+function contextMain(c, { blocks, status }) {
+  return (
+    header(c, { title: 'add 함수 버그 수정', repo: 'math-demo · main', stage: 5, diff: [3, 2] }) +
+    thread(c, blocks, { composerOptions: { running: true }, status })
+  );
+}
+
+/** 컨텍스트 사용 비율 카드와 요약 표시. 상태 표시줄의 "컨텍스트 NN%"에 마우스를 올리거나 포커스를 주면 카드를 띄운다. */
+function contextScreen() {
+  const c = palette('Dark');
+  const row = (label, value) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink2', label, 'w={72}')}${T(c, 12, 16, 400, 'ink', value, 'grow={1}', mono)}</Frame>`;
+  const card = `<Frame name="ContextCard" position="absolute" x={${CONTEXT_CARD_X}} y={682} w={340} h="hug" flex="col" gap={10} p={12} rounded={10} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center">${T(c, 12, 16, 600, 'ink', '컨텍스트')}${SP}${T(c, 12, 16, 600, 'ink', '64%', '', mono)}</Frame>
+<Frame w="fill" h={4} flex="row" rounded={2} bg="${c.borderStrong}"><Frame w={203} h={4} rounded={2} bg="${c.ink2}" /></Frame>
+${row('사용', '128.4k / 200k 토큰')}
+${row('압축 기준', '80% · 160k')}
+${row('생략', '도구 출력 9개 · 58.2k 줄임')}
+${row('압축', '1회 · 인계 문서 · 스텝 1~24')}
+${T(c, 12, 16, 400, 'ink2', '80%에 닿으면 오래된 도구 출력부터 생략하고, 그래도 넘치면 앞부분을 인계 문서로 바꿉니다. 최근 20k 토큰과 할 일·검증 증거는 그대로 둡니다. 모델은 생략한 원문을 다시 읽을 수 있습니다.', 'w={316} textAutoResize="height"')}
+</Frame>`;
+  const blocks = [
+    compactionMark(c, { label: '도구 출력 9개를 생략했습니다', time: '18:31' }),
+    compactionMark(c, { label: '스텝 1~24를 인계 문서로 바꿨습니다', time: '18:42', open: true }),
+    `<Frame w="fill" h="hug" flex="col" gap={4}>${toolLine(c, { icon: 'history', verb: '원문 보기', target: 'README.md 읽기 결과' })}${toolLine(c, { icon: 'file-pen', verb: '수정', target: 'README.md', add: 2, del: 1 })}</Frame>`,
+    reply(
+      c,
+      `README 예제 출력을 실제 값으로 맞췄습니다. 이제 ${code(c, 'pnpm test -- readme')}로 확인하겠습니다.`,
+    ),
+  ];
+  return windowFrame(c, '11 Context · Dark', {
+    side: sidebar(c, { groups: repos({ session: 'add 함수 버그 수정' }) }),
+    main: contextMain(c, { blocks, status: CONTEXT_STATUS('64%') }),
+    panel: evidence(c, { todos: SESSION_TODOS, current: 't2' }),
     overlay: card,
   });
 }
@@ -558,4 +629,5 @@ export const SCREENS = [
   { file: 'command-palette-dark', jsx: commandPaletteScreen },
   { file: 'cache-dark', jsx: cacheScreen },
   { file: 'settings-accounts-dark', jsx: accountsScreen },
+  { file: 'context-dark', jsx: contextScreen },
 ];
