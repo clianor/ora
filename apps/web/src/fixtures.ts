@@ -1159,7 +1159,13 @@ const fallbackEvents: OraEvent[] = [
   makeFallback('tool_call', '17:41', 'model', {
     callId: 'f2',
     tool: 'file_edit',
-    args: { path: 'math.js', add: 1, del: 1 },
+    args: {
+      path: 'math.js',
+      diff: [
+        ['1', '-', 'exports.add = (a, b) => a - b;'],
+        ['1', '+', 'exports.add = (a, b) => a + b;'],
+      ],
+    },
     tier: 'write',
   }),
   makeFallback('tool_result', '17:41', 'tool', {
@@ -1173,6 +1179,7 @@ const fallbackEvents: OraEvent[] = [
     attempt: 1,
     reason: 'usage-limit',
     message: '429 usage limit reached. resets at 18:10',
+    resetAt: `${day}T18:10:00+09:00`,
     delayMs: 0,
     switchedTo: 'gpt-5.6-luna',
     chainPosition: 1,

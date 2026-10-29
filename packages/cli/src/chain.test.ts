@@ -67,6 +67,7 @@ test(
         role: 'default',
       }),
     ]);
+    expect(retries[0]?.resetAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(requests.map((request) => [request.model, request.chainPosition])).toEqual([
       ['m2', 1],
       ['m2', 1],

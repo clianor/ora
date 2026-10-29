@@ -359,7 +359,10 @@ function ModelSwitchMark({ data }: DataMessagePartProps) {
         <ArrowRight aria-hidden className="size-3 text-foreground-subtle" />
         <span className="font-mono font-medium text-foreground">{mark.to}</span>
         <span className="text-foreground-subtle">
-          · {switchReasons[mark.reason]} · {switchTimeFormat.format(new Date(mark.ts))}
+          · {switchReasons[mark.reason]}
+          {mark.resetAt !== undefined &&
+            ` · ${switchTimeFormat.format(new Date(mark.resetAt))}에 풀림`}{' '}
+          · {switchTimeFormat.format(new Date(mark.ts))}
         </span>
       </div>
       <div className="h-px flex-1 bg-border" />

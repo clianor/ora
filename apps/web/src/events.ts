@@ -56,6 +56,8 @@ export interface ModelSwitchData {
   to: string;
   /** 실패한 요청의 오류 원문입니다. 표시의 title로만 보입니다. */
   message?: string;
+  /** 사용 한도 해제 시각(ISO)입니다. */
+  resetAt?: string;
 }
 
 /** 상태를 헤더와 할 일 패널이 이미 보여 주는 제어 도구입니다. 실패했을 때만 줄로 보입니다. */
@@ -197,7 +199,7 @@ export function buildThread(
       };
       assistantContent.push({ type: 'data-compaction', data });
     } else if (event.type === 'retry') {
-      const { role, chainPosition, reason, message, switchedTo } = event.payload;
+      const { role, chainPosition, reason, message, resetAt, switchedTo } = event.payload;
       const previous = positions.get(role) ?? 0;
       positions.set(role, chainPosition);
       const data: ModelSwitchData = {
@@ -206,6 +208,7 @@ export function buildThread(
         from: modelNames.get(`${role}:${previous}`) ?? (previous === 0 ? '첫 모델' : '이전 모델'),
         to: switchedTo,
         ...(message === undefined ? {} : { message }),
+        ...(resetAt === undefined ? {} : { resetAt }),
       };
       assistantContent.push({ type: 'data-model-switch', data });
     } else if (event.type === 'tool_call' && !waitingCallIds.has(event.payload.callId)) {

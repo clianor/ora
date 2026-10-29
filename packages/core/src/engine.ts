@@ -1224,6 +1224,9 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           attempt,
           reason,
           ...(error instanceof Error ? { message: scrubText(error.message).text } : {}),
+          ...(error instanceof ModelLimitError && error.resetAtMs !== undefined
+            ? { resetAt: new Date(error.resetAtMs).toISOString() }
+            : {}),
           delayMs,
           switchedTo: target.model,
           chainPosition: state.position,
