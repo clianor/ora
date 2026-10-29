@@ -1,7 +1,7 @@
 import { Gauge, TriangleAlert, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { getStageIndex, stageLabels, stages } from '../events.ts';
-import { getCostView } from '../lib/cost.ts';
+import { formatCostRatio, getCostView } from '../lib/cost.ts';
 import { runningStatuses } from '../lib/status.ts';
 import type { SessionView, StatusItem } from '../model.ts';
 import { runAction, useStore } from '../store.tsx';
@@ -72,7 +72,8 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
   const cost = getCostView(view.events, record.status);
   const stageIndex = getStageIndex(view.events);
   const isDone = record.status === 'completed' || record.status === 'archived';
-  const costText = cost.ratioPct === undefined ? undefined : `비용 상한 ${cost.ratioPct}%`;
+  const costText =
+    cost.ratioPct === undefined ? undefined : `비용 상한 ${formatCostRatio(cost.ratioPct)}`;
   const statusItems: StatusItem[] = [
     ...(stageIndex === null ? [] : [`단계 ${stageLabels[stages[stageIndex] ?? 'understand']}`]),
     ...(cost.stop ? [{ text: '멈춤 · 비용 상한', isWarning: true as const }] : []),
@@ -162,8 +163,8 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
             {cost.isWarned && !cost.stop && cost.ratioPct !== undefined && !isDone && (
               <p className="mb-2 flex w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
                 <Gauge aria-hidden className="size-3.5 text-warning" />
-                비용 상한의 {cost.ratioPct}%를 썼습니다 · 상한에 닿으면 다음 요청을 보내지 않고
-                멈춥니다
+                비용 상한의 {formatCostRatio(cost.ratioPct)}를 썼습니다 · 상한에 닿으면 다음 요청을
+                보내지 않고 멈춥니다
               </p>
             )}
             <Composer

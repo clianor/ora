@@ -146,7 +146,7 @@ export function TitleBar({ context, diff, onToggleSidebar }: TitleBarProps) {
         <Plus aria-hidden className="size-4" />
       </button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5 px-2.5">
-        {diff && (
+        {diff && (diff.add > 0 || diff.del > 0) && (
           <button
             type="button"
             title="변경 탭 열기"

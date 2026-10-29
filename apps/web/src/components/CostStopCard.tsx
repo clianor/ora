@@ -1,7 +1,7 @@
 import { Gauge, OctagonPause } from 'lucide-react';
 import { useId } from 'react';
 import { navigateToSettings } from '../lib/route.ts';
-import type { CostStop } from '../lib/cost.ts';
+import { formatCostRatio, type CostStop } from '../lib/cost.ts';
 import { Button } from '../ui/button.tsx';
 
 interface CostStopCardProps {
@@ -27,7 +27,7 @@ export function CostStopCard({ stop, ratioPct, remainingTodos }: CostStopCardPro
         </h2>
         {!isMissing && ratioPct !== undefined && (
           <span className="ml-auto font-mono text-xs leading-4 font-medium text-warning">
-            상한의 {ratioPct}%
+            상한의 {formatCostRatio(ratioPct)}
           </span>
         )}
       </div>

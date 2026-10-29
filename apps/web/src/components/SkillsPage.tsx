@@ -184,10 +184,13 @@ export function SkillsPage({ cwd }: { cwd: string | undefined }) {
                     key={`${recall.sessionId}-${recall.at}`}
                     className="flex h-10 items-center gap-2.5 px-4"
                   >
-                    <span className="truncate text-[13px] leading-[18px] font-medium text-foreground">
+                    <span
+                      title={recall.title}
+                      className="max-w-[200px] shrink truncate text-[13px] leading-[18px] font-medium text-foreground"
+                    >
                       {recall.title}
                     </span>
-                    <span className="text-xs leading-4 text-foreground-subtle">·</span>
+                    <span className="shrink-0 text-xs leading-4 text-foreground-subtle">·</span>
                     <span className="min-w-0 flex-1 truncate font-mono text-xs leading-4 text-foreground-muted">
                       {describeRecall(recall)}
                     </span>

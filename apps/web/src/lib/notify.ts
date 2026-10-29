@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import type { OraEvent } from '@ora/protocol';
 import type { OraStore, SessionView } from '../model.ts';
 import { navigate } from './route.ts';
+import { formatCostRatio } from './cost.ts';
 import { runningStatuses } from './status.ts';
 import { listWorktrees } from './worktrees.ts';
 
@@ -115,7 +116,7 @@ function describeEvent(event: OraEvent, title: string): NotifyMessage | undefine
       return event.payload.outcome === 'warn'
         ? {
             kind: 'cost',
-            headline: `비용 상한의 ${event.payload.ratioPct}%를 썼습니다`,
+            headline: `비용 상한의 ${formatCostRatio(event.payload.ratioPct)}를 썼습니다`,
             detail: `${title} · 상한에 닿으면 다음 요청을 보내지 않고 멈춥니다`,
           }
         : undefined;

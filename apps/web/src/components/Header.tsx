@@ -52,7 +52,7 @@ export function Header({
         </span>
       )}
       <div className="ml-auto flex shrink-0 items-center gap-3">
-        {diff && (
+        {diff && (diff.add > 0 || diff.del > 0) && (
           <div className="flex h-7 items-center gap-1.5 rounded-sm bg-surface px-2.5">
             <GitCompare aria-hidden className="size-3.5 text-foreground-muted" />
             <DiffStat add={diff.add} del={diff.del} />

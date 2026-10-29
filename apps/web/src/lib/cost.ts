@@ -48,3 +48,7 @@ export function getCostView(events: readonly OraEvent[], status: SessionStatus):
   };
   return view;
 }
+
+export function formatCostRatio(pct: number): string {
+  return pct === 0 ? '1% 미만' : `${pct}%`;
+}
