@@ -38,9 +38,12 @@ const finalReport = respond({ type: 'text', text: '작업을 마쳤습니다.' }
 const setupResponses = [
   respond(
     use('c1', 'todo.update', {
+      objective: '파일 수정',
+      phases: [{ name: '수정', criterion: 'check.js 통과' }],
       todos: [
         {
           id: 't1',
+          phase: '수정',
           content: 'foo.js의 add를 고친다',
           writeScope: ['foo.js', 'lib'],
           verify: { command: 'node check.js', origin: 'repo' },
@@ -944,6 +947,14 @@ test(
     expect(summary).not.toMatch(/^(exit code:|---)/m);
     expect(summary).toMatch(/^ {2}- 증거: `node check\.js` 종료 코드 1 · add\(1, 2\) failed$/m);
     expect(summary).toContain('파일을 고친다');
+    // 요약의 todo 상태 절은 phase 순서와 완료 조건, 세션 목표, 작업 중인 todo를 줄이지 않고 적는다.
+    for (const fact of [
+      '세션 목표: 파일 수정',
+      '작업 중인 todo: t1',
+      '1. 수정 (완료 조건: check.js 통과)',
+    ]) {
+      expect(summary).toContain(fact);
+    }
     const [todo] = todos as {
       id: string;
       status: string;
@@ -1378,6 +1389,149 @@ test(
     expect(events.some((event) => event.type === 'model_request' && event.payload.purpose)).toBe(
       false,
     );
+  },
+  TEST_TIMEOUT_MS,
+);
+
+function todoSpec(id: string, phase: string): Record<string, unknown> {
+  return { id, content: `${id} 작업`, phase, verify: { command: 'node -e 0' } };
+}
+
+test(
+  '작업 중 todo는 phase 순서로 넘어가고 막힌 todo는 건너뛰며, 남은 todo가 모두 막히면 그 스텝에서 멈춘다',
+  async () => {
+    const project = createProject();
+    await runCli(
+      project,
+      [
+        respond(
+          use('c1', 'todo.update', {
+            objective: '순서 확인',
+            todos: [
+              todoSpec('t1', 'A'),
+              todoSpec('t2', 'A'),
+              todoSpec('t3', 'B'),
+              todoSpec('t4', 'B'),
+            ],
+          }),
+        ),
+        // 사유 없는 blocked와 모델의 abandoned는 그 항목만 거부한다.
+        respond(
+          use('c2', 'todo.update', {
+            todos: [
+              { id: 't2', status: 'blocked' },
+              { id: 't1', status: 'abandoned' },
+              { id: 't4', content: '정상 항목은 반영한다' },
+            ],
+          }),
+        ),
+        respond(
+          use('c3', 'todo.update', {
+            todos: [
+              { id: 't2', status: 'blocked', reason: '정책으로 차단됨' },
+              { id: 't3', current: true },
+              { id: 't3', status: 'attempted' },
+            ],
+          }),
+        ),
+        respond(use('c4', 'verify.run', { todoId: 't3' })),
+        respond(
+          use('c5', 'todo.update', { todos: [{ id: 't4', status: 'attempted' }] }),
+          use('c6', 'verify.run', { todoId: 't4' }),
+        ),
+        respond(
+          use('c7', 'todo.update', { todos: [{ id: 't1', status: 'attempted' }] }),
+          use('c8', 'verify.run', { todoId: 't1' }),
+        ),
+      ],
+      ['--permission', 'bypass-permissions'],
+    );
+
+    const { events, session, todos } = readSession(project);
+    // t3로 직접 옮김 → t4 → 앞 phase로 돌아가 t1 → 막힌 t2를 건너뛰어 후보 없음.
+    const trail = events.flatMap((event) =>
+      event.type === 'todo_update' &&
+      event.payload.rejected === undefined &&
+      event.payload.current !== undefined
+        ? [event.payload.current]
+        : [],
+    );
+    expect(trail).toEqual(['t1', 't3', 't4', 't1', null]);
+    const rejected = events.flatMap((event) =>
+      event.type === 'todo_update' && event.payload.rejected !== undefined
+        ? [[event.payload.todoId, event.payload.rejected.reason]]
+        : [],
+    );
+    expect(rejected).toMatchObject([
+      ['t2', expect.stringContaining('사유')],
+      ['t1', expect.stringContaining('사용자만')],
+    ]);
+    expect(todos.find((todo) => todo.id === 't4')).toMatchObject({
+      content: '정상 항목은 반영한다',
+    });
+    expect(events.find((event) => event.type === 'objective')).toMatchObject({
+      payload: { text: '순서 확인' },
+    });
+    expect(session).toMatchObject({ status: 'stopped', endReason: 'blocked' });
+    const end = events.findLast((event) => event.type === 'session_end');
+    expect(end?.type === 'session_end' ? end.payload.summary : '').toContain('t2: 정책으로 차단됨');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '고친 횟수가 상한에 이른 todo의 검사가 또 실패하면 엔진이 blocked로 바꾸고 멈춘다',
+  async () => {
+    const project = createProject();
+    await runCli(
+      project,
+      [
+        respond(
+          use('d1', 'todo.update', {
+            todos: [
+              {
+                id: 't1',
+                content: '항상 실패한다',
+                verify: { command: 'node -e "process.exit(1)"' },
+              },
+            ],
+          }),
+        ),
+        ...[1, 2].map((round) =>
+          respond(
+            use(`d${round}a`, 'todo.update', { todos: [{ id: 't1', status: 'attempted' }] }),
+            use(`d${round}v`, 'verify.run', { todoId: 't1' }),
+          ),
+        ),
+      ],
+      ['--permission', 'bypass-permissions'],
+      { limits: { maxRepairsPerTodo: 1 } },
+    );
+
+    const { events, session, todos } = readSession(project);
+    expect(todos[0]).toMatchObject({
+      status: 'blocked',
+      blockedReason: '1번 고쳤지만 검사를 통과하지 못했습니다',
+    });
+    expect(session).toMatchObject({ status: 'stopped', endReason: 'blocked' });
+    expect(JSON.stringify(events)).not.toContain('수리 한도');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '멈췄다 재개하면 세션 목표와 phase와 작업 중 표시를 기록에서 되살려 모델에 알린다',
+  async () => {
+    const project = createProject();
+    await createSoftStoppedSession(project);
+    const resumed = await startResume(project, sessionIdOf(project), 'second', resumeToVerified)
+      .done;
+    expect(resumed.code).toBe(0);
+
+    const [first] = readModelInputs(project, 'second');
+    const context = JSON.stringify(first?.messages);
+    expect(context).toContain('목표: 파일 수정');
+    expect(context).toContain('(수정) foo.js의 add를 고친다 ← 작업 중');
   },
   TEST_TIMEOUT_MS,
 );

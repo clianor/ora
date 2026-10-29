@@ -24,6 +24,7 @@ import type {
   QuestionPort,
   ResumeInput,
   RunOutcome,
+  UserTodoAction,
   WorkspacePort,
 } from '@ora/core';
 import { createFileMemory } from '@ora/memory';
@@ -430,6 +431,8 @@ export interface ExecuteHooks {
   readonly onEvent: (event: OraEvent) => void;
   readonly approval?: ApprovalPort;
   readonly questions?: QuestionPort;
+  /** 사용자가 보낸 포기·포기 취소를 엔진이 스텝이 끝날 때 꺼내 가는 대기열이다. */
+  readonly userTodoActions?: { drain(): readonly UserTodoAction[] };
 }
 
 /** 워커 프로세스 안에서 세션 하나를 끝까지 실행한다. 재개는 호스트가 transcript를 봉인한 뒤에 부른다. */
@@ -593,6 +596,7 @@ export async function executeSession(
       signal: hooks.signal,
       softStop: hooks.softStop,
       ...(resume === undefined ? {} : { resume }),
+      ...(hooks.userTodoActions === undefined ? {} : { userTodoActions: hooks.userTodoActions }),
     },
   );
   return { ...outcome, todos: scrubValue(outcome.todos) };

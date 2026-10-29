@@ -40,6 +40,10 @@ export type AnswerBody = z.infer<typeof answerBodySchema>;
 export const messageBodySchema = z.strictObject({ text: z.string().min(1) });
 export type MessageBody = z.infer<typeof messageBodySchema>;
 
+/** 사용자가 todo를 포기하거나 포기를 취소한다. 실행 중이면 지금 스텝이 끝난 뒤, 멈춘 세션이면 바로 반영한다. */
+export const todoActionBodySchema = z.strictObject({ todoId: z.string().min(1) });
+export type TodoActionBody = z.infer<typeof todoActionBodySchema>;
+
 export const pendingApprovalSchema = z.strictObject({
   requestId: z.string().min(1),
   request: approvalRequestSchema,

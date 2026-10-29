@@ -16,6 +16,7 @@ import {
   resumeSessionBodySchema,
   sessionIdSchema,
   sseEventNames,
+  todoActionBodySchema,
 } from '@ora/protocol';
 import {
   accountProviderSchema,
@@ -37,7 +38,8 @@ import { readSessionRecord, readTodos, readTranscriptText } from '@ora/store';
 import { z } from 'zod';
 import { UsageError, loadConfig, resolveSessionsDir, selectProvider } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
-import { launchSession, listSessions } from './supervisor.ts';
+import { applyTodoActionToStoppedSession, launchSession, listSessions } from './supervisor.ts';
+import type { UserTodoAction } from '@ora/core';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
 import { AccountApiError, createAccountApi } from './account-api.ts';
 
@@ -636,6 +638,43 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         session.handle.answerQuestion(body.requestId, body.answers);
         publish(id, sseEventNames.requestResolved, { requestId: body.requestId });
         reply(res, 200, { ok: true });
+        return;
+      }
+      case 'todo-abandon':
+      case 'todo-restore': {
+        const body = parseBody(todoActionBodySchema, await readJson(req));
+        const todoAction: UserTodoAction = {
+          todoId: body.todoId,
+          action: action === 'todo-abandon' ? 'abandon' : 'restore',
+        };
+        if (closing) throw new HttpError(503, '서버를 닫는 중입니다.');
+        const todo = (await readTodos(sessionDir)).find((item) => item.id === body.todoId);
+        if (todo === undefined) throw new HttpError(404, `todo가 없습니다: ${body.todoId}`);
+        if (
+          todoAction.action === 'abandon' &&
+          (todo.status === 'verified' || todo.status === 'abandoned')
+        ) {
+          throw new HttpError(409, `${todo.status} todo는 포기할 수 없습니다.`);
+        }
+        if (todoAction.action === 'restore' && todo.status !== 'abandoned') {
+          throw new HttpError(409, 'abandoned가 아닌 todo는 포기를 취소할 수 없습니다.');
+        }
+        const entry = live.get(id);
+        if (entry !== undefined) {
+          // 실행 중이면 엔진이 지금 스텝이 끝난 뒤 반영한다 (SPEC 2.3.3절).
+          entry.handle.sendTodoAction(todoAction);
+          reply(res, 202, { ok: true, applied: false });
+          return;
+        }
+        if (resuming.has(id)) throw new HttpError(409, `세션을 재개하는 중입니다: ${id}`);
+        const result = await applyTodoActionToStoppedSession(
+          options.env,
+          options.configPath,
+          id,
+          todoAction,
+        );
+        if (result.rejected !== undefined) throw new HttpError(409, result.rejected);
+        reply(res, 200, { ok: true, applied: true });
         return;
       }
       case 'message': {

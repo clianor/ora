@@ -1,3 +1,4 @@
+import type { UserTodoAction } from '@ora/core';
 import { workerCommandSchema } from '@ora/protocol';
 import type { LaunchCommand, WorkerMessage } from '@ora/protocol';
 import { UsageError } from './config.ts';
@@ -6,6 +7,8 @@ import { createIpcPorts, executeSession } from './execute.ts';
 // 세션 워커 진입점이다. 호스트가 `fork`로 띄우고 IPC로 명령을 받는다 (SPEC 2.2.1절).
 const hard = new AbortController();
 const soft = new AbortController();
+// 호스트가 보낸 포기·포기 취소다. 엔진이 스텝이 끝날 때 꺼내 간다.
+const todoActions: UserTodoAction[] = [];
 
 function send(message: WorkerMessage, then: () => void = () => undefined): void {
   process.send?.(message, then);
@@ -18,6 +21,7 @@ function start(command: LaunchCommand): void {
     env: process.env,
     signal: hard.signal,
     softStop: soft.signal,
+    userTodoActions: { drain: () => todoActions.splice(0) },
     onEvent: (event) => {
       send({ type: 'event', event });
     },
@@ -53,6 +57,9 @@ process.on('message', (raw) => {
       break;
     case 'answerQuestion':
       ports.answerQuestion(command.requestId, command.answers);
+      break;
+    case 'todoAction':
+      todoActions.push({ todoId: command.todoId, action: command.action });
       break;
     case 'cancel':
       if (command.mode === 'soft') {

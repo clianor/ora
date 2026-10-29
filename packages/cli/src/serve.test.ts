@@ -967,3 +967,147 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+async function createBypassSession(running: Running): Promise<string> {
+  const reply = await post(running, '/api/sessions', {
+    task: '일을 한다',
+    cwd: running.dir,
+    permissionMode: 'bypass-permissions',
+  });
+  expect(reply.status).toBe(201);
+  return (JSON.parse(reply.text) as { sessionId: string }).sessionId;
+}
+
+function readTodoStatuses(running: Running, sessionId: string): Record<string, string> {
+  const todos = JSON.parse(
+    readFileSync(join(sessionDirOf(running, sessionId), 'todos.json'), 'utf8'),
+  ) as { id: string; status: string }[];
+  return Object.fromEntries(todos.map((todo) => [todo.id, todo.status]));
+}
+
+async function waitStopped(running: Running, sessionId: string, status: string): Promise<void> {
+  await waitFor(async () => {
+    const current = await detail(running, sessionId);
+    return !current.live && current.session.status === status;
+  });
+}
+
+test(
+  '실행 중에 포기하면 스텝이 끝난 뒤 반영하고, 멈춘 세션에서는 포기와 포기 취소를 바로 반영한다',
+  async () => {
+    const running = await startServer([
+      respond(
+        use('s1', 'todo.update', {
+          todos: [{ id: 't1', content: '작업', verify: { command: 'node -e 0' } }],
+        }),
+      ),
+      respond(use('s2', 'shell', { command: 'echo started >> started.txt; sleep 2' })),
+      finalText,
+    ]);
+    try {
+      const sessionId = await createBypassSession(running);
+      await waitFor(() => existsSync(join(running.dir, 'started.txt')));
+      const abandon = await post(running, `/api/sessions/${sessionId}/todo-abandon`, {
+        todoId: 't1',
+      });
+      expect(abandon.status).toBe(202);
+      expect(readTodoStatuses(running, sessionId)).toEqual({ t1: 'pending' });
+
+      // 모든 todo를 포기했으므로 세션은 그 스텝이 끝날 때 stopped(abandoned)로 끝난다.
+      await waitStopped(running, sessionId, 'stopped');
+      const events = readEvents(running, sessionId);
+      const end = events.findLast((event) => event.type === 'session_end');
+      expect(end).toMatchObject({ payload: { status: 'stopped', endReason: 'abandoned' } });
+      const shellDone = events.find(
+        (event) => event.type === 'tool_result' && event.payload.callId === 's2',
+      );
+      const abandoned = events.find(
+        (event) =>
+          event.type === 'todo_update' &&
+          event.actor === 'user' &&
+          event.payload.to === 'abandoned',
+      );
+      expect(abandoned?.seq).toBeGreaterThan(shellDone?.seq ?? Infinity);
+
+      const restore = await post(running, `/api/sessions/${sessionId}/todo-restore`, {
+        todoId: 't1',
+      });
+      expect(restore.status).toBe(200);
+      expect(readTodoStatuses(running, sessionId)).toEqual({ t1: 'pending' });
+      const lastUpdate = readEvents(running, sessionId).findLast(
+        (event) => event.type === 'todo_update',
+      );
+      expect(lastUpdate).toMatchObject({
+        actor: 'user',
+        payload: { to: 'pending', current: 't1' },
+      });
+
+      expect(
+        (await post(running, `/api/sessions/${sessionId}/todo-abandon`, { todoId: 't1' })).status,
+      ).toBe(200);
+      expect(readTodoStatuses(running, sessionId)).toEqual({ t1: 'abandoned' });
+      expect(
+        (await post(running, `/api/sessions/${sessionId}/todo-abandon`, { todoId: 't1' })).status,
+      ).toBe(409);
+      expect(
+        (await post(running, `/api/sessions/${sessionId}/todo-abandon`, { todoId: 'nope' })).status,
+      ).toBe(404);
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '막혀서 멈춘 세션의 막힌 todo를 포기하고 재개하면 Learn 단계부터 이어 가 포기 개수와 함께 완료한다',
+  async () => {
+    const spec = (id: string) => ({ id, content: `${id} 작업`, verify: { command: 'node -e 0' } });
+    const running = await startServer([
+      respond(use('s1', 'todo.update', { todos: [spec('t1'), spec('t2')] })),
+      respond(
+        use('s2', 'todo.update', { todos: [{ id: 't1', status: 'attempted' }] }),
+        use('s3', 'verify.run', { todoId: 't1' }),
+      ),
+      respond(
+        use('s4', 'todo.update', {
+          todos: [{ id: 't2', status: 'blocked', reason: '환경이 없음' }],
+        }),
+      ),
+      finalText,
+    ]);
+    try {
+      const sessionId = await createBypassSession(running);
+      await waitStopped(running, sessionId, 'stopped');
+      expect(readTodoStatuses(running, sessionId)).toEqual({ t1: 'verified', t2: 'blocked' });
+      expect(
+        readEvents(running, sessionId).findLast((event) => event.type === 'session_end'),
+      ).toMatchObject({ payload: { endReason: 'blocked' } });
+
+      expect(
+        (await post(running, `/api/sessions/${sessionId}/todo-abandon`, { todoId: 't2' })).status,
+      ).toBe(200);
+      expect((await post(running, `/api/sessions/${sessionId}/resume`, {})).status).toBe(200);
+      await waitStopped(running, sessionId, 'completed');
+
+      const events = readEvents(running, sessionId);
+      const resumeAt = events.findLastIndex((event) => event.type === 'resume');
+      expect(
+        events
+          .slice(resumeAt)
+          .some(
+            (event) =>
+              event.type === 'stage' &&
+              event.payload.outcome === 'entered' &&
+              event.payload.stage === 'learn',
+          ),
+      ).toBe(true);
+      const end = events.findLast((event) => event.type === 'session_end');
+      expect(end).toMatchObject({ payload: { endReason: 'passed' } });
+      expect(end?.type === 'session_end' ? end.payload.summary : '').toContain('포기 1개');
+    } finally {
+      await stopServer(running);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);

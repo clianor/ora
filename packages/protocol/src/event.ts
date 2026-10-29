@@ -158,6 +158,7 @@ export const oraEventSchema = z.discriminatedUnion('type', [
     z.strictObject({ callId: z.string().min(1), answers: z.array(questionAnswerSchema) }),
   ),
   // 변경 주체는 envelope의 actor다. rejected가 있으면 to는 요청된 상태이고 todo는 거부 전 스냅샷이다.
+  // `current`는 이 변경 뒤에 작업 중인 todo의 ID다. 표시가 바뀐 변경에만 적고(null은 작업 중인 todo 없음), 재개는 마지막 값을 되살린다.
   defineEvent(
     'todo_update',
     z.strictObject({
@@ -165,7 +166,18 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       from: todoStatusSchema.optional(),
       to: todoStatusSchema,
       todo: todoSchema,
+      current: z.string().min(1).nullable().optional(),
       rejected: z.strictObject({ reason: z.string().min(1) }).optional(),
+    }),
+  ),
+  // 세션 목표 한 줄이다(200자 이하). 빈 문자열은 지웠다는 뜻이다.
+  defineEvent('objective', z.strictObject({ text: z.string().max(200) })),
+  // phase의 완료 조건 한 줄(200자 이하)을 쓰거나(문자열) 지웠다는(null) 기록이다. phase의 순서는 todo나 이 이벤트에 처음 나온 순서다.
+  defineEvent(
+    'phase',
+    z.strictObject({
+      name: z.string().min(1).max(40),
+      criterion: z.string().min(1).max(200).nullable(),
     }),
   ),
   defineEvent(

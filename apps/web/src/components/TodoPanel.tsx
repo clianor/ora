@@ -17,6 +17,8 @@ const statusStyle: Record<TodoStatus, { label: string; icon: LucideIcon; color: 
   verified: { label: '검증됨', icon: CircleCheck, color: 'text-success' },
   failed: { label: '실패', icon: CircleX, color: 'text-danger' },
   interrupted: { label: '중단됨', icon: CirclePause, color: 'text-foreground-subtle' },
+  blocked: { label: '막힘', icon: CircleX, color: 'text-danger' },
+  abandoned: { label: '포기함', icon: CirclePause, color: 'text-foreground-subtle' },
 };
 
 const panelId = 'todo-panel';

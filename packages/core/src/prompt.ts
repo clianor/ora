@@ -2,6 +2,7 @@ import type { Isolation, PermissionMode, Todo } from '@ora/protocol';
 import type { ToolSpec } from './ports/model.ts';
 import type { RecallPack } from './ports/memory.ts';
 import type { InstructionFile, PromptFile } from './ports/workspace.ts';
+import { phaseOf } from './todos.ts';
 
 export interface PromptParts {
   readonly promptFiles: readonly PromptFile[];
@@ -34,12 +35,19 @@ export function assembleSystemPrompt(parts: PromptParts): string {
   return sections.join('\n\n');
 }
 
-export function describeTodos(todos: readonly Todo[]): string {
-  if (todos.length === 0) return '현재 todo: 없음';
+export function describeTodos(
+  todos: readonly Todo[],
+  state: { readonly current?: string; readonly objective?: string } = {},
+): string {
+  const objective =
+    state.objective === undefined || state.objective === '' ? '' : `목표: ${state.objective}\n`;
+  if (todos.length === 0) return `${objective}현재 todo: 없음`;
   const lines = todos.map(
     (todo) =>
-      `- ${todo.id} [${todo.status}] ${todo.content}` +
-      (todo.verify === undefined ? '' : ` (검증: ${todo.verify.command})`),
+      `- ${todo.id} [${todo.status}] (${phaseOf(todo)}) ${todo.content}` +
+      (todo.id === state.current ? ' ← 작업 중' : '') +
+      (todo.verify === undefined ? '' : ` (검증: ${todo.verify.command})`) +
+      (todo.blockedReason === undefined ? '' : ` (막힘: ${todo.blockedReason})`),
   );
-  return `현재 todo:\n${lines.join('\n')}`;
+  return `${objective}현재 todo:\n${lines.join('\n')}`;
 }

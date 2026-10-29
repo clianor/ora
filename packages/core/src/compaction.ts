@@ -1,4 +1,5 @@
 import type { ContentBlock, Todo } from '@ora/protocol';
+import { phaseOf } from './todos.ts';
 import type { ModelMessage } from './ports/model.ts';
 
 /**
@@ -288,9 +289,20 @@ export interface OpenError {
   readonly summary: string;
 }
 
+interface SummaryPhase {
+  readonly name: string;
+  readonly criterion?: string;
+}
+
 export interface SummaryParts {
   readonly instructions: readonly string[];
   readonly todos: readonly Todo[];
+  /** 세션 목표다. 없으면 빈 문자열이다. */
+  readonly objective: string;
+  /** 처음 나온 순서의 phase 목록이다. */
+  readonly phases: readonly SummaryPhase[];
+  /** 작업 중인 todo의 ID다. */
+  readonly current?: string;
   readonly openErrors: readonly OpenError[];
   readonly narrative: string;
   /** 서술을 쓴 방식이다. 방식에 맞는 제목 하나만 쓴다. 없으면 `summary`다. */
@@ -315,20 +327,30 @@ export function buildSummaryDocument(parts: SummaryParts): string {
   const instructions = parts.instructions
     .map((text, index) => `### 지시 ${index + 1}\n${text}`)
     .join('\n\n');
-  const todos =
+  const todoLines =
     parts.todos.length === 0
-      ? '없음'
-      : parts.todos
-          .map((todo) => {
-            const { evidence } = todo;
-            const output = evidence === undefined ? '' : firstLine(evidence.summary, 120);
-            const line =
-              evidence === undefined
-                ? '증거 없음'
-                : `증거: \`${evidence.command}\` 종료 코드 ${evidence.exitCode ?? '없음'}${output === '' ? '' : ` · ${output}`}`;
-            return `- ${todo.id} [${todo.status}] ${todo.content}\n  - ${line}`;
-          })
-          .join('\n');
+      ? ['없음']
+      : parts.todos.map((todo) => {
+          const { evidence } = todo;
+          const output = evidence === undefined ? '' : firstLine(evidence.summary, 120);
+          const line =
+            evidence === undefined
+              ? '증거 없음'
+              : `증거: \`${evidence.command}\` 종료 코드 ${evidence.exitCode ?? '없음'}${output === '' ? '' : ` · ${output}`}`;
+          const blocked =
+            todo.blockedReason === undefined ? '' : `\n  - 막힘 사유: ${todo.blockedReason}`;
+          return `- ${todo.id} [${todo.status}] (phase: ${phaseOf(todo)}) ${todo.content}\n  - ${line}${blocked}`;
+        });
+  const phaseLines = parts.phases.map(
+    (phase, index) =>
+      `${index + 1}. ${phase.name}${phase.criterion === undefined ? '' : ` (완료 조건: ${phase.criterion})`}`,
+  );
+  const todos = [
+    `세션 목표: ${parts.objective === '' ? '없음' : parts.objective}`,
+    `작업 중인 todo: ${parts.current ?? '없음'}`,
+    `phase 순서:\n${phaseLines.length === 0 ? '없음' : phaseLines.join('\n')}`,
+    todoLines.join('\n'),
+  ].join('\n');
   const errors =
     parts.openErrors.length === 0
       ? '없음'

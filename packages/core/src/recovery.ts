@@ -11,6 +11,7 @@ import type {
 import type { ModelMessage } from './ports/model.ts';
 import { applyPrune, shakeMessages, summaryMessage } from './compaction.ts';
 import type { OpenError } from './compaction.ts';
+import { ensurePhase, phaseOf } from './todos.ts';
 import type { EventDraft } from './recorder.ts';
 
 export class TranscriptCorruptError extends Error {}
@@ -151,6 +152,40 @@ export function appendMessage(history: ModelMessage[], message: ModelMessage): v
   history.push(message);
 }
 
+/** 기록에서 todo 상태를 다시 만든 결과다. 엔진이 실행 중에 만드는 값과 같은 규칙으로 계산한다. */
+export interface TodoState {
+  readonly todos: Map<string, Todo>;
+  readonly objective: string;
+  readonly phases: { name: string; criterion?: string }[];
+  readonly current?: string;
+}
+
+export function reduceTodoState(events: readonly OraEvent[]): TodoState {
+  const todos = new Map<string, Todo>();
+  const order: string[] = [];
+  const criteria = new Map<string, string>();
+  let objective = '';
+  let current: string | undefined;
+  for (const event of events) {
+    if (event.type === 'todo_update' && event.payload.rejected === undefined) {
+      todos.set(event.payload.todoId, event.payload.todo);
+      ensurePhase(order, phaseOf(event.payload.todo));
+      if (event.payload.current !== undefined) current = event.payload.current ?? undefined;
+    } else if (event.type === 'objective') {
+      objective = event.payload.text;
+    } else if (event.type === 'phase') {
+      ensurePhase(order, event.payload.name);
+      if (event.payload.criterion === null) criteria.delete(event.payload.name);
+      else criteria.set(event.payload.name, event.payload.criterion);
+    }
+  }
+  const phases = order.map((name) => {
+    const criterion = criteria.get(name);
+    return criterion === undefined ? { name } : { name, criterion };
+  });
+  return { todos, objective, phases, ...(current === undefined ? {} : { current }) };
+}
+
 export interface ContextTrim {
   readonly fromSeq: number;
   readonly toSeq: number;
@@ -163,6 +198,12 @@ export interface ResumePlan {
   readonly hardKilled: boolean;
   readonly stage: Stage;
   readonly todos: readonly Todo[];
+  /** 세션 목표다. 없으면 빈 문자열이다. */
+  readonly objective: string;
+  /** 처음 나온 순서의 phase 목록과 완료 조건이다. */
+  readonly phases: readonly { readonly name: string; readonly criterion?: string }[];
+  /** 마지막 기록이 가리키는 작업 중 todo의 ID다. */
+  readonly current?: string;
   readonly history: readonly ModelMessage[];
   readonly trim?: ContextTrim;
   /** 관찰 메시지를 쓰기 전에 죽은 배치의 도구 결과다. 모델 컨텍스트가 짝 없는 tool_use를 갖지 않게 한다. */
@@ -321,12 +362,8 @@ export function planResume(
     .filter(([, result]) => result.status !== 'ok')
     .map(([tool, result]) => ({ tool, summary: result.summary }));
 
-  const todos = new Map<string, Todo>();
-  for (const event of events) {
-    if (event.type === 'todo_update' && event.payload.rejected === undefined) {
-      todos.set(event.payload.todoId, event.payload.todo);
-    }
-  }
+  const state = reduceTodoState(events);
+  const todos = state.todos;
   const stage = events.findLast(
     (event): event is EventOf<'stage'> =>
       event.type === 'stage' && event.payload.outcome === 'entered',
@@ -347,6 +384,9 @@ export function planResume(
     hardKilled: lastEnd.payload.status === 'crashed',
     stage: stage ?? 'understand',
     todos: [...todos.values()],
+    objective: state.objective,
+    phases: state.phases,
+    ...(state.current === undefined ? {} : { current: state.current }),
     history,
     ...(trim === undefined ? {} : { trim }),
     repair,

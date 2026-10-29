@@ -5,7 +5,16 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { formatKst } from '@ora/core';
+import {
+  applyUserTodoAction,
+  createRecorder,
+  formatKst,
+  parseTranscript,
+  reconcileCurrent,
+  reduceTodoState,
+  scrubValue,
+} from '@ora/core';
+import type { UserTodoAction } from '@ora/core';
 import { workerMessageSchema } from '@ora/protocol';
 import type {
   ApprovalDecision,
@@ -21,7 +30,13 @@ import type {
   WorkerCommand,
   WorkerMessage,
 } from '@ora/protocol';
-import { listSessionRecords, readSessionRecord, readTodos, readTranscriptText } from '@ora/store';
+import {
+  createSessionStorage,
+  listSessionRecords,
+  readSessionRecord,
+  readTodos,
+  readTranscriptText,
+} from '@ora/store';
 import { UsageError, loadConfig, resolveSessionsDir } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { killOrphanShells, recoverSession } from './recovery.ts';
@@ -75,6 +90,8 @@ export interface SessionHandle {
   cancel(mode: 'soft' | 'hard'): void;
   resolveApproval(requestId: string, decision: ApprovalDecision): void;
   answerQuestion(requestId: string, answers: QuestionAnswer[]): void;
+  /** 실행 중인 워커에 사용자의 포기·포기 취소를 보낸다. 워커가 지금 스텝이 끝난 뒤 반영한다. */
+  sendTodoAction(action: UserTodoAction): void;
   /** 세션 ID가 정해지면 풀린다. 재개 요청이 시작 전에 실패하면 거부로 끝난다. */
   readonly sessionId: Promise<string>;
   readonly result: Promise<SessionResult>;
@@ -375,6 +392,9 @@ export function launchSession(options: LaunchOptions): SessionHandle {
     answerQuestion(requestId, answers) {
       sendToWorker?.({ type: 'answerQuestion', requestId, answers });
     },
+    sendTodoAction(action) {
+      sendToWorker?.({ type: 'todoAction', ...action });
+    },
     sessionId: idReady.promise,
     result: run().catch((error: unknown) => {
       idReady.reject(error);
@@ -392,4 +412,64 @@ export async function listSessions(
   const oraHome = resolveOraHome(env);
   const config = await loadConfig(configPath, oraHome);
   return listSessionRecords(resolveSessionsDir(config, oraHome));
+}
+
+/**
+ * 멈춘 세션의 todo를 사용자가 포기하거나 포기를 취소한다. 세션 락을 잡고 `todo_update`를 transcript에 덧붙이고 todos.json을 고친다.
+ * 거부하면 거부 사유를 돌려주고, 기록에는 남기지 않는다.
+ */
+export async function applyTodoActionToStoppedSession(
+  env: NodeJS.ProcessEnv,
+  configPath: string | undefined,
+  sessionId: string,
+  action: UserTodoAction,
+): Promise<{ readonly rejected?: string }> {
+  const oraHome = resolveOraHome(env);
+  const config = await loadConfig(configPath, oraHome);
+  const sessionDir = join(resolveSessionsDir(config, oraHome), sessionId);
+  await assertResumable(sessionDir, sessionId);
+  const release = await tryLock(join(sessionDir, SESSION_LOCK_FILE));
+  if (release === undefined) throw new UsageError(`세션이 이미 실행 중입니다: ${sessionId}`);
+  try {
+    await recoverSession(
+      sessionDir,
+      {
+        sessionId,
+        fallback: { permissionMode: config.permissions.mode, isolation: config.isolation },
+      },
+      { hardKill: false, reason: '이전 실행이 기록을 닫지 못하고 끝났습니다.' },
+    );
+    const { events } = parseTranscript((await readTranscriptText(sessionDir)) ?? '');
+    const state = reduceTodoState(events);
+    const outcome = applyUserTodoAction(state.todos, action, formatKst(new Date()));
+    if (outcome === undefined) throw new UsageError(`todo ${action.todoId}가 없습니다.`);
+    if (outcome.rejected !== undefined) return { rejected: outcome.rejected };
+    const fragment =
+      reconcileCurrent(
+        [...state.todos.values()],
+        state.phases.map((phase) => phase.name),
+        state.current,
+      ) ?? {};
+    const storage = await createSessionStorage(sessionDir);
+    const recorder = createRecorder(
+      sessionId,
+      storage.transcript,
+      { now: () => new Date() },
+      events.at(-1)?.seq,
+    );
+    await recorder.emit('user', {
+      type: 'todo_update',
+      payload: {
+        todoId: action.todoId,
+        ...(outcome.from === undefined ? {} : { from: outcome.from }),
+        to: outcome.to,
+        todo: outcome.todo,
+        ...fragment,
+      },
+    });
+    await storage.sessions.saveTodos(scrubValue([...state.todos.values()]));
+    return {};
+  } finally {
+    await release();
+  }
 }

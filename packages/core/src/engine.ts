@@ -61,7 +61,16 @@ import { describeScrubHits, mergeScrubHits, scrubText, scrubValue } from './scru
 import type { ScrubHits } from './scrub.ts';
 import { STAGES, checkStageExit, isBackwardAllowed } from './stages.ts';
 import { formatKst } from './time.ts';
-import { applyModelTodoEntry } from './todos.ts';
+import {
+  applyModelTodoEntry,
+  applyUserTodoAction,
+  ensurePhase,
+  isDone,
+  normalizePhaseName,
+  phaseOf,
+  reconcileCurrent as reconcileTodoCurrent,
+} from './todos.ts';
+import type { UserTodoAction } from './todos.ts';
 
 export interface EngineSettings {
   readonly permissionMode: PermissionMode;
@@ -112,6 +121,8 @@ export interface RunInput {
   /** 소프트 스톱 신호다. 진행 중인 도구 호출은 끝까지 기다리고, 아직 시작하지 않은 일은 하지 않는다. */
   readonly softStop: AbortSignal;
   readonly resume?: ResumeInput;
+  /** 사용자가 보낸 포기·포기 취소다. 엔진이 스텝이 끝날 때마다 꺼내 반영한다. */
+  readonly userTodoActions?: { drain(): readonly UserTodoAction[] };
 }
 
 /** 멈춘 세션을 잇는 데 필요한 입력이다. 호스트가 transcript를 봉인한 뒤 `planResume`으로 만든다. */
@@ -202,6 +213,8 @@ const STATUS_RANK: Record<TodoStatus, number> = {
   attempted: 1,
   claimed_verified: 2,
   verified: 3,
+  blocked: 3,
+  abandoned: 3,
 };
 
 export async function runSession(deps: EngineDeps, input: RunInput): Promise<RunOutcome> {
@@ -212,6 +225,48 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   const todos = new Map<string, Todo>(resume?.plan.todos.map((todo) => [todo.id, todo] as const));
   const now = () => formatKst(clock.now());
   const emit: (typeof recorder)['emit'] = (actor, draft) => recorder.emit(actor, draft, stepId);
+
+  const phaseOrder: string[] = (resume?.plan.phases ?? []).map((phase) => phase.name);
+  const phaseCriteria = new Map<string, string>(
+    (resume?.plan.phases ?? []).flatMap((phase) =>
+      phase.criterion === undefined ? [] : [[phase.name, phase.criterion] as const],
+    ),
+  );
+  let objective = resume?.plan.objective ?? '';
+  let current: string | undefined = resume?.plan.current;
+  const summaryPhases = () =>
+    phaseOrder.map((name) => {
+      const criterion = phaseCriteria.get(name);
+      return criterion === undefined ? { name } : { name, criterion };
+    });
+  const describeState = (list: readonly Todo[]) =>
+    describeTodos(list, { objective, ...(current === undefined ? {} : { current }) });
+  /** 작업 중 todo가 후보(`blocked`가 아닌 남은 todo)가 아니면 다음 후보로 옮긴다. 바뀌었으면 `todo_update`에 붙일 필드를 돌려준다. */
+  const reconcileCurrent = () => {
+    const fragment = reconcileTodoCurrent([...todos.values()], phaseOrder, current);
+    if (fragment !== undefined) current = fragment.current ?? undefined;
+    return fragment;
+  };
+  const applyUserActions = async () => {
+    const actions = input.userTodoActions?.drain() ?? [];
+    for (const action of actions) {
+      const outcome = applyUserTodoAction(todos, action, now());
+      if (outcome === undefined) continue;
+      const fragment = outcome.rejected === undefined ? (reconcileCurrent() ?? {}) : {};
+      await emit('user', {
+        type: 'todo_update',
+        payload: {
+          todoId: action.todoId,
+          ...(outcome.from === undefined ? {} : { from: outcome.from }),
+          to: outcome.to,
+          todo: outcome.todo,
+          ...fragment,
+          ...(outcome.rejected === undefined ? {} : { rejected: { reason: outcome.rejected } }),
+        },
+      });
+    }
+    if (actions.length > 0) await saveTodos();
+  };
 
   let stepId = 'step-0';
   let stage: Stage = resume?.plan.stage ?? 'understand';
@@ -306,6 +361,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     endReason: EndReason,
     summary: string,
   ): Promise<RunOutcome> => {
+    await applyUserActions();
     const eventHits = recorder.scrubbedHits();
     const hitNote =
       Object.keys(eventHits).length > 0 ? ` [scrubbed: ${describeScrubHits(eventHits)}]` : '';
@@ -317,6 +373,31 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     await saveTodos();
     await saveSession({ status, endReason });
     return { status, endReason, summary: safeSummary, todos: [...todos.values()] };
+  };
+
+  /** 스텝이 끝나면 사용자의 포기를 반영하고, 남은 todo가 전부 `blocked`이거나 전부 `abandoned`이면 세션을 멈춘다 (SPEC 6.1절). */
+  const judgeTodos = async (): Promise<RunOutcome | undefined> => {
+    await applyUserActions();
+    const list = [...todos.values()];
+    if (list.length === 0) return undefined;
+    if (list.every((todo) => todo.status === 'abandoned')) {
+      return await finish(
+        'stopped',
+        'abandoned',
+        `모든 todo를 포기했습니다: ${list.map((todo) => todo.id).join(', ')}`,
+      );
+    }
+    const open = list.filter((todo) => !isDone(todo.status));
+    if (open.length > 0 && open.every((todo) => todo.status === 'blocked')) {
+      return await finish(
+        'stopped',
+        'blocked',
+        `남은 todo가 모두 막혀 멈춥니다. ${open
+          .map((todo) => `${todo.id}: ${todo.blockedReason ?? '사유 없음'}`)
+          .join('; ')}`,
+      );
+    }
+    return undefined;
   };
 
   const interruptActiveTodos = async () => {
@@ -496,9 +577,55 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
 
   const updateTodos = async (data: z.infer<typeof todoUpdateSchema>): Promise<ToolOutput> => {
     const lines: string[] = [];
-    let anyRejected = false;
+    let rejectedCount = 0;
+    const rejectLine = (line: string) => {
+      rejectedCount += 1;
+      lines.push(line);
+    };
+    if (data.objective !== undefined) {
+      const text = data.objective.trim();
+      if (text.includes('\n')) {
+        rejectLine('objective: 거부됨: 줄바꿈 없이 한 줄로 적습니다.');
+      } else {
+        objective = text;
+        await emit('model', { type: 'objective', payload: { text } });
+        lines.push(`objective: ${text === '' ? '지움' : '기록'}`);
+      }
+    }
+    for (const phase of data.phases ?? []) {
+      const name = normalizePhaseName(phase.name);
+      const criterion = phase.criterion?.trim();
+      if (name === undefined) {
+        rejectLine(`phase ${phase.name}: 거부됨: phase 이름은 40자 이하여야 합니다.`);
+      } else if (criterion === undefined) {
+        continue;
+      } else if (criterion.includes('\n')) {
+        rejectLine(`phase ${name}: 거부됨: 완료 조건은 한 줄로 적습니다.`);
+      } else {
+        ensurePhase(phaseOrder, name);
+        if (criterion === '') phaseCriteria.delete(name);
+        else phaseCriteria.set(name, criterion);
+        await emit('model', {
+          type: 'phase',
+          payload: { name, criterion: criterion === '' ? null : criterion },
+        });
+        lines.push(`phase ${name}: 완료 조건 ${criterion === '' ? '지움' : '기록'}`);
+      }
+    }
     for (const entry of data.todos) {
       const outcome = applyModelTodoEntry(todos, entry, now(), settings.maxRepairsPerTodo);
+      let fragment: { current?: string | null } = {};
+      if (outcome.rejected === undefined) {
+        ensurePhase(phaseOrder, phaseOf(outcome.todo));
+        if (entry.current === true) {
+          if (entry.id !== current) {
+            current = entry.id;
+            fragment = { current: entry.id };
+          }
+        } else {
+          fragment = reconcileCurrent() ?? {};
+        }
+      }
       await emit('model', {
         type: 'todo_update',
         payload: {
@@ -506,18 +633,18 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           ...(outcome.from === undefined ? {} : { from: outcome.from }),
           to: outcome.to,
           todo: outcome.todo,
+          ...fragment,
           ...(outcome.rejected === undefined ? {} : { rejected: { reason: outcome.rejected } }),
         },
       });
-      anyRejected ||= outcome.rejected !== undefined;
-      lines.push(
-        outcome.rejected === undefined
-          ? `${entry.id}: ${outcome.from ?? '신규'} → ${outcome.to}`
-          : `${entry.id}: 거부됨: ${outcome.rejected}`,
-      );
+      if (outcome.rejected === undefined) {
+        lines.push(`${entry.id}: ${outcome.from ?? '신규'} → ${outcome.to}`);
+      } else {
+        rejectLine(`${entry.id}: 거부됨: ${outcome.rejected}`);
+      }
     }
     await saveTodos();
-    return { status: anyRejected ? 'error' : 'ok', text: lines.join('\n') };
+    return { status: rejectedCount > 0 ? 'error' : 'ok', text: lines.join('\n') };
   };
 
   const runVerify = async (
@@ -556,6 +683,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       ...(result.timedOut ? { error: '시간 초과로 끝까지 실행하지 못했습니다.' } : {}),
     };
     await emit('engine', { type: 'verification', payload: { todoId: todo.id, evidence } });
+    const repairs = todo.attempts - 1;
+    const exhausted = !passed && repairs >= settings.maxRepairsPerTodo;
     const updated: Todo = {
       ...todo,
       status: passed ? 'verified' : 'failed',
@@ -565,13 +694,39 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     todos.set(updated.id, updated);
     await emit('engine', {
       type: 'todo_update',
-      payload: { todoId: updated.id, from: todo.status, to: updated.status, todo: updated },
+      payload: {
+        todoId: updated.id,
+        from: todo.status,
+        to: updated.status,
+        todo: updated,
+        ...(reconcileCurrent() ?? {}),
+      },
     });
+    let finalTodo = updated;
+    if (exhausted) {
+      finalTodo = {
+        ...updated,
+        status: 'blocked',
+        blockedReason: `${repairs}번 고쳤지만 검사를 통과하지 못했습니다`,
+        updatedAt: now(),
+      };
+      todos.set(finalTodo.id, finalTodo);
+      await emit('engine', {
+        type: 'todo_update',
+        payload: {
+          todoId: finalTodo.id,
+          from: 'failed',
+          to: 'blocked',
+          todo: finalTodo,
+          ...(reconcileCurrent() ?? {}),
+        },
+      });
+    }
     await saveTodos();
     if (!passed && stage === 'verify') await enterStage('execute');
     return {
       status: 'ok',
-      text: `${todo.id}: ${updated.status} (${result.timedOut ? 'timeout' : `exit ${result.exitCode ?? 'signal'}`})\n${evidence.summary}`,
+      text: `${todo.id}: ${finalTodo.status} (${result.timedOut ? 'timeout' : `exit ${result.exitCode ?? 'signal'}`})\n${evidence.summary}`,
       outputRef,
       scrubHits: scrubbedOutput.hits,
     };
@@ -791,7 +946,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       todos.set(updated.id, updated);
       await emit('engine', {
         type: 'todo_update',
-        payload: { todoId: updated.id, from: 'verified', to: 'attempted', todo: updated },
+        payload: {
+          todoId: updated.id,
+          from: 'verified',
+          to: 'attempted',
+          todo: updated,
+          ...(reconcileCurrent() ?? {}),
+        },
       });
     }
     await saveTodos();
@@ -881,6 +1042,9 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       buildSummaryDocument({
         instructions,
         todos: [...todos.values()],
+        objective,
+        phases: summaryPhases(),
+        ...(current === undefined ? {} : { current }),
         openErrors: [...lastResults]
           .filter(([, result]) => result.isError)
           .map(([tool, result]) => ({ tool, summary: result.text })),
@@ -919,6 +1083,9 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       buildSummaryDocument({
         instructions,
         todos: [...todos.values()],
+        objective,
+        phases: summaryPhases(),
+        ...(current === undefined ? {} : { current }),
         openErrors: [...lastResults]
           .filter(([, result]) => result.isError)
           .map(([tool, result]) => ({ tool, summary: result.text })),
@@ -1068,6 +1235,32 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       });
       // 하드 킬 뒤에는 검증 증거가 남은 todo 뒤의 작업을 믿지 않고, 진행 중이던 todo를 다시 시도 대상으로 돌린다.
       if (plan.hardKilled) await interruptActiveTodos();
+      const previous = current;
+      const moved = reconcileCurrent();
+      const movedTo = todos.get(moved?.current ?? previous ?? '');
+      if (moved !== undefined && movedTo !== undefined) {
+        await emit('engine', {
+          type: 'todo_update',
+          payload: {
+            todoId: movedTo.id,
+            from: movedTo.status,
+            to: movedTo.status,
+            todo: movedTo,
+            ...moved,
+          },
+        });
+      }
+      const resumed = [...todos.values()];
+      if (
+        plan.fromStatus === 'stopped' &&
+        resumed.length > 0 &&
+        resumed.every((todo) => isDone(todo.status))
+      ) {
+        if (resumed.every((todo) => todo.status === 'abandoned')) {
+          return await finish('stopped', 'abandoned', '모든 todo를 포기했습니다.');
+        }
+        if (STAGES.indexOf(stage) < STAGES.indexOf('learn')) await enterStage('learn');
+      }
       await saveTodos();
       const notice = plan.hardKilled
         ? `이전 실행이 강제로 끝났습니다. ${
@@ -1082,7 +1275,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           ...plan.repair,
           {
             type: 'text',
-            text: `${notice}${resume.steer === undefined ? '' : `\n사용자 지시: ${resume.steer}`}\n${describeTodos([...todos.values()])}\n현재 단계: ${stage}`,
+            text: `${notice}${resume.steer === undefined ? '' : `\n사용자 지시: ${resume.steer}`}\n${describeState([...todos.values()])}\n현재 단계: ${stage}`,
           },
         ],
         resume.steer === undefined ? [] : [scrubText(resume.steer).text],
@@ -1269,20 +1462,27 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         const firstSentence = text.split(/(?<=[.!?。])\s/)[0] ?? '';
         if (firstSentence !== '')
           await emit('model', { type: 'intent', payload: { text: firstSentence } });
+        const stopped = await judgeTodos();
+        if (stopped !== undefined) return stopped;
         const list = [...todos.values()];
         if (
           getStage() === 'learn' &&
           list.length > 0 &&
-          list.every((todo) => todo.status === 'verified')
+          list.every((todo) => isDone(todo.status))
         ) {
-          return await finish('completed', 'passed', text);
+          const abandoned = list.filter((todo) => todo.status === 'abandoned').length;
+          return await finish(
+            'completed',
+            'passed',
+            abandoned === 0 ? text : `${text}\n포기 ${abandoned}개`,
+          );
         }
         const nudge =
-          list.length === 0 || list.some((todo) => todo.status !== 'verified')
+          list.length === 0 || list.some((todo) => !isDone(todo.status))
             ? '아직 모든 todo가 verified가 아닙니다. 작업을 계속합니다.'
             : 'learn 단계까지 stage.advance로 진행한 뒤 마무리합니다.';
         await pushUser('engine', [
-          { type: 'text', text: `${nudge}\n${describeTodos(list)}\n현재 단계: ${stage}` },
+          { type: 'text', text: `${nudge}\n${describeState(list)}\n현재 단계: ${stage}` },
         ]);
         continue;
       }
@@ -1333,9 +1533,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       });
       observations.push({
         type: 'text',
-        text: `${describeTodos([...todos.values()])}\n현재 단계: ${stage}`,
+        text: `${describeState([...todos.values()])}\n현재 단계: ${stage}`,
       });
       await pushUser('tool', observations, pendingSteers.splice(0));
+      const stopped = await judgeTodos();
+      if (stopped !== undefined) return stopped;
     }
   } catch (error) {
     if (signal.aborted || softStop.aborted) return await finishCancelled();

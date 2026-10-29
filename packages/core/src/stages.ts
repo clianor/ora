@@ -1,5 +1,6 @@
 import { stageSchema } from '@ora/protocol';
 import type { Stage, Todo } from '@ora/protocol';
+import { isDone } from './todos.ts';
 
 export const STAGES: readonly Stage[] = stageSchema.options;
 
@@ -32,7 +33,9 @@ export function checkStageExit(stage: Stage, todos: readonly Todo[]): string | u
         : undefined;
     }
     case 'verify': {
-      const open = todos.filter((todo) => todo.status !== 'verified').map((todo) => todo.id);
+      const open = todos
+        .filter((todo) => !isDone(todo.status) && todo.status !== 'blocked')
+        .map((todo) => todo.id);
       return open.length > 0 ? `verified가 아닌 todo가 있습니다: ${open.join(', ')}` : undefined;
     }
     default:

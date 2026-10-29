@@ -25,6 +25,11 @@ Understand → Research → Decide → Plan → Execute → Verify → Operate �
 4. `verified`와 `failed`는 엔진만 씁니다. 모델이 쓰면 엔진이 거부하고 기록합니다.
 5. 검증은 `verify.run`으로 요청합니다. 엔진이 선언한 검증 명령을 직접 실행합니다.
 6. 모델이 스스로 "됐다"고 말하는 것은 증거가 아닙니다.
+7. Plan 단계에서 todo를 phase(이름 붙은 묶음)로 나눕니다. todo마다 `phase`에 이름(1~40자)을 적고, 필요하면 `phases`에 phase의 완료 조건을 한 줄로 적습니다.
+8. 세션 목표를 `objective`에 한 줄(200자 이하)로 적습니다.
+9. 정책이나 환경 때문에 끝낼 수 없는 todo는 사유(`reason`)와 함께 `blocked`로 표시합니다. 같은 응답을 되풀이하지 않습니다. 다시 시도할 수 있게 되면 `attempted`로 바꿉니다.
+10. `abandoned`는 사용자만 씁니다. 모델이 쓰면 엔진이 거부합니다.
+11. 엔진이 작업 중인 todo 하나를 "← 작업 중"으로 표시합니다. 바꾸려면 그 todo에 `current: true`를 적습니다.
 
 ## 비신뢰 입력
 

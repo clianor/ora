@@ -12,6 +12,9 @@ export const todoUpdateSchema = z.object({
         id: z.string().min(1),
         content: z.string().min(1).optional(),
         status: todoStatusSchema.optional(),
+        phase: z.string().optional(),
+        reason: z.string().optional(),
+        current: z.literal(true).optional(),
         writeScope: z
           .array(
             z
@@ -26,7 +29,11 @@ export const todoUpdateSchema = z.object({
         claim: z.object({ command: z.string().min(1), result: z.string() }).optional(),
       }),
     )
-    .min(1),
+    .default([]),
+  phases: z
+    .array(z.object({ name: z.string(), criterion: z.string().max(200).optional() }))
+    .optional(),
+  objective: z.string().max(200).optional(),
 });
 
 export const verifyRunSchema = z.object({ todoId: z.string().min(1) });
@@ -45,7 +52,7 @@ export const memoryProposeSchema = z.object({
 const CONTROL_TOOLS = {
   'todo.update': {
     description:
-      'todo를 추가하거나 상태·검증 명령·쓰기 범위를 바꾼다. verified와 failed는 쓸 수 없다.',
+      'todo를 추가하거나 상태·검증 명령·쓰기 범위·phase를 바꾼다. phase는 todo를 묶는 이름(1~40자)이고 없으면 "할 일"이다. phases에 phase의 완료 조건(빈 문자열이면 지움)을, objective에 세션 목표 한 줄(200자 이하, 빈 문자열이면 지움)을 적는다. current: true로 작업 중인 todo를 바꾼다. 끝낼 수 없는 todo는 status blocked와 reason(1~300자)으로 표시하고, 다시 시도하면 attempted로 바꾼다. verified, failed, abandoned는 쓸 수 없다.',
     schema: todoUpdateSchema,
   },
   'verify.run': {

@@ -43,6 +43,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({ type: z.literal('cancel'), mode: z.enum(['soft', 'hard']) }),
   z.strictObject({
+    type: z.literal('todoAction'),
+    todoId: z.string().min(1),
+    action: z.enum(['abandon', 'restore']),
+  }),
+  z.strictObject({
     type: z.literal('resolveApproval'),
     requestId: z.string().min(1),
     decision: approvalDecisionSchema,

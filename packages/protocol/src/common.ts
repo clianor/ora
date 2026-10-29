@@ -29,6 +29,8 @@ export const endReasonSchema = z.enum([
   'cost_limit',
   'error',
   'user_cancel',
+  'blocked',
+  'abandoned',
 ]);
 export type EndReason = z.infer<typeof endReasonSchema>;
 
