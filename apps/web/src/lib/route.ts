@@ -2,9 +2,9 @@ import { useSyncExternalStore } from 'react';
 
 export type Route = 'worktree' | 'history' | 'empty' | 'settings';
 
-export type SettingsPage = 'appearance' | 'accounts' | 'cost' | 'notifications';
+export type SettingsPage = 'appearance' | 'accounts' | 'cost' | 'notifications' | 'mcp';
 
-const settingsPages: readonly string[] = ['accounts', 'cost', 'notifications'];
+const settingsPages: readonly string[] = ['accounts', 'cost', 'notifications', 'mcp'];
 
 export interface RouteState {
   route: Route;
@@ -16,7 +16,7 @@ export interface RouteState {
   sessionId?: string;
   /** `&mode=session`은 새 탭에서 "세션"을 고른 상태입니다. */
   isSessionMode?: boolean;
-  /** `#/settings/accounts`, `#/settings/cost`, `#/settings/notifications`는 각 페이지이고, 그 밖의 `#/settings`는 모양 페이지입니다. */
+  /** `#/settings/accounts`, `#/settings/cost`, `#/settings/notifications`, `#/settings/mcp`는 각 페이지이고, 그 밖의 `#/settings`는 모양 페이지입니다. */
   settingsPage?: SettingsPage;
   /** `&picker=1`은 새 세션 화면에서 모델 고르기 팝오버를 연 채로 엽니다. */
   isModelPickerOpen?: boolean;

@@ -2,6 +2,8 @@ import type {
   AccountProvider,
   ApprovalDecision,
   CostSettings,
+  McpServerAddBody,
+  McpServerStatus,
   LoginState,
   OraEvent,
   PendingApproval,
@@ -158,6 +160,15 @@ export interface OraActions {
   refreshCostSettings: () => Promise<void>;
   /** 비용 상한과 단가를 설정 파일에 씁니다. 서버가 형식을 거부하면 거부합니다. 다음에 시작하거나 이어 가는 세션부터 적용합니다. */
   saveCostSettings: (next: CostSettings) => Promise<void>;
+  /** MCP 서버 목록과 상태를 서버에서 다시 읽습니다. */
+  refreshMcpServers: () => Promise<void>;
+  /** 서버를 설정에 더하고 연결합니다. 환경변수는 이름만 보냅니다. 서버가 거부하면 거부합니다. */
+  addMcpServer: (body: McpServerAddBody) => Promise<void>;
+  /** 서버를 켜거나 끕니다. 끄면 연결을 닫습니다. */
+  setMcpServerEnabled: (name: string, enabled: boolean) => Promise<void>;
+  removeMcpServer: (name: string) => Promise<void>;
+  /** 응답 없는 서버에 다시 연결하고, 끝나면 새 상태를 읽습니다. */
+  reconnectMcpServer: (name: string) => Promise<void>;
   dismissError: (sessionId: string) => void;
   /** 워크트리의 탭 목록과 그 워크트리의 터미널 목록을 서버에서 읽어 저장소에 채웁니다. */
   loadTabs: (cwd: string) => Promise<void>;
@@ -186,6 +197,13 @@ export interface CostSettingsData {
   status: 'loading' | 'ready' | 'error';
   errorMessage?: string;
   settings?: CostSettings;
+}
+
+/** 설정 › MCP 페이지가 그리는 데이터입니다. */
+export interface McpServersData {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  servers: McpServerStatus[];
 }
 
 /**
@@ -222,6 +240,7 @@ export interface OraStore {
   actions: OraActions;
   accounts: AccountsData;
   costSettings: CostSettingsData;
+  mcpServers: McpServersData;
 }
 
 export interface OraStoreSource {

@@ -2,7 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { accountPolicySchema, catalogModelSchema, createCatalog } from '@ora/adapters';
 import type { ModelChainEntry } from '@ora/core';
-import { isolationSchema, permissionModeSchema } from '@ora/protocol';
+import {
+  envNameSchema,
+  isolationSchema,
+  mcpServerNameSchema,
+  mcpTransportSchema,
+  permissionModeSchema,
+} from '@ora/protocol';
 import { z } from 'zod';
 
 export const ENGINE_VERSION = '0.0.0';
@@ -71,6 +77,29 @@ const chainSchema = z
     }),
   )
   .default([]);
+
+/** 설정의 MCP 서버 한 줄이다 (SPEC 4.2.1절). 비밀은 환경변수 이름(`envRefs`)으로만 적는다. */
+const mcpServerSchema = z
+  .strictObject({
+    name: mcpServerNameSchema,
+    transport: mcpTransportSchema,
+    command: z.string().min(1).optional(),
+    args: z.array(z.string()).default([]),
+    url: z.url({ protocol: /^https?$/ }).optional(),
+    envRefs: z.array(envNameSchema).default([]),
+    enabled: z.boolean().default(true),
+  })
+  .refine(
+    (server) =>
+      server.transport === 'stdio' ? server.command !== undefined : server.url !== undefined,
+    {
+      error: 'stdio 서버는 command가, HTTP 서버는 url이 필요합니다.',
+    },
+  )
+  .refine((server) => server.transport === 'stdio' || server.envRefs.length <= 1, {
+    error: 'HTTP 서버의 envRefs는 하나만 받습니다. 값은 Authorization: Bearer 헤더로 보냅니다.',
+    path: ['envRefs'],
+  });
 
 const configSchema = z.object({
   schemaVersion: z.literal(1).default(1),
@@ -187,6 +216,19 @@ const configSchema = z.object({
       minPruneSavings: 20000,
       methodOrder: ['handoff', 'shake', 'summary'],
     }),
+  /** 외부 MCP 서버 목록이다 (SPEC 2.10절). 설정 › MCP 화면이 이 키를 고친다. */
+  mcpServers: z
+    .array(mcpServerSchema)
+    .default([])
+    .refine((servers) => new Set(servers.map((server) => server.name)).size === servers.length, {
+      error: 'mcpServers의 이름이 겹칩니다.',
+    }),
+  mcp: z
+    .strictObject({
+      /** 서버 연결과 도구 목록 요청을 기다리는 시간이다. 넘으면 그 서버의 도구만 끈다. */
+      connectTimeoutMs: z.number().int().positive().default(10000),
+    })
+    .default({ connectTimeoutMs: 10000 }),
   /** 모델 카탈로그다. 같은 id는 내장 항목(`claude-haiku-5-5` 등)을 덮어쓰고, 다른 id는 모델을 늘린다. */
   models: z.array(catalogModelSchema).default([]),
 });

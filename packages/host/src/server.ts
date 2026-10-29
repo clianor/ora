@@ -36,6 +36,8 @@ import {
   accountProviderSchema,
   addApiKeyBodySchema,
   costSettingsSchema,
+  mcpServerAddBodySchema,
+  mcpServerPatchBodySchema,
   setPriorityBodySchema,
   startLoginBodySchema,
 } from '@ora/protocol';
@@ -62,6 +64,7 @@ import type { UserTodoAction } from '@ora/core';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
 import { AccountApiError, createAccountApi } from './account-api.ts';
 import { createCostApi } from './cost-api.ts';
+import { createMcpApi } from './mcp-api.ts';
 import { createTerminalManager } from './terminal.ts';
 
 const COOKIE_NAME = 'ora_token';
@@ -296,6 +299,10 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         record?.accountPin === undefined ? [] : [record.accountPin],
       );
     },
+  });
+  const mcpApi = createMcpApi({
+    env: options.env,
+    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
   });
   const costApi = createCostApi({
     env: options.env,
@@ -805,6 +812,42 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       reply(res, 200, await costApi.set(parseBody(costSettingsSchema, await readJson(req))));
       return;
     }
+    if (segments[1] === 'mcp-servers') {
+      const [, , rawName, action] = segments;
+      if (rawName === undefined) {
+        if (method === 'GET') {
+          reply(res, 200, await mcpApi.list());
+          return;
+        }
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        reply(res, 201, await mcpApi.add(parseBody(mcpServerAddBodySchema, await readJson(req))));
+        return;
+      }
+      const name = decodeURIComponent(rawName);
+      const missing = () => new HttpError(404, `MCP 서버를 찾을 수 없습니다: ${name}`);
+      if (action === 'reconnect') {
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const result = await mcpApi.reconnect(name);
+        if (result === undefined) throw missing();
+        reply(res, 200, result);
+        return;
+      }
+      if (action !== undefined) throw new HttpError(404, '알 수 없는 API입니다.');
+      if (method === 'PATCH') {
+        const body = parseBody(mcpServerPatchBodySchema, await readJson(req));
+        const result = await mcpApi.setEnabled(name, body.enabled);
+        if (result === undefined) throw missing();
+        reply(res, 200, result);
+        return;
+      }
+      if (method === 'DELETE') {
+        const result = await mcpApi.remove(name);
+        if (result === undefined) throw missing();
+        reply(res, 200, result);
+        return;
+      }
+      throw new HttpError(405, '허용하지 않는 메서드입니다.');
+    }
     if (segments[1] === 'accounts') {
       await routeAccounts(req, res, method, segments);
       return;
@@ -1076,6 +1119,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     port,
     async close() {
       await accountApi.close();
+      await mcpApi.close();
       await terminals.closeAll();
       closing = true;
       for (const session of live.values()) session.handle.cancel('soft');

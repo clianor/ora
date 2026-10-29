@@ -2,7 +2,13 @@ import { buildThread } from './events.ts';
 import { buildCacheView } from './lib/cache.ts';
 import { buildContextView } from './lib/context.ts';
 import { listWorktrees } from './lib/worktrees.ts';
-import type { AccountProvider, ChangesResponse, LoginState, ProviderAccounts } from '@ora/protocol';
+import type {
+  AccountProvider,
+  ChangesResponse,
+  LoginState,
+  McpServerStatus,
+  ProviderAccounts,
+} from '@ora/protocol';
 import type {
   Actor,
   EventOf,
@@ -20,6 +26,7 @@ import type {
 import type {
   AccountsData,
   CostSettingsData,
+  McpServersData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -1372,6 +1379,42 @@ const fixtureTabs: Record<string, WorktreeTabs> = {
 const fixtureTerminalScript =
   '~/projects/math-demo (main) $ node check.js\r\nok\r\n~/projects/math-demo (main) $ git status --short\r\n \u001b[31mM\u001b[0m \u001b[31mmath.js\u001b[0m\r\n~/projects/math-demo (main) $ ';
 
+// MCP 도구 호출: `MCP 서버:도구 인자` 줄과 서버 장애 기록입니다. 주소는 `#/session/mcp`입니다.
+const mcpSessionId = 's-20261030-mcp0e1';
+const makeMcp = createEventFactory(mcpSessionId);
+const mcpView: SessionView = finishView({
+  record: createRecord(mcpSessionId, 'github 이슈 #12 확인 (MCP)', 'running', 'math-demo'),
+  events: [
+    sessionStart(makeMcp),
+    ...createStageEvents(makeMcp, 'research', stageOrder),
+    makeMcp('message', '14:00', 'user', {
+      role: 'user',
+      content: [{ type: 'text', text: 'github 이슈 #12를 읽고 linear 이슈와 비교해 주세요.' }],
+    }),
+    makeMcp('tool_call', '14:01', 'model', {
+      callId: 'm1',
+      tool: 'github:get_issue',
+      args: { owner: 'ora', number: 12 },
+      tier: 'exec',
+    }),
+    makeMcp('tool_result', '14:01', 'tool', {
+      callId: 'm1',
+      status: 'ok',
+      summary: '#12 add가 뺄셈을 한다',
+      durationMs: 320,
+    }),
+    makeMcp('mcp_server', '14:02', 'engine', {
+      server: 'linear',
+      outcome: 'failed',
+      reason: '연결 시간 초과(10초).',
+    }),
+  ],
+  todos: mathTodos,
+  repoLabel: 'math-demo · main',
+  diff: null,
+  statusLine: ['스텝 4/50', '격리 harness'],
+});
+
 const detailedViews = new Map<string, SessionView>(
   [
     sessionView,
@@ -1387,6 +1430,7 @@ const detailedViews = new Map<string, SessionView>(
     fallbackView,
     costWarnView,
     costStopView,
+    mcpView,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -1404,6 +1448,7 @@ const devAliases = new Map<string, string>([
   ['fallback', fallbackView.record.id],
   ['cost-warn', costWarnView.record.id],
   ['cost-stop', costStopView.record.id],
+  ['mcp', mcpView.record.id],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
@@ -1434,6 +1479,11 @@ type StatefulActionName =
   | 'setAccountPriority'
   | 'refreshCostSettings'
   | 'saveCostSettings'
+  | 'refreshMcpServers'
+  | 'addMcpServer'
+  | 'setMcpServerEnabled'
+  | 'removeMcpServer'
+  | 'reconnectMcpServer'
   | 'loadTabs'
   | 'loadChanges'
   | 'saveTabs'
@@ -1547,6 +1597,52 @@ export function createFixtureStore(): OraStoreSource {
       pricing: { 'claude/claude-haiku-5-5': { inputPerMTok: 1, outputPerMTok: 5 } },
     },
   };
+  // 설정 › MCP 시안의 세 서버입니다. 주소는 `#/settings/mcp`입니다.
+  let mcpServers: McpServersData = {
+    status: 'ready',
+    servers: [
+      {
+        name: 'github',
+        transport: 'stdio',
+        target: 'npx -y @modelcontextprotocol/server-github',
+        envRefs: ['GITHUB_TOKEN'],
+        enabled: true,
+        state: 'connected',
+        toolCount: 26,
+        enabledToolCount: 26,
+      },
+      {
+        name: 'linear',
+        transport: 'http',
+        target: 'https://mcp.linear.app/mcp',
+        envRefs: [],
+        enabled: true,
+        state: 'unreachable',
+        toolCount: 18,
+        enabledToolCount: 0,
+        lastFailure: { at: '2026-10-30T14:02:00+09:00', reason: '연결 시간 초과(10초).' },
+      },
+      {
+        name: 'notes',
+        transport: 'stdio',
+        target: 'node ~/tools/notes-mcp.js',
+        envRefs: [],
+        enabled: false,
+        state: 'disabled',
+        enabledToolCount: 0,
+      },
+    ],
+  };
+  const changeMcpServers = (
+    change: (servers: McpServerStatus[]) => McpServerStatus[],
+  ): Promise<void> => {
+    mcpServers = { status: 'ready', servers: change(mcpServers.servers) };
+    snapshot = { ...snapshot, mcpServers };
+    listeners.forEach((listener) => {
+      listener();
+    });
+    return Promise.resolve();
+  };
   let snapshot: OraStore;
 
   const tabsByCwd = new Map(Object.entries(fixtureTabs));
@@ -1658,6 +1754,44 @@ export function createFixtureStore(): OraStoreSource {
       return Promise.resolve();
     },
     refreshCostSettings: () => Promise.resolve(),
+    refreshMcpServers: () => Promise.resolve(),
+    addMcpServer: (body) =>
+      changeMcpServers((servers) => [
+        ...servers,
+        {
+          name: body.name,
+          transport: body.transport,
+          target: body.command ?? body.url ?? '',
+          envRefs: body.envRefs,
+          enabled: true,
+          state: 'connected',
+          toolCount: 0,
+          enabledToolCount: 0,
+        },
+      ]),
+    setMcpServerEnabled: (name, enabled) =>
+      changeMcpServers((servers) =>
+        servers.map((server) =>
+          server.name === name
+            ? { ...server, enabled, state: enabled ? 'connected' : 'disabled' }
+            : server,
+        ),
+      ),
+    removeMcpServer: (name) =>
+      changeMcpServers((servers) => servers.filter((server) => server.name !== name)),
+    reconnectMcpServer: (name) =>
+      changeMcpServers((servers) =>
+        servers.map((server) =>
+          server.name === name
+            ? {
+                ...server,
+                state: 'connected',
+                enabledToolCount: server.toolCount ?? 0,
+                lastFailure: undefined,
+              }
+            : server,
+        ),
+      ),
     saveCostSettings: (next) => {
       costSettings = { status: 'ready', settings: next };
       snapshot = { ...snapshot, costSettings };
@@ -1711,6 +1845,7 @@ export function createFixtureStore(): OraStoreSource {
     actions,
     accounts,
     costSettings,
+    mcpServers,
   };
   return {
     subscribe: (listener) => {

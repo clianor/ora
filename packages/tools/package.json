@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "catalog:",
     "@ora/core": "workspace:*",
+    "@ora/protocol": "workspace:*",
     "zod": "catalog:"
   }
 }

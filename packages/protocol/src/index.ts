@@ -8,3 +8,4 @@ export * from './todo.ts';
 export * from './worker.ts';
 export * from './terminal.ts';
 export * from './tabs.ts';
+export * from './mcp.ts';

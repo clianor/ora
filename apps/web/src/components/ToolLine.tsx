@@ -5,12 +5,19 @@ import {
   FileText,
   History,
   LoaderCircle,
+  Plug,
   Search,
   Terminal,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
-import { readToolTarget, toolVerbs, type ToolResultView } from '../events.ts';
+import {
+  isMcpTool,
+  readToolTarget,
+  summarizeMcpArgs,
+  toolVerbs,
+  type ToolResultView,
+} from '../events.ts';
 import { DiffStat } from '../ui/stat.tsx';
 import { DiffBlock, type DiffRow } from './DiffBlock.tsx';
 
@@ -56,8 +63,9 @@ function readResult(value: unknown): ToolResultView | null {
 
 /** 도구 호출을 높이 28px 한 줄로 보여 줍니다. 수정이면 diff 블록을 바로 아래에 놓습니다. */
 export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
-  const verb = toolVerbs[toolName] ?? toolName;
-  const Icon = toolIcons[toolName] ?? Terminal;
+  const isMcp = isMcpTool(toolName);
+  const verb = isMcp ? 'MCP' : (toolVerbs[toolName] ?? toolName);
+  const Icon = isMcp ? Plug : (toolIcons[toolName] ?? Terminal);
   const input = args as Record<string, unknown>;
   const diffRows = readDiffRows(input.diff);
   const oldText = readText(input.oldText);
@@ -69,7 +77,8 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
           ...oldText.split('\n').map((text) => ['', '-', text] as const),
           ...newText.split('\n').map((text) => ['', '+', text] as const),
         ];
-  const target = readText(input.label) || readToolTarget(input);
+  const target =
+    readText(input.label) || (isMcp ? summarizeMcpArgs(toolName, input) : readToolTarget(input));
   const add = typeof input.add === 'number' ? input.add : rows.filter((r) => r[1] === '+').length;
   const del = typeof input.del === 'number' ? input.del : rows.filter((r) => r[1] === '-').length;
   const outcome = readResult(result);

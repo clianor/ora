@@ -11,6 +11,10 @@
     },
     "apps/*": {
       "project": ["src/**/*.{ts,tsx,css}", "*.ts", "*.js"]
+    },
+    "packages/tools": {
+      "entry": ["src/**/*.fixture.ts"],
+      "project": ["src/**/*.ts"]
     }
   }
 }

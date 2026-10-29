@@ -5,7 +5,11 @@ import { defineTool } from '@ora/core';
 import type { CommandRunner, Tool } from '@ora/core';
 import { z } from 'zod';
 
+import { truncateMiddle } from './truncate.ts';
+
 export { createCommandRunner } from './command-runner.ts';
+export { createMcpManager } from './mcp.ts';
+export type { McpManager, McpServerConfig } from './mcp.ts';
 export type { CommandRunnerHooks } from './command-runner.ts';
 
 export interface BuiltinToolOptions {
@@ -61,16 +65,6 @@ function foldCase(path: string): string {
 
 function hashContent(content: Buffer | string): string {
   return createHash('sha256').update(content).digest('hex');
-}
-
-/** 앞부분과 뒷부분만 남기고 가운데를 자른다. */
-function truncateMiddle(text: string, maxBytes: number): string {
-  const bytes = Buffer.from(text, 'utf8');
-  if (bytes.length <= maxBytes) return text;
-  const half = Math.floor(maxBytes / 2);
-  const head = bytes.subarray(0, half).toString('utf8');
-  const tail = bytes.subarray(bytes.length - half).toString('utf8');
-  return `${head}\n[... 가운데 ${bytes.length - 2 * half}바이트를 잘랐습니다 ...]\n${tail}`;
 }
 
 /** 공통 접두·접미 줄을 뺀 단순 diff다. 최소 diff는 아니다. */

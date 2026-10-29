@@ -4,6 +4,7 @@ import { Header } from './components/Header.tsx';
 import { AccountsPage } from './components/Accounts.tsx';
 import { HistoryScreen } from './components/History.tsx';
 import { AppearancePage, SettingsNav } from './components/Settings.tsx';
+import { McpPage } from './components/McpPage.tsx';
 import { CostPage, NotificationsPage } from './components/SettingsPages.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { focusTodoPanel } from './components/RightPanel.tsx';
@@ -62,6 +63,7 @@ function Screen({ state }: { state: RouteState }) {
             {page === 'accounts' && <AccountsPage />}
             {page === 'cost' && <CostPage />}
             {page === 'notifications' && <NotificationsPage />}
+            {page === 'mcp' && <McpPage />}
             {page === 'appearance' && <AppearancePage />}
           </main>
         </>

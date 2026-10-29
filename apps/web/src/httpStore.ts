@@ -1,6 +1,7 @@
 import {
   accountListResponseSchema,
   costSettingsSchema,
+  mcpServerListResponseSchema,
   changesResponseSchema,
   branchResponseSchema,
   accountViewSchema,
@@ -30,6 +31,7 @@ import {
   todoActionResponseSchema,
   type ApprovalDecision,
   type CostSettings,
+  type McpServerStatus,
   type ChangesResponse,
   type OraEvent,
   type PendingApproval,
@@ -50,6 +52,7 @@ import { getModelState } from './lib/routing.ts';
 import type {
   AccountsData,
   CostSettingsData,
+  McpServersData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -115,12 +118,12 @@ interface SafeParser<T> {
 async function requestJson<T>(
   path: string,
   schema: Parser<T>,
-  init?: { method: 'POST' | 'PUT'; body: unknown },
+  init?: { method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown },
 ): Promise<T> {
   const response = await fetch(path, {
     method: init?.method ?? 'GET',
-    headers: init ? { 'content-type': 'application/json' } : undefined,
-    body: init ? JSON.stringify(init.body) : undefined,
+    headers: init?.body === undefined ? undefined : { 'content-type': 'application/json' },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
     credentials: 'same-origin',
   });
   const body: unknown = await response.json().catch(() => null);
@@ -209,6 +212,8 @@ export function createHttpStore(): OraStoreSource {
   let accounts: AccountsData = { status: 'loading', providers: [] };
   let accountPollTimer: ReturnType<typeof setTimeout> | null = null;
   let costSettings: CostSettingsData = { status: 'loading' };
+  let mcpPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let mcpServers: McpServersData = { status: 'loading', servers: [] };
   const tabs = new Map<string, WorktreeTabs>();
   const terminals = new Map<string, Terminal>();
   const branches = new Map<string, string>();
@@ -310,6 +315,7 @@ export function createHttpStore(): OraStoreSource {
       actions,
       accounts,
       costSettings,
+      mcpServers,
     };
   };
 
@@ -551,6 +557,32 @@ export function createHttpStore(): OraStoreSource {
     notifySoon();
   };
 
+  const applyMcpServers = (servers: McpServerStatus[]): void => {
+    mcpServers = { status: 'ready', servers };
+    // 연결 중인 서버가 있으면 끝날 때까지 상태를 다시 읽는다.
+    if (servers.some((server) => server.state === 'connecting')) {
+      mcpPollTimer ??= setTimeout(() => {
+        mcpPollTimer = null;
+        refreshMcpServers().catch(() => undefined);
+      }, 1500);
+    }
+    notifySoon();
+  };
+  const refreshMcpServers = async (): Promise<void> => {
+    try {
+      applyMcpServers((await requestJson('/api/mcp-servers', mcpServerListResponseSchema)).servers);
+    } catch (error) {
+      mcpServers = { status: 'error', errorMessage: toMessage(error), servers: mcpServers.servers };
+      notifySoon();
+    }
+  };
+  const changeMcpServers = async (
+    path: string,
+    init: { method: 'POST' | 'PATCH' | 'DELETE'; body?: unknown },
+  ): Promise<void> => {
+    applyMcpServers((await requestJson(path, mcpServerListResponseSchema, init)).servers);
+  };
+
   const post = async <T>(
     id: string,
     path: string,
@@ -664,6 +696,19 @@ export function createHttpStore(): OraStoreSource {
       await requestJson('/api/cost-settings', costSettingsSchema, { method: 'PUT', body: next });
       await refreshCostSettings();
     },
+    refreshMcpServers,
+    addMcpServer: (body) => changeMcpServers('/api/mcp-servers', { method: 'POST', body }),
+    setMcpServerEnabled: (name, enabled) =>
+      changeMcpServers(`/api/mcp-servers/${encodeURIComponent(name)}`, {
+        method: 'PATCH',
+        body: { enabled },
+      }),
+    removeMcpServer: (name) =>
+      changeMcpServers(`/api/mcp-servers/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    reconnectMcpServer: (name) =>
+      changeMcpServers(`/api/mcp-servers/${encodeURIComponent(name)}/reconnect`, {
+        method: 'POST',
+      }),
     dismissError: (id) => {
       const state = sessions.get(id);
       if (!state) return;
@@ -774,11 +819,13 @@ export function createHttpStore(): OraStoreSource {
     actions,
     accounts,
     costSettings,
+    mcpServers,
   };
 
   refreshList().catch(() => undefined);
   refreshAccounts().catch(() => undefined);
   refreshCostSettings().catch(() => undefined);
+  refreshMcpServers().catch(() => undefined);
   requestJson('/api/routing', routingResponseSchema)
     .then((result) => {
       const chain = result.roles.default ?? [];

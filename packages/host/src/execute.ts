@@ -13,7 +13,7 @@ import {
   loadScriptedModel,
 } from '@ora/adapters';
 import type { CatalogModel, ClaudeResumeState } from '@ora/adapters';
-import { parseTranscript, planResume, ruleKey, runSession, scrubValue } from '@ora/core';
+import { formatKst, parseTranscript, planResume, ruleKey, runSession, scrubValue } from '@ora/core';
 import type {
   AlwaysApprovalPort,
   ApprovalPort,
@@ -42,7 +42,7 @@ import type {
 } from '@ora/protocol';
 import { permissionsFileSchema } from '@ora/protocol';
 import { createSessionStorage, readSessionRecord, readTranscriptText } from '@ora/store';
-import { createBuiltinTools, createCommandRunner } from '@ora/tools';
+import { createBuiltinTools, createCommandRunner, createMcpManager } from '@ora/tools';
 import {
   ENGINE_VERSION,
   UsageError,
@@ -572,26 +572,38 @@ export async function executeSession(
       writeShellPids();
     },
   });
+  const mcp = createMcpManager({
+    env: hooks.env,
+    connectTimeoutMs: config.mcp.connectTimeoutMs,
+    callTimeoutMs: config.tools.shellTimeoutMs,
+    maxOutputBytes: config.tools.maxOutputBytes,
+    now: () => formatKst(new Date()),
+  });
+  await mcp.configure(config.mcpServers);
   const outcome = await runSession(
     {
       models,
-      tools: createBuiltinTools({
-        runner,
-        shellTimeoutMs: config.tools.shellTimeoutMs,
-        maxOutputBytes: config.tools.maxOutputBytes,
-        maxFileBytes: config.tools.maxFileBytes,
-        secretPaths: [join(oraHome, AUTH_FILE)],
-        sessionDir,
-        onBeforeWrite: (path, before) => storage.recordBaseline(path, before),
-        protectedPaths: [
-          join(oraHome, PERMISSIONS_FILE),
-          join(oraHome, 'engine.config.json'),
-          join(oraHome, 'vault'),
-          resolveSessionsDir(config, oraHome),
-          memoryDir,
-          ...(command.configPath === undefined ? [] : [resolve(command.configPath)]),
-        ],
-      }),
+      mcpNotices: mcp,
+      tools: [
+        ...createBuiltinTools({
+          runner,
+          shellTimeoutMs: config.tools.shellTimeoutMs,
+          maxOutputBytes: config.tools.maxOutputBytes,
+          maxFileBytes: config.tools.maxFileBytes,
+          secretPaths: [join(oraHome, AUTH_FILE)],
+          sessionDir,
+          onBeforeWrite: (path, before) => storage.recordBaseline(path, before),
+          protectedPaths: [
+            join(oraHome, PERMISSIONS_FILE),
+            join(oraHome, 'engine.config.json'),
+            join(oraHome, 'vault'),
+            resolveSessionsDir(config, oraHome),
+            memoryDir,
+            ...(command.configPath === undefined ? [] : [resolve(command.configPath)]),
+          ],
+        }),
+        ...mcp.tools(),
+      ],
       runner,
       sink: {
         async append(event) {
@@ -648,6 +660,6 @@ export async function executeSession(
       ...(resume === undefined ? {} : { resume }),
       ...(hooks.userTodoActions === undefined ? {} : { userTodoActions: hooks.userTodoActions }),
     },
-  );
+  ).finally(() => mcp.close());
   return { ...outcome, todos: scrubValue(outcome.todos) };
 }

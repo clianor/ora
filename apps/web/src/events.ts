@@ -38,6 +38,21 @@ export const toolVerbs: Record<string, string> = {
   'history.read': '원문 보기',
 };
 
+/** MCP 도구는 이름이 `서버:도구`입니다. 줄의 대상은 도구 이름 뒤에 인자 요약(`#12`, `key=값`)을 붙여 보입니다. */
+export function isMcpTool(toolName: string): boolean {
+  return toolName.includes(':');
+}
+
+export function summarizeMcpArgs(toolName: string, args: Record<string, unknown>): string {
+  const parts = Object.entries(args).flatMap(([key, value]) => {
+    if (key === 'intent') return [];
+    if (typeof value === 'number')
+      return [key === 'number' || key === 'id' ? `#${value}` : `${key}=${value}`];
+    return typeof value === 'string' && value !== '' ? [`${key}=${value}`] : [];
+  });
+  return [toolName, ...parts].join(' ');
+}
+
 /** 도구 호출 줄의 대상 글자입니다. 경로, 명령, 패턴, 의도 순으로 처음 있는 값을 씁니다. */
 export function readToolTarget(args: Record<string, unknown>): string {
   for (const key of ['path', 'command', 'pattern', 'intent']) {
@@ -174,6 +189,7 @@ export function buildThread(
     return `seq ${String(args.fromSeq)}~${String(args.toSeq)}`;
   };
 
+  const failedMcpServers = new Set<string>();
   const messages: ThreadMessageLike[] = [];
   const assistantContent: MessageContent[number][] = [];
   const flushAssistant = () => {
@@ -210,6 +226,14 @@ export function buildThread(
       messages.push({ role: 'user', content: [{ type: 'text', text }] });
     } else if (event.type === 'permission' && event.payload.warning) {
       assistantContent.push({ type: 'data-warning', data: { text: event.payload.warning } });
+    } else if (event.type === 'mcp_server') {
+      const { server, outcome } = event.payload;
+      if (outcome === 'failed') {
+        failedMcpServers.add(server);
+        assistantContent.push({ type: 'data-mcp', data: { server, outcome } });
+      } else if (failedMcpServers.delete(server)) {
+        assistantContent.push({ type: 'data-mcp', data: { server, outcome: 'recovered' } });
+      }
     } else if (event.type === 'compaction') {
       const { method, fromSeq, toSeq, path, prunedCallIds } = event.payload;
       const data: CompactionMarkData = {

@@ -1973,3 +1973,47 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+
+test(
+  'MCP 도구 결과가 모델에 돌아가고, 서버가 죽으면 그 서버의 도구 호출이 오류가 되며 장애가 transcript에 남는다',
+  async () => {
+    const project = createProject();
+    const fixture = fileURLToPath(
+      new URL('../../tools/src/mcp-server.fixture.ts', import.meta.url),
+    );
+    const result = await runCli(
+      project,
+      [
+        respond(use('m1', 'fix:echo', { text: 'mcp-roundtrip-7' })),
+        respond(use('m2', 'fix:crash', {})),
+        respond(use('m3', 'shell', { command: 'sleep 1' })),
+        respond(use('m4', 'fix:echo', { text: 'after-crash' })),
+        finalReport,
+      ],
+      ['--permission', 'bypass-permissions'],
+      {
+        mcpServers: [
+          { name: 'fix', transport: 'stdio', command: process.execPath, args: [fixture] },
+        ],
+      },
+    );
+    expect(result.stderr).not.toContain('Error');
+
+    const { events } = readSession(project);
+    expect(findToolResult(events, 'm1')).toMatchObject({
+      status: 'ok',
+      summary: 'mcp-roundtrip-7',
+    });
+    expect(readFileSync(join(project.home, 'model-input.jsonl'), 'utf8')).toContain(
+      'mcp-roundtrip-7',
+    );
+    expect(findToolResult(events, 'm4')?.status).toBe('error');
+    expect(
+      events.filter((event) => event.type === 'mcp_server').map((event) => event.payload),
+    ).toMatchObject([
+      { server: 'fix', outcome: 'connected' },
+      { server: 'fix', outcome: 'failed' },
+    ]);
+  },
+  TEST_TIMEOUT_MS,
+);

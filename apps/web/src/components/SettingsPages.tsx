@@ -27,7 +27,7 @@ import {
 import { runAction, useStore } from '../store.tsx';
 import { Button } from '../ui/button.tsx';
 
-function PageShell({
+export function PageShell({
   title,
   description,
   children,
@@ -232,7 +232,7 @@ interface PricingDraft {
   cacheWrite: string;
 }
 
-const inputClass =
+export const inputClass =
   'h-8 min-w-0 rounded-sm bg-background px-2.5 text-[13px] leading-[18px] text-foreground outline-1 -outline-offset-1 outline-border placeholder:text-foreground-subtle';
 
 function toNumber(text: string): number | undefined {

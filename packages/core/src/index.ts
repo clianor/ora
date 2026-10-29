@@ -4,6 +4,7 @@ export * from './permission.ts';
 export * from './origin.ts';
 export * from './ports/approval.ts';
 export * from './ports/command-runner.ts';
+export * from './ports/mcp-notices.ts';
 export * from './ports/memory.ts';
 export * from './ports/model.ts';
 export * from './ports/session-store.ts';

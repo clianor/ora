@@ -48,7 +48,8 @@ const frameSchema = z.discriminatedUnion('type', [
 ]);
 
 /** Anthropic 도구 이름은 영문·숫자·`_`·`-`만 허용해서 `todo.update` 같은 이름의 `.`을 바꿔 보낸다. */
-export const toApiName = (name: string): string => name.replaceAll('.', '__');
+/** 모델 API는 도구 이름에 영문, 숫자, `_`, `-`만 받는다. MCP 도구 `서버:도구`의 `:`는 `--`로 바꾼다. 되돌릴 때는 요청의 도구 목록에서 찾는다. */
+export const toApiName = (name: string): string => name.replaceAll('.', '__').replaceAll(':', '--');
 
 interface PartialBlock {
   type: 'text' | 'thinking' | 'tool_use' | 'redacted_thinking';

@@ -151,6 +151,16 @@ export const oraEventSchema = z.discriminatedUnion('type', [
     'memory',
     z.strictObject({ learnSkipped: z.literal(true), reason: z.literal('cost_limit') }),
   ),
+  // MCP 서버 연결 결과다 (SPEC 2.10절). 연결에 실패하거나 응답이 끊기면 `failed`로 남기고 그 서버의 도구만 끈다. 원인 문구에는 환경변수 이름만 나오고 값은 없다.
+  defineEvent(
+    'mcp_server',
+    z.strictObject({
+      server: z.string().min(1),
+      outcome: z.enum(['connected', 'failed']),
+      toolCount: z.number().int().nonnegative().optional(),
+      reason: z.string().optional(),
+    }),
+  ),
   defineEvent('intent', z.strictObject({ text: z.string().min(1) })),
   defineEvent(
     'tool_call',

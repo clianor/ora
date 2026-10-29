@@ -31,6 +31,7 @@ import { findStubs, judgeGate } from './gate.ts';
 import type { GateResult } from './gate.ts';
 import type { ToolPolicy } from './permission.ts';
 import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
+import type { McpNoticePort } from './ports/mcp-notices.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
 import type { MemoryPort } from './ports/memory.ts';
 import { CostStopError, ModelLimitError } from './ports/model.ts';
@@ -124,6 +125,8 @@ export interface EngineDeps {
   readonly questions?: QuestionPort;
   /** "항상 승인" 저장소다. 없으면 "항상 승인"을 이 세션 동안의 승인으로 다룬다. */
   readonly alwaysApprovals?: AlwaysApprovalPort;
+  /** MCP 서버 연결·장애 알림이다. 엔진이 스텝마다 꺼내 세션 기록에 남긴다. */
+  readonly mcpNotices?: McpNoticePort;
 }
 
 export interface RunInput {
@@ -471,6 +474,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     await emit('engine', { type: 'stage', payload: { outcome: 'entered', stage } });
   }
 
+  const flushMcpNotices = async () => {
+    for (const notice of deps.mcpNotices?.drain() ?? []) {
+      await emit('engine', { type: 'mcp_server', payload: notice });
+    }
+  };
+  await flushMcpNotices();
+
   const enterStage = async (to: Stage) => {
     stage = to;
     await emit('engine', { type: 'stage', payload: { outcome: 'entered', stage: to } });
@@ -482,6 +492,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     summary: string,
   ): Promise<RunOutcome> => {
     await applyUserActions();
+    await flushMcpNotices();
     const eventHits = recorder.scrubbedHits();
     const hitNote =
       Object.keys(eventHits).length > 0 ? ` [scrubbed: ${describeScrubHits(eventHits)}]` : '';
@@ -1856,6 +1867,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         results.set(call.callId, isSoftStopped() ? await skipCall(call) : await executeCall(call));
       }
       await flushReads();
+      await flushMcpNotices();
       await invalidateStaleEvidence();
       toolSucceeded = [...results.values()].some((result) => !result.isError);
       for (const call of calls) {

@@ -11,6 +11,7 @@ import {
 import {
   ArrowUp,
   Check,
+  CircleCheck,
   ChevronDown,
   CircleAlert,
   Cpu,
@@ -92,6 +93,25 @@ function WarningNote({ data }: { data: unknown }) {
   );
 }
 
+/** MCP 서버가 응답하지 않아 도구를 껐거나 다시 연결한 사실을 대화 흐름에 한 줄로 알립니다. */
+function McpNote({ data }: { data: unknown }) {
+  const { server, outcome } = data as { server: string; outcome: 'failed' | 'recovered' };
+  if (outcome === 'recovered') {
+    return (
+      <p role="status" className="flex items-center gap-2 text-[13px] leading-5 text-success">
+        <CircleCheck aria-hidden className="size-3.5 shrink-0" />
+        <span>MCP 서버 {server}에 다시 연결했습니다</span>
+      </p>
+    );
+  }
+  return (
+    <p role="status" className="flex items-center gap-2 text-[13px] leading-5 text-warning">
+      <CircleAlert aria-hidden className="size-3.5 shrink-0" />
+      <span>MCP 서버 {server}가 응답하지 않아 이 서버의 도구를 껐습니다 · 세션은 계속합니다</span>
+    </p>
+  );
+}
+
 function ToolGroup({ children }: { children?: ReactNode }) {
   return <div className="flex flex-col gap-1">{children}</div>;
 }
@@ -105,7 +125,7 @@ function AssistantMessage() {
           tools: { Fallback: ToolLine },
           ToolGroup,
           data: {
-            by_name: { compaction: CompactionMark },
+            by_name: { compaction: CompactionMark, mcp: McpNote },
             Fallback: WarningNote,
           },
         }}
