@@ -866,9 +866,11 @@ function startCompactionRun(
   project: Project,
   responses: { content: Block[]; usage?: object }[],
   context: object = {},
+  task = '파일을 고친다',
+  window = COMPACTION_WINDOW,
 ): RunningCli {
   const scriptPath = join(project.home, 'first.json');
-  writeFileSync(scriptPath, JSON.stringify({ responses, contextWindow: COMPACTION_WINDOW }));
+  writeFileSync(scriptPath, JSON.stringify({ responses, contextWindow: window }));
   const configPath = join(project.home, 'engine.config.json');
   writeFileSync(
     configPath,
@@ -879,7 +881,7 @@ function startCompactionRun(
   );
   return startCli(project, [
     'run',
-    '파일을 고친다',
+    task,
     '--model-script',
     scriptPath,
     '--record-model-input',
@@ -954,20 +956,67 @@ test(
 );
 
 test(
-  '압축한 뒤에도 입력이 컨텍스트 창을 넘으면 stopped와 context_overflow로 멈춘다',
+  '지시만으로 창을 넘을 때만 stopped와 context_overflow로 멈추고 안내 한 줄을 남긴다',
   async () => {
     const project = createProject();
-    const result = await startCompactionRun(
-      project,
-      compactionResponses('x'.repeat(90_000), [finalReport]),
-    ).done;
+    const result = await startCompactionRun(project, [finalReport], {}, 'lorem ipsum '.repeat(6000))
+      .done;
     expect(result.code).toBe(1);
 
     const { events, session } = readSession(project);
     expect(session).toMatchObject({ status: 'stopped', endReason: 'context_overflow' });
-    expect(events.some((event) => event.type === 'compaction')).toBe(true);
-    const lastRequest = events.findLast((event) => event.type === 'model_request');
-    expect(lastRequest?.payload.purpose).toBe('compaction');
+    expect(events.findLast((event) => event.type === 'session_end')?.payload.summary).toBe(
+      '지시가 너무 길어 이어 갈 수 없습니다. 지시를 나눠 다시 보냅니다.',
+    );
+    expect(events.some((event) => event.type === 'model_request')).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '압축으로 줄지 않는 큰 도구 결과 하나도 마지막 단계에서 자리표시로 줄여 같은 모델로 끝까지 간다',
+  async () => {
+    const project = createProject();
+    const result = await startCompactionRun(
+      project,
+      [
+        ...setupResponses,
+        respond(use('huge', 'shell', { command: `node -e "console.log('x '.repeat(15000))"` })),
+        respond({ type: 'text', text: 'ZZ-요약' }),
+        ...repairResponses('f', 'a - b', 'a + b', true),
+        ...closingResponses,
+      ],
+      {},
+      '파일을 고친다',
+      12_000,
+    ).done;
+    expect(result.code).toBe(0);
+
+    const { events, session } = readSession(project);
+    expect(session).toMatchObject({ status: 'completed', endReason: 'passed' });
+    const pruned = events.find(
+      (event) => event.type === 'compaction' && event.payload.method === 'prune',
+    );
+    expect(pruned?.payload).toMatchObject({ prunedCallIds: ['huge'] });
+    const models = new Set(
+      events.flatMap((event) => (event.type === 'model_request' ? [event.payload.model] : [])),
+    );
+    expect(models.size).toBe(1);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '방식 순서를 정하지 않으면 handoff를 먼저 시도한다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(project, compactionResponses('ZZ-인계', [finalReport]), {
+      methodOrder: undefined,
+    }).done;
+
+    const { events } = readSession(project);
+    const first = events.find((event) => event.type === 'compaction');
+    expect(first?.payload.method).toBe('handoff');
   },
   TEST_TIMEOUT_MS,
 );

@@ -105,7 +105,7 @@ const configSchema = z.object({
       methodOrder: z
         .array(z.enum(['shake', 'handoff', 'summary']))
         .min(1)
-        .default(['shake', 'handoff', 'summary']),
+        .default(['handoff', 'shake', 'summary']),
       keepRecentSteps: z
         .never({
           error:
@@ -118,7 +118,7 @@ const configSchema = z.object({
       keepRecentTokens: 20000,
       protectToolTokens: 40000,
       minPruneSavings: 20000,
-      methodOrder: ['shake', 'handoff', 'summary'],
+      methodOrder: ['handoff', 'shake', 'summary'],
     }),
   /** 모델 카탈로그다. 같은 id는 내장 항목(`claude-haiku-5-5` 등)을 덮어쓰고, 다른 id는 모델을 늘린다. */
   models: z.array(catalogModelSchema).default([]),

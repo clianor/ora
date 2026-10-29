@@ -914,10 +914,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     knownTokens = undefined;
   };
   /** 압축 결과가 기준선의 80% 아래에 오도록 줄인 원문 유지 범위의 시작 위치다. 어시스턴트 메시지 앞에서만 자른다. */
-  const keepCut = (window: number): number | undefined => {
+  const keepCut = (window: number, minimal = false): number | undefined => {
     const fixed = estimateTokens(system) + estimateTokens(specs) + SUMMARY_RESERVE_TOKENS;
     const room = window * settings.compactAtRatio * PROGRESS_RATIO - fixed;
-    const cut = findKeepCut(history, Math.max(0, Math.min(settings.keepRecentTokens, room)));
+    const keepTokens = minimal ? 0 : Math.max(0, Math.min(settings.keepRecentTokens, room));
+    const cut = findKeepCut(history, keepTokens);
     return cut !== undefined && cut > firstEligible() ? cut : undefined;
   };
   const runShake = async (): Promise<boolean> => {
@@ -928,8 +929,12 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     await recordRewrite('shake', touched, callIds, upToSeq);
     return true;
   };
-  const runHandoff = async (window: number, modelSignal: AbortSignal): Promise<boolean> => {
-    const cut = keepCut(window);
+  const runHandoff = async (
+    window: number,
+    modelSignal: AbortSignal,
+    minimal = false,
+  ): Promise<boolean> => {
+    const cut = keepCut(window, minimal);
     if (cut === undefined) return false;
     const messages = [...history];
     appendMessage(messages, { role: 'user', content: [{ type: 'text', text: HANDOFF_PROMPT }] });
@@ -938,8 +943,12 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     await commit('handoff', cut, { narrative });
     return true;
   };
-  const runSummary = async (window: number, modelSignal: AbortSignal): Promise<boolean> => {
-    const cut = keepCut(window);
+  const runSummary = async (
+    window: number,
+    modelSignal: AbortSignal,
+    minimal = false,
+  ): Promise<boolean> => {
+    const cut = keepCut(window, minimal);
     if (cut === undefined) return false;
     const start = firstEligible();
     const first = history[0]?.content.flatMap((block) =>
@@ -1081,14 +1090,33 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       const window = settings.contextWindow;
       if (window !== undefined) {
         const threshold = window * settings.compactAtRatio;
+        // 시스템 프롬프트, 도구 명세, 필수 절만으로 창을 넘으면 더 줄일 곳이 없다 (SPEC 4.3절 넘침).
+        const floor =
+          estimateTokens(system) +
+          estimateTokens(specs) +
+          estimateTokens(
+            buildSummaryDocument({
+              instructions,
+              todos: [...todos.values()],
+              openErrors: [...lastResults]
+                .filter(([, result]) => result.isError)
+                .map(([tool, result]) => ({ tool, summary: result.text })),
+              narrative: '',
+            }),
+          );
+        if (floor > window) {
+          return await finish(
+            'stopped',
+            'context_overflow',
+            '지시가 너무 길어 이어 갈 수 없습니다. 지시를 나눠 다시 보냅니다.',
+          );
+        }
         let estimate = estimateInput();
-        let compacted = false;
         if (estimate >= threshold) {
           const pruneIds = planPrune(history, settings.protectToolTokens, settings.minPruneSavings);
           const pruned = pruneIds.length === 0 ? [] : applyPrune(history, new Set(pruneIds));
           if (pruned.length > 0) {
             await recordRewrite('prune', pruned, pruneIds);
-            compacted = true;
             estimate = estimateInput();
           }
         }
@@ -1097,27 +1125,35 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           estimate >= threshold &&
           (estimate > window || responsesSincePass >= PASS_RETRY_RESPONSES)
         ) {
+          const passSignal = AbortSignal.any([signal, softStop]);
           const methods = { shake: runShake, handoff: runHandoff, summary: runSummary };
           let reached = false;
+          let lastCompressor: 'handoff' | 'summary' = 'summary';
           for (const method of settings.methodOrder) {
-            if (!(await methods[method](window, AbortSignal.any([signal, softStop])))) continue;
-            compacted = true;
+            if (!(await methods[method](window, passSignal))) continue;
+            if (method !== 'shake') lastCompressor = method;
             estimate = estimateInput();
             if (estimate <= threshold * PROGRESS_RATIO) {
               reached = true;
               break;
             }
           }
+          if (!reached) {
+            // 마지막 단계: 원문으로 남기는 범위를 진행 중인 도구 호출과 결과 한 쌍까지 줄인다. 같은 모델로 이어 간다.
+            if (await methods[lastCompressor](window, passSignal, true)) estimate = estimateInput();
+            const lastIds = (history.at(-1)?.content ?? []).flatMap((block) =>
+              block.type === 'tool_result' ? [block.callId] : [],
+            );
+            if (estimate > window && lastIds.length > 0) {
+              const touched = applyPrune(history, new Set(lastIds));
+              if (touched.length > 0) {
+                await recordRewrite('prune', touched, lastIds);
+                estimate = estimateInput();
+              }
+            }
+            reached = estimate <= threshold * PROGRESS_RATIO;
+          }
           responsesSincePass = reached ? Number.POSITIVE_INFINITY : 0;
-        }
-        if (estimate > window) {
-          return await finish(
-            'stopped',
-            'context_overflow',
-            `입력이 약 ${estimate}토큰으로 컨텍스트 창 ${window}토큰을 넘습니다. ${
-              compacted ? '압축한 뒤에도' : '압축할 범위가 없어'
-            } 넘쳐서 멈춥니다. 앞부분을 자르지 않았습니다.`,
-          );
         }
       }
       const started = clock.now().getTime();
