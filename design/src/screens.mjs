@@ -2,6 +2,28 @@
 // render 도구에 jsx()의 결과를 넘기고, export_image 결과를 design/previews/<file>.png로 저장한다.
 import { componentBoard } from './components.mjs';
 import {
+  approvalV2,
+  chooserV2,
+  codeCardV2,
+  composerV2,
+  icode,
+  panelHeadV2,
+  paraV2,
+  sidebarV2,
+  tabsHeaderV2,
+  threadV2,
+  toolRowV2,
+  userBoxV2,
+  sidebarV3,
+  titleTabsV3,
+  titleButtonV3,
+  statusBarV3,
+  toastV3,
+  windowV3,
+  panelOpenButtonV3,
+  changesPanelV3,
+} from './v2.mjs';
+import {
   I,
   SP,
   T,
@@ -1116,6 +1138,332 @@ ${row('failed', '검색 도구 타임아웃 재현', 'notes · main', '3일 전'
   });
 }
 
+const V2_GROUPS = [
+  {
+    repo: 'math-demo',
+    worktrees: [
+      { name: 'main', running: 2, selected: true },
+      { name: 'docs/readme-pnpm', meta: '2시간' },
+    ],
+  },
+  {
+    repo: 'ora',
+    worktrees: [
+      { name: 'main', meta: '어제' },
+      { name: 'feat/engine-slice2', meta: '3일' },
+    ],
+  },
+];
+const V2_TABS = [
+  { title: 'add 함수 버그 수정', state: 'running' },
+  { title: 'README 예제 출력 갱신', state: 'approval' },
+  { title: '터미널 1', state: 'terminal' },
+];
+const V2_USAGE = [
+  ['5시간', 13],
+  ['7일', 21],
+];
+
+/** 새 시각 언어 1: 세션 탭. 가운데는 Antigravity식 대화 기둥, 좌우 사이드바와 탭 줄은 Paseo식이다. */
+function v2SessionScreen() {
+  const c = palette('Slate');
+  const blocks = [
+    userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'file-text', verb: '읽기', target: 'math.js' })}${toolRowV2(c, { icon: 'file-pen', verb: '수정', target: 'math.js', result: '+1 −1' })}</Frame>`,
+    codeCardV2(c, {
+      title: 'math.js',
+      meta: T(c, 12, 16, 500, 'add', '+1', '', mono) + T(c, 12, 16, 500, 'del', '−1', '', mono),
+      rows: [
+        ['1', '-', 'exports.add = (a, b) => a - b;'],
+        ['1', '+', 'exports.add = (a, b) => a + b;'],
+      ],
+    }),
+    paraV2(
+      c,
+      `${icode(c, 'add')}가 뺄셈 부호를 쓰고 있어서 덧셈으로 고쳤습니다. 이제 저장소에 있는 ${icode(c, 'check.js')}로 검증하겠습니다.`,
+    ),
+    approvalV2(c),
+  ];
+  const panel = `<Frame w={340} h="fill" flex="row">${`<Frame w={1} h="fill" bg="${c.line}" />`}${phasePanel(
+    c,
+    {
+      head: panelHeadV2(c, { right: `${T(c, 13, 18, 500, 'ink2', '검증 2/5', 'pr={8}', mono)}` }),
+      objective: PHASE_OBJECTIVE,
+      phases: [
+        PHASE_FIND,
+        {
+          name: '수정',
+          open: true,
+          criterion: 'node check.js가 exit 0으로 끝난다',
+          todos: [
+            {
+              id: 't2',
+              title: 'math.js의 add를 덧셈으로 고친다',
+              status: 'attempted',
+              origin: 'user',
+              cmd: '$ node check.js',
+              result: '승인 대기',
+              flow: [['try', '시도 · 스텝 4']],
+            },
+            { id: 't3', title: '음수 입력 검사를 check.js에 더한다', status: 'pending' },
+          ],
+        },
+        {
+          name: '문서',
+          criterion: 'README 예제가 실제 출력과 같다',
+          todos: [{ id: 't4', title: 'README 예제 출력을 갱신한다', status: 'pending' }],
+        },
+      ],
+      current: 't2',
+    },
+  )}</Frame>`;
+  return windowFrame(c, '22 V2 Session · Slate', {
+    side: sidebarV2(c, { groups: V2_GROUPS, usage: V2_USAGE }),
+    main:
+      tabsHeaderV2(c, {
+        worktree: 'main',
+        repo: 'math-demo',
+        diff: [1, 1],
+        tabs: V2_TABS,
+        active: 0,
+        warning: '세션 2개 동시 실행',
+      }) +
+      threadV2(c, blocks, {
+        composer: composerV2(c, { running: true }),
+        status: [
+          ['스텝 12/50'],
+          ['claude-haiku-5-5 · 체인 1/2'],
+          ['격리 harness'],
+          ['컨텍스트 12%'],
+          ['캐시 적중 82%'],
+        ],
+        notice: '같은 폴더에서 세션 2개 실행 중 · 파일을 서로 덮어쓸 수 있습니다',
+      }),
+    panel,
+  });
+}
+
+/** 새 시각 언어 2: 새 탭. Paseo식 선택 목록이다. */
+function v2NewTabScreen() {
+  const c = palette('Slate');
+  return windowFrame(c, '23 V2 New Tab · Slate', {
+    side: sidebarV2(c, { groups: V2_GROUPS, usage: V2_USAGE }),
+    main:
+      tabsHeaderV2(c, {
+        worktree: 'main',
+        repo: 'math-demo',
+        diff: [1, 1],
+        tabs: [...V2_TABS, { title: '새 탭', state: 'new' }],
+        active: 3,
+        warning: '세션 2개 동시 실행',
+      }) +
+      chooserV2(c, {
+        title: 'math-demo · main에서 열기',
+        items: [
+          ['message-square', '세션', '⇧⌘S'],
+          ['square-terminal', '터미널', '⇧⌘T'],
+          ['globe', '브라우저', '', true],
+          ['smartphone', '에뮬레이터', '', true],
+        ],
+        note: '브라우저와 에뮬레이터는 데스크톱 앱(M3)에서 지원합니다.',
+      }),
+  });
+}
+
+/** 새 시각 언어 3: 새 세션. Antigravity식 입력창 아래에 라우팅 미리보기 줄을 둔다. */
+function v2NewSessionScreen() {
+  const c = palette('Slate');
+  const preview = `<Frame w={720} h="hug" flex="row" items="center" gap={8} px={12}>${T(c, 13, 18, 500, 'ink3', '역할 default')}${T(c, 13, 18, 400, 'ink3', '·')}${T(c, 13, 18, 500, 'ink3', '1', '', mono)}${T(c, 13, 18, 500, 'ink', 'claude-haiku-5-5', '', mono)}${T(c, 13, 18, 400, 'ink2', 'medium')}${I(c, 'arrow-right', 'ink3', 12)}${T(c, 13, 18, 500, 'ink3', '2', '', mono)}${T(c, 13, 18, 500, 'ink', 'gpt-5.6-luna', '', mono)}${T(c, 13, 18, 400, 'ink2', 'low')}</Frame>`;
+  const center = `<Frame name="WelcomeV2" w="fill" h="fill" flex="col" items="center" justify="center" gap={14} pb={90}>
+<Frame w={720} h="hug" flex="col" gap={6} px={4}>${T(c, 26, 34, 600, 'ink', '무엇을 할까요?')}${T(c, 15, 22, 400, 'ink2', 'Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를 보고합니다.')}</Frame>
+${composerV2(c)}
+${preview}
+</Frame>`;
+  return windowFrame(c, '24 V2 New Session · Slate', {
+    side: sidebarV2(c, { groups: V2_GROUPS, usage: V2_USAGE }),
+    main:
+      tabsHeaderV2(c, {
+        worktree: 'main',
+        repo: 'math-demo',
+        diff: [1, 1],
+        tabs: [...V2_TABS, { title: '새 세션', state: 'new' }],
+        active: 3,
+        warning: '세션 2개 동시 실행',
+      }) + center,
+  });
+}
+
+const V3_GROUPS = [
+  {
+    repo: 'math-demo',
+    worktrees: [
+      {
+        name: 'main',
+        base: true,
+        selected: true,
+        sessions: [
+          { state: 'running', title: 'add 함수 버그 수정', model: 'gpt-5.6-luna', age: '2분' },
+          {
+            state: 'approval',
+            title: 'README 예제 출력 갱신',
+            model: 'claude-haiku-5-5',
+            age: '5분',
+          },
+        ],
+      },
+      { name: 'docs/readme-pnpm' },
+    ],
+  },
+  {
+    repo: 'ora',
+    worktrees: [
+      { name: 'main', base: true },
+      { name: 'feat/engine-slice2', running: 1 },
+    ],
+  },
+];
+const V3_STATUS = {
+  usage: [
+    [
+      'Claude',
+      [
+        ['5시간', 13],
+        ['7일', 21],
+      ],
+    ],
+    ['Codex', [['5시간', 4]]],
+  ],
+  right: [
+    ['loader', '세션 2개 실행 중'],
+    ['square-terminal', '터미널 1'],
+  ],
+};
+const v3Right = (c) =>
+  `${titleButtonV3(c, 'git-compare', T(c, 12, 16, 500, 'add', '+1', '', mono) + T(c, 12, 16, 500, 'del', '−1', '', mono))}${titleButtonV3(c, 'code-xml', T(c, 13, 18, 500, 'ink2', '편집기'))}${titleButtonV3(c, 'play', T(c, 13, 18, 500, 'ink2', '명령'))}`;
+const v3Panel = (c, panelOptions) =>
+  `<Frame w={340} h="fill" flex="row"><Frame w={1} h="fill" bg="${c.line}" />${phasePanel(c, { head: panelHeadV2(c, { titleRow: true, right: T(c, 13, 18, 500, 'ink2', '검증 2/5', 'pr={8}', mono) }), ...panelOptions })}</Frame>`;
+
+/** v3 세션 탭. 모델이 한도에 걸려 다음 모델로 넘어간 순간이다. 알림을 띄우고 입력창의 모델 칩을 새 모델로 바꾼다. */
+function v3SessionScreen() {
+  const c = palette('Slate');
+  const blocks = [
+    userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'file-text', verb: '읽기', target: 'math.js' })}${toolRowV2(c, { icon: 'file-pen', verb: '수정', target: 'math.js', result: '+1 −1' })}</Frame>`,
+    codeCardV2(c, {
+      title: 'math.js',
+      meta: T(c, 12, 16, 500, 'add', '+1', '', mono) + T(c, 12, 16, 500, 'del', '−1', '', mono),
+      rows: [
+        ['1', '-', 'exports.add = (a, b) => a - b;'],
+        ['1', '+', 'exports.add = (a, b) => a + b;'],
+      ],
+    }),
+    paraV2(
+      c,
+      `${icode(c, 'add')}가 뺄셈 부호를 쓰고 있어서 덧셈으로 고쳤습니다. 이제 저장소에 있는 ${icode(c, 'check.js')}로 검증하겠습니다.`,
+    ),
+    approvalV2(c),
+  ];
+  const toast = toastV3(c, {
+    x: 724,
+    y: 52,
+    icon: 'arrow-right-left',
+    title: '모델을 gpt-5.6-luna로 바꿨습니다',
+    body: 'claude-haiku-5-5가 사용 한도에 걸렸습니다. 18:10에 한도가 풀리면 다시 claude-haiku-5-5로 돌아갑니다.',
+  });
+  return windowV3(c, '25 V3 Session · Slate', {
+    side: sidebarV3(c, { groups: V3_GROUPS }),
+    main:
+      titleTabsV3(c, { tabs: V2_TABS, active: 0, right: v3Right(c) }) +
+      threadV2(c, blocks, {
+        composer: composerV2(c, { running: true, model: 'gpt-5.6-luna', effort: 'low' }),
+        status: [['스텝 12/50'], ['격리 harness'], ['컨텍스트 12%'], ['캐시 적중 82%']],
+        notice: '같은 폴더에서 세션 2개 실행 중 · 파일을 서로 덮어쓸 수 있습니다',
+      }),
+    panel: v3Panel(c, {
+      objective: PHASE_OBJECTIVE,
+      phases: [
+        PHASE_FIND,
+        {
+          name: '수정',
+          open: true,
+          criterion: 'node check.js가 exit 0으로 끝난다',
+          todos: [
+            {
+              id: 't2',
+              title: 'math.js의 add를 덧셈으로 고친다',
+              status: 'attempted',
+              origin: 'user',
+              cmd: '$ node check.js',
+              result: '승인 대기',
+              flow: [['try', '시도 · 스텝 4']],
+            },
+            { id: 't3', title: '음수 입력 검사를 check.js에 더한다', status: 'pending' },
+          ],
+        },
+        {
+          name: '문서',
+          criterion: 'README 예제가 실제 출력과 같다',
+          todos: [{ id: 't4', title: 'README 예제 출력을 갱신한다', status: 'pending' }],
+        },
+      ],
+      current: 't2',
+    }),
+    status: statusBarV3(c, V3_STATUS),
+    overlay: toast,
+  });
+}
+
+/** v3 새 탭. 오른쪽 패널이 접힌 상태이고, 제목 줄 끝의 단추(⌥⌘B)로 다시 연다. */
+function v3NewTabScreen() {
+  const c = palette('Slate');
+  return windowV3(c, '26 V3 New Tab · Slate', {
+    side: sidebarV3(c, { groups: V3_GROUPS }),
+    main:
+      titleTabsV3(c, {
+        tabs: [...V2_TABS, { title: '새 탭', state: 'new' }],
+        active: 3,
+        right: v3Right(c) + panelOpenButtonV3(c),
+      }) +
+      chooserV2(c, {
+        title: 'math-demo · main에서 열기',
+        items: [
+          ['message-square', '세션', '⇧⌘S'],
+          ['square-terminal', '터미널', '⇧⌘T'],
+          ['globe', '브라우저', '', true],
+          ['smartphone', '에뮬레이터', '', true],
+        ],
+        note: '브라우저와 에뮬레이터는 데스크톱 앱(M3)에서 지원합니다.',
+      }),
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
+/** v3 새 세션. 모델 체인은 보이지 않고, 입력창의 모델 칩에서 모델만 고른다. 오른쪽 패널은 할 일이 없으므로 "변경" 탭으로 연다. */
+function v3NewSessionScreen() {
+  const c = palette('Slate');
+  const center = `<Frame name="WelcomeV3" w="fill" h="fill" flex="col" items="center" justify="center" gap={14} pb={90}>
+<Frame w={720} h="hug" flex="col" gap={6} px={4}>${T(c, 26, 34, 600, 'ink', '무엇을 할까요?')}${T(c, 15, 22, 400, 'ink2', 'math-demo · main에서 시작합니다. Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를 보고합니다.')}</Frame>
+${composerV2(c)}
+</Frame>`;
+  return windowV3(c, '27 V3 New Session · Slate', {
+    side: sidebarV3(c, { groups: V3_GROUPS }),
+    main:
+      titleTabsV3(c, {
+        tabs: [...V2_TABS, { title: '새 세션', state: 'new' }],
+        active: 3,
+        right: v3Right(c),
+      }) + center,
+    panel: changesPanelV3(c, {
+      branch: 'main',
+      files: [
+        ['math.js', 1, 1],
+        ['check.js', 4, 0],
+      ],
+    }),
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -1138,4 +1486,10 @@ export const SCREENS = [
   { file: 'new-tab-dark', jsx: newTabScreen },
   { file: 'terminal-dark', jsx: terminalScreen },
   { file: 'history-dark', jsx: historyScreen },
+  { file: 'v2-session-slate', jsx: v2SessionScreen },
+  { file: 'v2-new-tab-slate', jsx: v2NewTabScreen },
+  { file: 'v2-new-session-slate', jsx: v2NewSessionScreen },
+  { file: 'v3-session-slate', jsx: v3SessionScreen },
+  { file: 'v3-new-tab-slate', jsx: v3NewTabScreen },
+  { file: 'v3-new-session-slate', jsx: v3NewSessionScreen },
 ];

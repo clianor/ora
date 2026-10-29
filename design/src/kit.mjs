@@ -50,7 +50,33 @@ const LIGHT = {
   popover: '#FFFFFF',
   borderStrong: '#D4D4D4',
 };
-export const palette = (mode) => (mode === 'Light' ? LIGHT : DARK);
+// 2026-10-29 사용자 요청으로 잡은 새 시각 언어. 가운데는 Antigravity, 좌우 사이드바와 탭은 Paseo를 참고했다.
+// 값은 두 앱 화면 캡처에서 뽑은 색이다(Paseo: 사이드바 #21252D, 본문 #282C33, 선택 #383C48, 선 #353A47 / Antigravity: 인라인 코드 #D7BA7D).
+const SLATE = {
+  ...DARK,
+  window: '#282C33',
+  sidebar: '#21252D',
+  raised: '#2F333D',
+  sunken: '#1E2128',
+  hover: '#383C48',
+  line: '#353A47',
+  ink: '#F2F3F6',
+  ink2: '#C8CCD8',
+  ink3: '#A0A4B2',
+  primary: '#FAFAFA',
+  onPrimary: '#21252D',
+  popover: '#2F333D',
+  borderStrong: '#4A4F5C',
+  kbd: '#3D414D',
+  codeInk: '#D7BA7D',
+  addBg: '#1F3327',
+  delBg: '#3A2328',
+};
+export const palette = (mode) => {
+  if (mode === 'Light') return LIGHT;
+  if (mode === 'Slate') return SLATE;
+  return DARK;
+};
 
 export const T = (c, size, lh, weight, color, body, extra = '', font = F) =>
   `<Text size={${size}} lineHeight={${lh}} weight={${weight}} font="${font}" color="${c[color] ?? color}" ${extra}>${body}</Text>`;
@@ -383,7 +409,7 @@ const FLOW = {
  */
 export function phasePanel(
   c,
-  { objective = null, banner = null, phases = [], current = null, overlay = '' } = {},
+  { objective = null, banner = null, phases = [], current = null, overlay = '', head = null } = {},
 ) {
   const all = phases.flatMap((p) => p.todos);
   const verified = all.filter((t) => t.status === 'verified').length;
@@ -453,7 +479,7 @@ ${reason}${cmd}${flow}</Frame>${menu}</Frame>`;
     ? `<Frame name="Objective" w="fill" h="hug" flex="col" gap={2} px={8}>${T(c, 12, 16, 500, 'ink3', '목표')}${T(c, 13, 18, 400, 'ink2', objective, 'w="fill" textAutoResize="height"')}</Frame>`
     : '';
   return `<Frame name="Evidence" w={340} h="fill" flex="col" bg="${c.sidebar}">
-<Frame w="fill" h={48} flex="row" items="center" gap={16} px={16}>${T(c, 13, 18, 600, 'ink', '할 일')}${T(c, 13, 18, 500, 'ink3', '변경')}${T(c, 13, 18, 500, 'ink3', '파일')}${SP}${T(c, 12, 16, 500, 'ink2', `검증 ${verified}/${denom}`, '', M)}</Frame>
+${head ?? `<Frame w="fill" h={48} flex="row" items="center" gap={16} px={16}>${T(c, 13, 18, 600, 'ink', '할 일')}${T(c, 13, 18, 500, 'ink3', '변경')}${T(c, 13, 18, 500, 'ink3', '파일')}${SP}${T(c, 12, 16, 500, 'ink2', `검증 ${verified}/${denom}`, '', M)}</Frame>`}
 <Frame w="fill" h="hug" flex="col" gap={10} px={8} pt={4}>${bannerRow}${goal}${phases.map(card).join('')}</Frame>
 ${overlay}
 </Frame>`;
