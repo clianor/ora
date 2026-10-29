@@ -213,12 +213,16 @@ export function StatusLine({
   cache?: CacheView | null;
 }) {
   const parts: ReactNode[] = [
-    ...items,
+    ...items.map((item) => (
+      <span key={item} className="whitespace-nowrap">
+        {item}
+      </span>
+    )),
     ...(context ? [<ContextStat key="context" context={context} />] : []),
     ...(cache ? [<CacheStat key="cache" cache={cache} />] : []),
   ];
   return (
-    <div className="flex h-5 w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-subtle">
+    <div className="flex min-h-5 w-[720px] max-w-full flex-wrap items-center gap-x-2 px-3.5 text-xs leading-4 text-foreground-subtle">
       {parts.flatMap((part, index) =>
         index === 0 ? [part] : [<span key={`dot-${index}`}>·</span>, part],
       )}

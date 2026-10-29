@@ -70,13 +70,23 @@ export function Header({
         type="button"
         aria-label="사이드바 열고 닫기"
         onClick={onToggleSidebar}
-        className="rounded-sm text-foreground-muted hover:text-foreground"
+        className="shrink-0 rounded-sm text-foreground-muted hover:text-foreground"
       >
         <PanelLeft aria-hidden className="size-4" />
       </button>
-      {title && <h1 className="text-sm leading-5 font-semibold text-foreground">{title}</h1>}
+      {title && (
+        <h1
+          title={title}
+          className="min-w-0 truncate text-sm leading-5 font-semibold text-foreground"
+        >
+          {title}
+        </h1>
+      )}
       {repoLabel && (
-        <span title={repoTitle} className="text-[13px] leading-[18px] text-foreground-subtle">
+        <span
+          title={repoTitle}
+          className="shrink-0 text-[13px] leading-[18px] whitespace-nowrap text-foreground-subtle"
+        >
           {repoLabel}
           {repoTitle && repoTitle !== repoLabel && <span className="sr-only"> ({repoTitle})</span>}
         </span>
@@ -87,7 +97,7 @@ export function Header({
           멈춤
         </span>
       )}
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex shrink-0 items-center gap-3">
         {stageIndex !== null && <StageChip index={stageIndex} />}
         {diff && (
           <div className="flex h-7 items-center gap-1.5 rounded-sm bg-surface px-2.5">

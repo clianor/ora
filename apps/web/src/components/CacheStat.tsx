@@ -21,7 +21,7 @@ export function CacheStat({ cache }: { cache: CacheView }) {
           <button
             type="button"
             aria-label={`프롬프트 캐시 적중률 ${percent}, 자세히 보기`}
-            className="rounded-sm text-xs leading-4 text-foreground-subtle"
+            className="rounded-sm text-xs leading-4 whitespace-nowrap text-foreground-subtle"
           >
             캐시 적중 {percent}
           </button>

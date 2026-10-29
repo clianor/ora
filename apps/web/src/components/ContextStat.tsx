@@ -30,7 +30,7 @@ export function ContextStat({ context }: { context: ContextView }) {
           <button
             type="button"
             aria-label={`컨텍스트 사용 ${percent}, 자세히 보기`}
-            className="rounded-sm text-xs leading-4 text-foreground-subtle"
+            className="rounded-sm text-xs leading-4 whitespace-nowrap text-foreground-subtle"
           >
             컨텍스트 {percent}
           </button>
