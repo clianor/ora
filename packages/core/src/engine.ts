@@ -53,6 +53,7 @@ import {
   shakeBoundarySeq,
   shakeMessages,
   summaryMessage,
+  withCap,
 } from './compaction.ts';
 import { appendMessage } from './recovery.ts';
 import type { ResumePlan } from './recovery.ts';
@@ -147,8 +148,10 @@ interface ControlOutput extends ToolOutput {
 
 /** 압축한 뒤 어림값이 기준선의 이 비율 이하여야 여유를 만들었다고 본다 (SPEC 4.3절 진행 보증). */
 const PROGRESS_RATIO = 0.8;
-/** 요약 문서가 차지할 토큰의 어림이다. 남길 범위를 줄일 때 뺀다. */
-const SUMMARY_RESERVE_TOKENS = 2000;
+/** 압축 요청의 출력 상한 기본값이다 (SPEC 4.3절 출력 상한). */
+const COMPACTION_OUTPUT_CAP = 8000;
+/** 남은 자리가 이보다 작으면 그 방식을 건너뛴다. 제목 몇 개와 목록 몇 줄(한글 300~500토큰)은 있어야 쓸 만한 문서라는 판단이고 실측하지 않았다. */
+const MIN_OUTPUT_ROOM = 500;
 /** 압축이 여유를 만들지 못했을 때 창 안에서 다시 시도하기까지 기다리는 모델 응답 수다. */
 const PASS_RETRY_RESPONSES = 3;
 const SUMMARY_MAX_LINES = 20;
@@ -837,14 +840,18 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     if (history.length > before) historySeqs.push(recorder.lastSeq());
     else historySeqs[historySeqs.length - 1] = recorder.lastSeq();
   };
-  /** 요약과 인계 문서 요청이다. 응답의 텍스트만 돌려주고 도구 호출은 무시한다. 사용량은 `purpose: 'compaction'`으로 남긴다. */
+  /**
+   * 요약과 인계 문서 요청이다. 응답의 텍스트만 돌려주고 도구 호출은 무시한다. 사용량은 `purpose: 'compaction'`으로 남긴다.
+   * 출력이 `cap`을 넘었거나 상한 때문에 잘렸으면 `undefined`다. 상한을 실을 수 없는 형식은 받은 문서의 어림으로 검사한다.
+   */
   const requestCompaction = async (
     request: ModelRequest,
     modelSignal: AbortSignal,
-  ): Promise<string> => {
+    cap: number,
+  ): Promise<string | undefined> => {
     const started = clock.now().getTime();
     let completed: Extract<ModelStreamEvent, { type: 'completed' }> | undefined;
-    for await (const event of model.stream(request, modelSignal)) {
+    for await (const event of model.stream({ ...request, maxOutputTokens: cap }, modelSignal)) {
       if (event.type === 'completed') completed = event;
     }
     if (completed === undefined) throw new Error('압축 요청 스트림이 completed 없이 끝났습니다.');
@@ -860,11 +867,26 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         purpose: 'compaction',
       },
     });
-    return completed.content
+    const text = completed.content
       .flatMap((block) => (block.type === 'text' ? [block.text] : []))
       .join('\n')
       .trim();
+    if (completed.stopReason === 'max_tokens') return undefined;
+    if (model.acceptsOutputCap !== true && estimateTokens(text) > cap) return undefined;
+    return text;
   };
+  /** 필수 절만 있는 요약 문서의 어림이다. */
+  const requiredTokens = () =>
+    estimateTokens(
+      buildSummaryDocument({
+        instructions,
+        todos: [...todos.values()],
+        openErrors: [...lastResults]
+          .filter(([, result]) => result.isError)
+          .map(([tool, result]) => ({ tool, summary: result.text })),
+        narrative: '',
+      }),
+    );
   const firstEligible = () => (hasSummary ? 1 : 0);
   /** 도구 출력 가지치기나 shake가 바꾼 메시지 범위를 `compaction` 이벤트로 남긴다. */
   const recordRewrite = async (
@@ -916,13 +938,27 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     hasSummary = true;
     knownTokens = undefined;
   };
-  /** 압축 결과가 기준선의 80% 아래에 오도록 줄인 원문 유지 범위의 시작 위치다. 어시스턴트 메시지 앞에서만 자른다. */
-  const keepCut = (window: number, minimal = false): number | undefined => {
-    const fixed = estimateTokens(system) + estimateTokens(specs) + SUMMARY_RESERVE_TOKENS;
-    const room = window * settings.compactAtRatio * PROGRESS_RATIO - fixed;
-    const keepTokens = minimal ? 0 : Math.max(0, Math.min(settings.keepRecentTokens, room));
+  /**
+   * 압축 결과가 기준선의 80% 아래에 오도록 줄인 원문 유지 범위의 시작 위치와, 문서가 쓸 수 있는 출력 상한이다.
+   * 상한은 min(기본 상한, 모델의 최대 출력, 남은 자리)이고, 남은 자리가 `MIN_OUTPUT_ROOM`보다 작으면 `undefined`다.
+   */
+  const keepCut = (window: number, minimal = false): { cut: number; cap: number } | undefined => {
+    const base =
+      window * settings.compactAtRatio * PROGRESS_RATIO -
+      (estimateTokens(system) + estimateTokens(specs) + requiredTokens());
+    const keepTokens = minimal
+      ? 0
+      : Math.max(0, Math.min(settings.keepRecentTokens, base - MIN_OUTPUT_ROOM));
     const cut = findKeepCut(history, keepTokens);
-    return cut !== undefined && cut > firstEligible() ? cut : undefined;
+    if (cut === undefined || cut <= firstEligible()) return undefined;
+    const room = base - estimateTokens(history.slice(cut));
+    if (room < MIN_OUTPUT_ROOM) return undefined;
+    return {
+      cut,
+      cap: Math.floor(
+        Math.min(COMPACTION_OUTPUT_CAP, model.maxOutputTokens ?? COMPACTION_OUTPUT_CAP, room),
+      ),
+    };
   };
   const runShake = async (): Promise<boolean> => {
     const upToSeq = shakeBoundarySeq(history, historySeqs, settings.keepRecentTokens);
@@ -938,12 +974,14 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     modelSignal: AbortSignal,
     minimal = false,
   ): Promise<boolean> => {
-    const cut = keepCut(window, minimal);
-    if (cut === undefined) return false;
+    const kept = keepCut(window, minimal);
+    if (kept === undefined) return false;
+    const { cut, cap } = kept;
     const messages = [...history];
-    appendMessage(messages, { role: 'user', content: [{ type: 'text', text: HANDOFF_PROMPT }] });
-    const narrative = await requestCompaction({ system, messages, tools: specs }, modelSignal);
-    if (narrative === '') return false;
+    const prompt = model.acceptsOutputCap === true ? HANDOFF_PROMPT : withCap(HANDOFF_PROMPT, cap);
+    appendMessage(messages, { role: 'user', content: [{ type: 'text', text: prompt }] });
+    const narrative = await requestCompaction({ system, messages, tools: specs }, modelSignal, cap);
+    if (narrative === undefined || narrative === '') return false;
     await commit('handoff', cut, { narrative });
     return true;
   };
@@ -952,32 +990,50 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     modelSignal: AbortSignal,
     minimal = false,
   ): Promise<boolean> => {
-    const cut = keepCut(window, minimal);
-    if (cut === undefined) return false;
+    const kept = keepCut(window, minimal);
+    if (kept === undefined) return false;
+    const { cut, cap } = kept;
     const start = firstEligible();
     const first = history[0]?.content.flatMap((block) =>
       block.type === 'text' ? [block.text] : [],
     );
     const previous = hasSummary ? narrativeOf((first ?? []).join('\n')) : undefined;
     const turnStart = findTurnStart(history, cut, start);
-    // 턴 중간에서 잘랐고 그 앞에 요약할 메시지가 있으면, 턴 앞부분은 따로 요약해 붙인다.
-    const splitAt = turnStart !== undefined && turnStart > start ? turnStart : undefined;
-    const ask = (askSystem: string, messages: readonly ModelMessage[], prior?: string) =>
+    // 턴 중간에서 잘랐고 그 앞에 요약할 메시지가 있으면, 턴 앞부분은 따로 요약해 붙인다. 상한을 나눠 쓰고 나눈 값이 너무 작으면 나누지 않는다.
+    const splitAt =
+      turnStart !== undefined && turnStart > start && Math.floor(cap / 3) >= MIN_OUTPUT_ROOM
+        ? turnStart
+        : undefined;
+    const mainCap = splitAt === undefined ? cap : cap - Math.floor(cap / 3);
+    const ask = (
+      askSystem: string,
+      messages: readonly ModelMessage[],
+      askCap: number,
+      prior?: string,
+    ) =>
       requestCompaction(
         {
-          system: askSystem,
+          system: model.acceptsOutputCap === true ? askSystem : withCap(askSystem, askCap),
           messages: [
             { role: 'user', content: [{ type: 'text', text: buildSummaryInput(messages, prior) }] },
           ],
           tools: [],
         },
         modelSignal,
+        askCap,
       );
-    const narrative = await ask(SUMMARY_SYSTEM, history.slice(start, splitAt ?? cut), previous);
+    const narrative = await ask(
+      SUMMARY_SYSTEM,
+      history.slice(start, splitAt ?? cut),
+      mainCap,
+      previous,
+    );
+    if (narrative === undefined) return false;
     const turnPrefix =
       splitAt === undefined
         ? undefined
-        : await ask(TURN_PREFIX_SYSTEM, history.slice(splitAt, cut));
+        : await ask(TURN_PREFIX_SYSTEM, history.slice(splitAt, cut), Math.floor(cap / 3));
+    if (splitAt !== undefined && turnPrefix === undefined) return false;
     await commit('summary', cut, {
       narrative: narrative === '' ? '(요약 모델이 내용을 쓰지 않았습니다.)' : narrative,
       ...(turnPrefix === undefined ? {} : { turnPrefix }),
@@ -1095,19 +1151,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       if (window !== undefined) {
         const threshold = window * settings.compactAtRatio;
         // 시스템 프롬프트, 도구 명세, 필수 절만으로 창을 넘으면 더 줄일 곳이 없다 (SPEC 4.3절 넘침).
-        const floor =
-          estimateTokens(system) +
-          estimateTokens(specs) +
-          estimateTokens(
-            buildSummaryDocument({
-              instructions,
-              todos: [...todos.values()],
-              openErrors: [...lastResults]
-                .filter(([, result]) => result.isError)
-                .map(([tool, result]) => ({ tool, summary: result.text })),
-              narrative: '',
-            }),
-          );
+        const floor = estimateTokens(system) + estimateTokens(specs) + requiredTokens();
         if (floor > window) {
           return await finish(
             'stopped',

@@ -18,6 +18,8 @@ const scriptSchema = z.object({
     }),
   ),
   contextWindow: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  acceptsOutputCap: z.boolean().optional(),
 });
 
 /**
@@ -32,6 +34,8 @@ export async function loadScriptedModel(
   let next = 0;
   return {
     ...(script.contextWindow === undefined ? {} : { contextWindow: script.contextWindow }),
+    ...(script.maxOutputTokens === undefined ? {} : { maxOutputTokens: script.maxOutputTokens }),
+    ...(script.acceptsOutputCap === undefined ? {} : { acceptsOutputCap: script.acceptsOutputCap }),
     model: 'fake/scripted',
     adapter: 'fake',
     async *stream(request): AsyncGenerator<ModelStreamEvent> {
@@ -40,6 +44,7 @@ export async function loadScriptedModel(
           system: request.system,
           messages: request.messages,
           tools: request.tools.map((tool) => tool.name),
+          maxOutputTokens: request.maxOutputTokens ?? null,
         };
         await appendFile(inputLogPath, `${JSON.stringify(record)}\n`, 'utf8');
       }

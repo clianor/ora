@@ -261,6 +261,11 @@ export const HANDOFF_PROMPT = [
   'todo 목록, 검증 증거, 사용자 지시 원문, 해결하지 못한 오류는 엔진이 따로 붙이므로 쓰지 않는다.',
 ].join('\n');
 
+/** 출력 상한을 요청에 실을 수 없는 전송 형식을 위해 프롬프트에 상한을 적는다. */
+export function withCap(prompt: string, cap: number): string {
+  return `${prompt}\n출력은 ${cap}토큰 안으로 쓴다.`;
+}
+
 /** 요약 요청의 사용자 메시지 본문이다. 이전 요약이 있으면 따로 싣는다. */
 export function buildSummaryInput(messages: readonly ModelMessage[], previous?: string): string {
   const prior =

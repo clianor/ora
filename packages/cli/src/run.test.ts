@@ -868,9 +868,10 @@ function startCompactionRun(
   context: object = {},
   task = '파일을 고친다',
   window = COMPACTION_WINDOW,
+  scriptExtra: object = {},
 ): RunningCli {
   const scriptPath = join(project.home, 'first.json');
-  writeFileSync(scriptPath, JSON.stringify({ responses, contextWindow: window }));
+  writeFileSync(scriptPath, JSON.stringify({ responses, contextWindow: window, ...scriptExtra }));
   const configPath = join(project.home, 'engine.config.json');
   writeFileSync(
     configPath,
@@ -896,11 +897,24 @@ function startCompactionRun(
 function readModelInputs(
   project: Project,
   name: string,
-): { system: string; tools: string[]; messages: unknown[] }[] {
+): {
+  system: string;
+  tools: string[];
+  messages: unknown[];
+  maxOutputTokens: number | null;
+}[] {
   return readFileSync(join(project.home, `${name}-input.jsonl`), 'utf8')
     .trim()
     .split('\n')
-    .map((line) => JSON.parse(line) as { system: string; tools: string[]; messages: unknown[] });
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          system: string;
+          tools: string[];
+          messages: unknown[];
+          maxOutputTokens: number | null;
+        },
+    );
 }
 
 test(
@@ -986,8 +1000,12 @@ test(
       project,
       [
         ...setupResponses,
-        respond(use('huge', 'shell', { command: `node -e "console.log('x '.repeat(15000))"` })),
-        respond({ type: 'text', text: 'ZZ-요약' }),
+        {
+          ...respond(
+            use('huge', 'shell', { command: `node -e "console.log('x '.repeat(15000))"` }),
+          ),
+          usage: { ...bigUsage, uncachedInputTokens: 3000 },
+        },
         ...repairResponses('f', 'a - b', 'a + b', true),
         ...closingResponses,
       ],
@@ -1267,6 +1285,99 @@ test(
     const sent = JSON.stringify(first?.messages);
     expect(sent).toContain('callId=sh1');
     expect(sent).not.toContain(REPEATED);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+const hugeUsage = { ...bigUsage, uncachedInputTokens: 85_000 };
+
+/** 창 100,000에서 입력 85,000토큰을 보고한 응답 뒤에 응답들을 이은 압축 시나리오다. */
+function capResponses(after: { content: Block[] }[]) {
+  return [
+    ...setupResponses,
+    ...repairResponses('f', 'a - b', 'a * b', true),
+    { ...respond(use('big', 'file_read', { path: 'foo.js' })), usage: hugeUsage },
+    ...after,
+  ];
+}
+
+test(
+  '인계 요청의 출력 상한은 min(8000, 모델 최대 출력, 남은 자리)이고 요청에 실린다',
+  async () => {
+    for (const [modelMax, expected] of [
+      [5000, 5000],
+      [20_000, 8000],
+    ] as const) {
+      const project = createProject();
+      await startCompactionRun(
+        project,
+        capResponses([respond({ type: 'text', text: 'ZZ-인계' }), finalReport]),
+        { methodOrder: ['handoff'] },
+        '파일을 고친다',
+        100_000,
+        { acceptsOutputCap: true, maxOutputTokens: modelMax },
+      ).done;
+
+      const inputs = readModelInputs(project, 'first');
+      const handoff = inputs.find((input) => JSON.stringify(input.messages).includes('인계 문서'));
+      expect(handoff?.maxOutputTokens).toBe(expected);
+      expect(JSON.stringify(handoff?.messages)).not.toContain('토큰 안으로');
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '출력 상한을 실을 수 없는 형식이 상한을 넘는 문서를 돌려주면 그 방식을 실패로 보고 다음 방식으로 넘어간다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      capResponses([
+        respond({ type: 'text', text: 'lorem '.repeat(2000) }),
+        respond({ type: 'text', text: 'ZZ-요약' }),
+        finalReport,
+      ]),
+      { methodOrder: ['handoff', 'summary'] },
+      '파일을 고친다',
+      100_000,
+      { acceptsOutputCap: false, maxOutputTokens: 1000 },
+    ).done;
+
+    const { events } = readSession(project);
+    const methods = events.flatMap((event) =>
+      event.type === 'compaction' ? [event.payload.method] : [],
+    );
+    expect(methods).toEqual(['summary']);
+    const inputs = readModelInputs(project, 'first');
+    const handoff = inputs.find((input) => JSON.stringify(input.messages).includes('인계 문서'));
+    expect(JSON.stringify(handoff?.messages)).toContain('1000토큰 안으로');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '남은 자리가 너무 작으면 압축 요청을 보내지 않고 그 방식을 건너뛴다',
+  async () => {
+    const project = createProject();
+    await startCompactionRun(
+      project,
+      [
+        ...setupResponses,
+        ...repairResponses('f', 'a - b', 'a * b', true),
+        { ...respond(use('big', 'file_read', { path: 'foo.js' })), usage: bigUsage },
+        finalReport,
+      ],
+      { methodOrder: ['handoff', 'summary'] },
+      'lorem ipsum '.repeat(3300),
+    ).done;
+
+    const { events, session } = readSession(project);
+    expect(session.endReason).not.toBe('context_overflow');
+    expect(events.some((event) => event.type === 'compaction')).toBe(false);
+    expect(events.some((event) => event.type === 'model_request' && event.payload.purpose)).toBe(
+      false,
+    );
   },
   TEST_TIMEOUT_MS,
 );

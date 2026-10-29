@@ -137,6 +137,7 @@ interface Seen {
     tools: { name: string }[];
     messages: { content: { name?: string }[] }[];
     metadata: { user_id: string };
+    max_tokens: number;
   };
 }
 
@@ -251,6 +252,7 @@ test('OAuth 요청은 Claude Code 식별 정보와 도구 이름 접두사를 �
         },
       ],
       tools: [{ name: 'todo.update', description: 'todo', inputSchema: { type: 'object' } }],
+      maxOutputTokens: 300,
     },
     new AbortController().signal,
   ))
@@ -274,6 +276,9 @@ test('OAuth 요청은 Claude Code 식별 정보와 도구 이름 접두사를 �
     'Ora 시스템 프롬프트',
   ]);
   expect(second?.body.tools.map((tool) => tool.name)).toEqual(['_todo__update']);
+  // 요청의 출력 상한 300이 카탈로그 최대 출력 1000보다 작아 그대로 실린다.
+  expect(second?.body.max_tokens).toBe(300);
+  expect(model).toMatchObject({ maxOutputTokens: 1000, acceptsOutputCap: true });
   expect(second?.body.messages[1]?.content[0]?.name).toBe('_todo__update');
   expect(JSON.parse(second?.body.metadata.user_id ?? '{}')).toMatchObject({
     account_uuid: 'acct-uuid',

@@ -111,6 +111,8 @@ export function createFetchModel(options: FetchModelOptions): ModelPort {
     model: catalog.id,
     adapter: `${catalog.provider}-fetch`,
     contextWindow: catalog.contextWindow,
+    maxOutputTokens: catalog.maxOutputTokens,
+    acceptsOutputCap: catalog.wire !== 'openai-codex-responses',
     accountPin: () =>
       pinned === undefined || lastUsedAt === undefined
         ? undefined
@@ -149,7 +151,18 @@ export function createFetchModel(options: FetchModelOptions): ModelPort {
               credential,
               request,
               signal,
-              options: { sessionId, ...options.wireOptions },
+              options: {
+                sessionId,
+                ...options.wireOptions,
+                ...(request.maxOutputTokens === undefined
+                  ? {}
+                  : {
+                      maxTokens: Math.min(
+                        request.maxOutputTokens,
+                        options.wireOptions?.maxTokens ?? catalog.maxOutputTokens,
+                      ),
+                    }),
+              },
             })) {
               if (!emitted) {
                 pinned = account.name;
