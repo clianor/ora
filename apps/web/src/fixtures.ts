@@ -1188,7 +1188,7 @@ const fallbackEvents: OraEvent[] = [
       { type: 'text', text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.' },
     ],
   }),
-  fallbackRequest('17:31', 'claude-haiku-5-5', 'claude-sdk', 0),
+  fallbackRequest('17:31', 'claude-haiku-5-5', 'claude-fetch', 0),
   makeFallback('tool_call', '17:32', 'model', {
     callId: 'f1',
     tool: 'file_read',
@@ -1244,7 +1244,7 @@ const fallbackEvents: OraEvent[] = [
     chainPosition: 0,
     role: 'default',
   }),
-  fallbackRequest('18:12', 'claude-haiku-5-5', 'claude-sdk', 0),
+  fallbackRequest('18:12', 'claude-haiku-5-5', 'claude-fetch', 0),
 ];
 const firstRetry = fallbackEvents.findIndex((event) => event.type === 'retry');
 const revertRetry = fallbackEvents.findLastIndex((event) => event.type === 'retry');
@@ -1291,7 +1291,7 @@ const createCostEvents = (
   }),
   make('model_request', '11:01', 'engine', {
     model: 'claude-haiku-5-5',
-    adapter: 'claude-sdk',
+    adapter: 'claude-fetch',
     chainPosition: 0,
     role: 'default',
     nativeToolCalls: true,
@@ -1311,7 +1311,7 @@ const costWarnView: SessionView = finishView({
     makeCostWarn('cost_guard', time, 'engine', { outcome: 'warn', ratioPct: 80 }),
     makeCostWarn('model_request', time, 'engine', {
       model: 'claude-haiku-5-5',
-      adapter: 'claude-sdk',
+      adapter: 'claude-fetch',
       chainPosition: 0,
       role: 'default',
       nativeToolCalls: true,
@@ -1335,7 +1335,7 @@ const costStopView: SessionView = finishView({
     makeCostStop('cost_guard', time, 'engine', { outcome: 'warn', ratioPct: 80 }),
     makeCostStop('model_request', time, 'engine', {
       model: 'claude-haiku-5-5',
-      adapter: 'claude-sdk',
+      adapter: 'claude-fetch',
       chainPosition: 0,
       role: 'default',
       nativeToolCalls: true,

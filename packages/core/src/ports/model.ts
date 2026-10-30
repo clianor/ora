@@ -37,7 +37,6 @@ export type ModelStreamEvent =
       readonly stopReason: StopReason;
       readonly usage: ModelUsage;
       readonly nativeToolCalls: boolean;
-      readonly providerMetadata?: Record<string, unknown>;
     };
 
 /** 스트림은 delta를 0회 이상 낸 뒤 `completed`를 정확히 한 번 내고 끝난다. */

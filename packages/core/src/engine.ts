@@ -2389,9 +2389,6 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         payload: {
           role: 'assistant',
           content,
-          ...(completed.providerMetadata === undefined
-            ? {}
-            : { providerMetadata: completed.providerMetadata }),
         },
       });
       historySeqs.push(recorder.lastSeq());

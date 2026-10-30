@@ -119,8 +119,6 @@ export function createMemoryApi(options: MemoryApiOptions): MemoryApi {
       config,
       chains,
       env: options.env,
-      claudeResume: undefined,
-      isolation: config.isolation,
       oraHome,
       pin: undefined,
     });

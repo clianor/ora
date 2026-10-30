@@ -24,21 +24,23 @@ const removedModelKey = (key: 'model' | 'effort') =>
     })
     .optional();
 
-/** Claude 구독 프로바이더다. `fetch`는 Ora가 로그인한 계정(`<oraHome>/auth.json`)으로 직접 호출하고, `sdk`와 `cli`는 설치된 `claude`를 쓴다. */
+const removedClaudeKey = (key: 'via' | 'command') =>
+  z
+    .never({
+      error: `providers.claude.${key}는 없어졌습니다. Claude는 ora login claude로 로그인한 계정으로 직접 호출하므로 이 키를 지웁니다.`,
+    })
+    .optional();
+
+/** Claude 구독 프로바이더다. Ora가 로그인한 계정(`<oraHome>/auth.json`)으로 직접 호출한다. */
 const claudeProviderSchema = z.strictObject({
-  /** `sdk`와 `cli` 경로의 실행 명령 목록이다. 한도 오류가 나면 다음 명령으로 넘어가고, 하나뿐이면 오류로 끝낸다. */
-  command: z
-    .array(z.array(z.string().min(1)).min(1))
-    .min(1)
-    .default([['claude']]),
+  via: removedClaudeKey('via'),
+  command: removedClaudeKey('command'),
   model: removedModelKey('model'),
   effort: removedModelKey('effort'),
   cacheTtl: z.enum(['5m', '1h']).default('1h'),
-  /** 구독 경로의 구현이다. */
-  via: z.enum(['fetch', 'sdk', 'cli']).default('fetch'),
-  /** `fetch` 경로에서 쓸 계정 이름이다. 없으면 `accountPolicies`의 우선순위로 고른다. 있으면 그 계정을 쓰고, 막히거나 갱신에 실패할 때만 다른 계정으로 넘어간다. */
+  /** 쓸 계정 이름이다. 없으면 `accountPolicies`의 우선순위로 고른다. 있으면 그 계정을 쓰고, 막히거나 갱신에 실패할 때만 다른 계정으로 넘어간다. */
   account: z.string().min(1).optional(),
-  /** `fetch` 경로의 최대 출력 토큰이다. */
+  /** 최대 출력 토큰이다. */
   maxTokens: z.number().int().positive().default(8192),
 });
 

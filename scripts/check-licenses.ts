@@ -38,9 +38,6 @@ const violations = Object.entries(readLicenses(['-r', 'licenses', 'list', '--jso
   ([license, packages]) =>
     packages
       .filter((pkg) => !(license === 'OFL-1.1' && fontPackages.has(pkg.name)))
-      // Claude Agent SDK와 플랫폼 바이너리 패키지(`@anthropic-ai/claude-agent-sdk-<platform>`)에만 허용하는 예외다.
-      // 사용자 결정 2026-10-29, Anthropic 약관. 일반 허용 목록에는 넣지 않는다.
-      .filter((pkg) => !pkg.name.startsWith('@anthropic-ai/claude-agent-sdk'))
       .filter((pkg) => !isAllowed(license, prodPackages.has(pkg.name) ? prodAllowed : devAllowed))
       .map((pkg) => `${pkg.name}@${pkg.versions.join(',')} (${license})`),
 );

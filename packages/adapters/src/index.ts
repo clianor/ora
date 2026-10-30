@@ -126,10 +126,6 @@ export async function loadScriptedModel(
   };
 }
 
-export { createClaudeCliModel } from './claude-cli.ts';
-export { createClaudeSdkModel } from './claude-sdk.ts';
-export { ClaudeLimitError, claudeResumeStateSchema } from './claude-shared.ts';
-export type { ClaudeProviderOptions, ClaudeResumeState } from './claude-shared.ts';
 export { createAccountStore } from './fetch/accounts.ts';
 export type { Account, AccountStore, NewAccount } from './fetch/accounts.ts';
 export { BUILTIN_MODELS, catalogModelSchema, createCatalog } from './fetch/catalog.ts';

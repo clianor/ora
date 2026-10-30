@@ -4,15 +4,12 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  claudeResumeStateSchema,
   createAccountStore,
   createCatalog,
-  createClaudeCliModel,
-  createClaudeSdkModel,
   createFetchModel,
   loadScriptedModel,
 } from '@ora/adapters';
-import type { CatalogModel, ClaudeResumeState } from '@ora/adapters';
+import type { CatalogModel } from '@ora/adapters';
 import { formatKst, parseTranscript, planResume, runSession, scrubValue } from '@ora/core';
 import type {
   ApprovalPort,
@@ -31,7 +28,6 @@ import type {
 import { createFileMemory } from '@ora/memory';
 import type {
   ApprovalDecision,
-  Isolation,
   LaunchCommand,
   OraEvent,
   QuestionAnswer,
@@ -216,8 +212,6 @@ export interface ModelRouterOptions {
   readonly config: Config;
   readonly chains: Record<string, ModelChainEntry[]>;
   readonly env: NodeJS.ProcessEnv;
-  readonly claudeResume: ClaudeResumeState | undefined;
-  readonly isolation: Isolation;
   readonly oraHome: string;
   readonly pin: SessionRecord['accountPin'];
 }
@@ -243,27 +237,13 @@ export function createModelRouter(options: ModelRouterOptions): ModelRouter {
       });
       return { ...(await script), model: entry.model };
     }
-    const { claude } = config.providers;
-    if (entry.provider === 'claude' && claude.via === 'fetch') {
+    if (entry.provider === 'claude') {
       return createFetchProviderModel({
         entry,
-        settings: claude,
+        settings: config.providers.claude,
         defaults: { wire: 'anthropic-messages', baseUrl: 'https://api.anthropic.com' },
-        loginHint: 'ora login claude를 실행하거나 providers.claude.via를 "sdk"로 설정합니다.',
+        loginHint: 'ora login claude를 실행합니다.',
         ...options,
-      });
-    }
-    if (entry.provider === 'claude') {
-      const createClaudeModel = claude.via === 'cli' ? createClaudeCliModel : createClaudeSdkModel;
-      return createClaudeModel({
-        model: entry.model,
-        cacheTtl: claude.cacheTtl,
-        commands: claude.command,
-        env: options.env,
-        cwd: command.cwd,
-        ...(entry.effort === undefined ? {} : { effort: entry.effort }),
-        ...(options.claudeResume === undefined ? {} : { resumeFrom: options.claudeResume }),
-        persistSession: options.isolation !== 'clean-home',
       });
     }
     const codex = entry.provider === 'codex';
@@ -383,7 +363,6 @@ export async function executeSession(
     throw new UsageError('작업 폴더가 디렉터리가 아닙니다.');
 
   let resume: ResumeInput | undefined;
-  let claudeResume: ClaudeResumeState | undefined;
   if (command.type === 'resumeSession') {
     const text = await readTranscriptText(sessionDir);
     const session = await readSessionRecord(sessionDir);
@@ -404,19 +383,6 @@ export async function executeSession(
       session,
       ...(command.steer === undefined ? {} : { steer: command.steer }),
     };
-    // 하드 킬 뒤에는 Claude 세션이 기록과 어긋났을 수 있어서 `--resume`을 쓰지 않고 기록을 다시 넣는다.
-    // 마지막 응답 뒤에 압축했다면 그 Claude 세션은 압축 전 기록을 들고 있으므로 같은 이유로 다시 넣는다.
-    const carrier = events.findLast(
-      (event) =>
-        event.type === 'message' &&
-        claudeResumeStateSchema.safeParse(event.payload.providerMetadata).success,
-    );
-    const compactedAfter =
-      carrier !== undefined &&
-      events.some((event) => event.type === 'compaction' && event.seq > carrier.seq);
-    if (!plan.hardKilled && !compactedAfter && carrier?.type === 'message') {
-      claudeResume = claudeResumeStateSchema.parse(carrier.payload.providerMetadata);
-    }
   }
   const isolation = command.isolation ?? resume?.session.isolation ?? config.isolation;
   if (resume !== undefined && isolation !== resume.session.isolation) {
@@ -441,8 +407,6 @@ export async function executeSession(
     config,
     chains,
     env: hooks.env,
-    claudeResume,
-    isolation,
     oraHome,
     pin: resume?.session.accountPin,
   });

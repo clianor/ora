@@ -124,6 +124,7 @@ export const oraEventSchema = z.discriminatedUnion('type', [
     z.strictObject({
       role: z.enum(['user', 'assistant']),
       content: z.array(contentBlockSchema),
+      /** 옛 Claude SDK·CLI 경로가 남긴 기록을 계속 읽기 위해 둔 필드다. 엔진은 더 이상 쓰지 않는다. */
       providerMetadata: jsonObjectSchema.optional(),
       /** 이 메시지가 담은 사용자 지시 원문이다(최초 요청, 승인 거부 때의 조향, 재개 조향). 알림문이나 todo 목록은 넣지 않는다. 압축 요약의 "사용자 지시"는 이 필드만 읽는다. */
       instructions: z.array(z.string()).optional(),
