@@ -1878,7 +1878,7 @@ const v3Row = (c, title, desc, control) =>
 const v3Choice = (c, { title, desc, on, badge = '', h = '"hug"' }) =>
   `<Frame w="fill" h=${h} flex="row" items="start" gap={12} px={14} py={12} rounded={10} bg="${on ? c.raised : c.window}" stroke="${on ? c.borderStrong : c.line}" strokeWidth={1} strokeAlign="inside"><Frame w={16} h={16} flex="row" items="center" justify="center" rounded={8} stroke="${on ? c.ink : c.ink3}" strokeWidth={1.5} strokeAlign="inside">${on ? `<Ellipse w={8} h={8} bg="${c.ink}" />` : ''}</Frame><Frame w="fill" h="hug" flex="col" gap={3}><Frame w="hug" h="hug" flex="row" items="center" gap={8}>${T(c, 14, 20, 600, 'ink', title)}${badge}</Frame>${T(c, 12, 17, 400, 'ink2', desc, 'w="fill" textAutoResize="height"')}</Frame></Frame>`;
 const v3Save = (c, note) =>
-  `<Frame w="fill" h="hug" flex="row" items="center" gap={10}>${T(c, 12, 16, 400, 'ink3', note, 'grow={1}')}${button(c, 'ghost', '되돌리기')}${button(c, 'primary', '저장')}</Frame>`;
+  `<Frame w="fill" h="hug" flex="row" items="center" gap={10}>${T(c, 12, 16, 400, 'ink3', note, 'grow={1}')}${button(c, 'ghost', '취소')}${button(c, 'primary', '저장')}</Frame>`;
 
 /** 설정 › 일반. 세션 한도, 다른 모델 검토, 대화 길이, 도구 한도. 바꾼 값은 다음 세션부터 쓴다. */
 function v3GeneralScreen() {

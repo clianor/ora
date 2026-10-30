@@ -203,7 +203,7 @@ export function ChoiceCard({
   );
 }
 
-/** 페이지 아래의 되돌리기·저장 줄입니다. 바꾼 값 수를 글자로 알리고, 바꾼 값이 없으면 두 단추를 막습니다. */
+/** 페이지 아래의 취소·저장 줄입니다. 바꾼 값 수를 글자로 알리고, 바꾼 값이 없으면 두 단추를 막습니다. */
 export function SaveBar({
   changedCount,
   isInvalid,
@@ -231,7 +231,7 @@ export function SaveBar({
           (isUnchanged ? '바꾼 값이 없습니다' : `바꾼 값이 ${String(changedCount)}개 있습니다`)}
       </p>
       <Button variant="ghost" disabled={isUnchanged || isSaving} onClick={onRevert}>
-        되돌리기
+        취소
       </Button>
       <Button variant="primary" type="submit" disabled={isUnchanged || isInvalid || isSaving}>
         저장
