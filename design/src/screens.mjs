@@ -2445,7 +2445,7 @@ ${T(c, 12, 18, 400, 'ink3', '이 세션이 바꾸지 않은 파일은 그대로 
 /** 되감은 뒤. 되감은 메시지를 입력창에 되돌려 두고, 알림에서 되감기를 취소할 수 있다. */
 function m3RewoundScreen() {
   const c = palette('Slate');
-  const toast = `<Frame name="RewoundToast" position="absolute" x={1004} y={64} w={420} h="hug" flex="row" items="center" gap={10} px={14} py={12} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${I(c, 'undo-2', 'ink', 16)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 600, 'ink', '되감았습니다')}${T(c, 12, 16, 400, 'ink3', '파일 1개를 되돌리고 1개를 지웠습니다')}</Frame>${button(c, 'secondary', '되감기 취소')}</Frame>`;
+  const toast = `<Frame name="RewoundToast" position="absolute" x={660} y={680} w={420} h="hug" flex="row" items="center" gap={10} px={14} py={12} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${I(c, 'undo-2', 'ink', 16)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 600, 'ink', '되감았습니다')}${T(c, 12, 16, 400, 'ink3', '파일 1개를 되돌리고 1개를 지웠습니다')}</Frame>${button(c, 'secondary', '되감기 취소')}</Frame>`;
   return windowV3(c, '49 M3 Rewound · Slate', {
     side: sidebarV3(c, { groups: M3_PR_GROUPS({ selected: 'ora/fix-cache' }) }),
     main:
