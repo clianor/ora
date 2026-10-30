@@ -26,6 +26,7 @@ import type {
 import type {
   AccountsData,
   CostSettingsData,
+  EngineSettingsData,
   McpServersData,
   SkillsData,
   MemoryData,
@@ -1140,6 +1141,15 @@ const gateDeniedView = createPhaseView(
     runGate(s, 'denied');
   },
 );
+const fixtureAvailableTools = [
+  'shell',
+  'file_read',
+  'file_write',
+  'file_edit',
+  'history.read',
+  'github:create_issue',
+];
+const fixtureUnreadDirectories = ['.agents', '.claude', '.pi', '.omp', '.codex', '.gemini'];
 const fixtureRouting: RoutingData = {
   chain: [
     { provider: 'claude', model: 'claude-haiku-5-5', effort: 'medium', hasAccount: true },
@@ -1869,6 +1879,12 @@ type StatefulActionName =
   | 'setAccountPriority'
   | 'refreshCostSettings'
   | 'saveCostSettings'
+  | 'refreshEngineSettings'
+  | 'saveGeneralSettings'
+  | 'saveModelSettings'
+  | 'savePermissionSettings'
+  | 'saveIsolationSettings'
+  | 'deleteApprovalRule'
   | 'refreshMemory'
   | 'deleteMemory'
   | 'tidyMemory'
@@ -1990,6 +2006,61 @@ export function createFixtureStore(): OraStoreSource {
       warnCost: 4,
       pricing: { 'claude/claude-haiku-5-5': { inputPerMTok: 1, outputPerMTok: 5 } },
     },
+  };
+  // 설정 › 일반, 모델, 권한, 격리 시안입니다. 주소는 `#/settings/general`, `#/settings/keys`, `#/settings/models`, `#/settings/permissions`, `#/settings/isolation`입니다.
+  const ready = <T>(value: T): { status: 'ready'; value: T } => ({ status: 'ready', value });
+  let engineSettings: EngineSettingsData = {
+    general: ready({
+      maxSteps: 50,
+      maxRepairsPerTodo: 3,
+      noProgressSteps: 5,
+      maxConcurrentSessions: 4,
+      isReviewEnabled: false,
+      compactAtRatio: 0.8,
+      isIdleSummaryEnabled: false,
+    }),
+    models: ready({
+      roles: {
+        default: ['claude/claude-haiku-5-5:medium', 'codex/gpt-5.6-luna:low'],
+        review: ['codex/gpt-5.6-luna:low', 'claude/claude-haiku-5-5:low'],
+      },
+      revertPolicy: 'cooldown-expiry',
+    }),
+    permissions: ready({
+      mode: 'bypass-permissions',
+      tools: { shell: 'prompt', 'github:create_issue': 'deny' },
+      restrictedFolders: ['/Users/me/projects/math-demo/secrets'],
+      availableTools: fixtureAvailableTools,
+    }),
+    isolation: ready({
+      isolation: 'harness',
+      runningSessionCount: 2,
+      unreadDirectories: fixtureUnreadDirectories,
+    }),
+    approvalRules: ready({
+      rules: [
+        {
+          key: 'rule-1',
+          rule: { tool: 'shell', command: 'node check.js', cwd: '~/projects/math-demo' },
+        },
+        {
+          key: 'rule-2',
+          rule: {
+            tool: 'verify.run',
+            command: 'pnpm test -- readme',
+            cwd: '~/projects/math-demo',
+          },
+        },
+      ],
+    }),
+  };
+  const changeEngineSettings = (change: Partial<EngineSettingsData>): Promise<void> => {
+    engineSettings = { ...engineSettings, ...change };
+    snapshot = { ...snapshot, engineSettings };
+    listeners.forEach((listener) => {
+      listener();
+    });
+    return Promise.resolve();
   };
   // 설정 › MCP 시안의 세 서버입니다. 주소는 `#/settings/mcp`입니다.
   let mcpServers: McpServersData = {
@@ -2231,6 +2302,29 @@ export function createFixtureStore(): OraStoreSource {
       });
       return Promise.resolve();
     },
+    refreshEngineSettings: () => Promise.resolve(),
+    saveGeneralSettings: (next) => changeEngineSettings({ general: ready(next) }),
+    saveModelSettings: (next) => changeEngineSettings({ models: ready(next) }),
+    savePermissionSettings: (next) =>
+      changeEngineSettings({
+        permissions: ready({ ...next, availableTools: fixtureAvailableTools }),
+      }),
+    saveIsolationSettings: (next) =>
+      changeEngineSettings({
+        isolation: ready({
+          ...next,
+          runningSessionCount: 2,
+          unreadDirectories: fixtureUnreadDirectories,
+        }),
+      }),
+    deleteApprovalRule: (key) =>
+      changeEngineSettings({
+        approvalRules: ready({
+          rules: (engineSettings.approvalRules.value?.rules ?? []).filter(
+            (entry) => entry.key !== key,
+          ),
+        }),
+      }),
     setAccountPriority: (provider, name, priority) => {
       update(provider, (entry) => ({
         ...entry,
@@ -2276,6 +2370,7 @@ export function createFixtureStore(): OraStoreSource {
     actions,
     accounts,
     costSettings,
+    engineSettings,
     mcpServers,
     skills: fixtureSkills,
     memory,

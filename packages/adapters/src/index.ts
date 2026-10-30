@@ -1,5 +1,5 @@
 import { appendFile, readFile } from 'node:fs/promises';
-import { ModelLimitError } from '@ora/core';
+import { ModelLimitError, ModelServerError } from '@ora/core';
 import type { ModelCompactResult, ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import { contentBlockSchema } from '@ora/protocol';
 import { z } from 'zod';
@@ -18,7 +18,7 @@ const scriptSchema = z.object({
       // 요청을 실패시킨다. `limit`이면 사용량 한도 오류이고 `resetAfterMs`는 지금부터 해제까지의 시간이다.
       z.object({
         error: z.object({
-          kind: z.enum(['limit', 'error']),
+          kind: z.enum(['limit', 'server', 'error']),
           message: z.string().default('가짜 모델 오류'),
           resetAfterMs: z.number().int().nonnegative().optional(),
         }),
@@ -101,6 +101,7 @@ export async function loadScriptedModel(
       next += 1;
       if ('error' in response) {
         const { kind, message, resetAfterMs } = response.error;
+        if (kind === 'server') throw new ModelServerError(message);
         throw kind === 'limit'
           ? new ModelLimitError(
               message,

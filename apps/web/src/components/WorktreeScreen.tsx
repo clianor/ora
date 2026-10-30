@@ -5,6 +5,7 @@ import { cn } from '../lib/cn.ts';
 import { basename } from '../lib/path.ts';
 import { navigate, type RouteState } from '../lib/route.ts';
 import { usePanelState } from '../lib/panel.ts';
+import { findShortcut } from '../lib/shortcuts.ts';
 import { runningStatuses } from '../lib/status.ts';
 import { openNewTab, openTerminalTab, turnIntoSessionTab, type TabContext } from '../lib/tabs.ts';
 import { findWorktreeOfSession, listWorktrees } from '../lib/worktrees.ts';
@@ -195,24 +196,17 @@ function TabEffects({
   /** 창 전체에서 탭 단축키(⌘T, ⌘N, ⇧⌘S, ⇧⌘T)를 받으려면 window 이벤트를 구독해야 합니다. */
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!event.metaKey && !event.ctrlKey) return;
-      const key = event.key.toLowerCase();
+      const id = findShortcut(event, ['openSessionInTab', 'newTerminal', 'newTab', 'newSession']);
+      if (id === undefined) return;
+      event.preventDefault();
       const newTabId = activeTab?.kind === 'new' ? activeTab.id : undefined;
-      if (event.shiftKey && key === 's') {
-        event.preventDefault();
+      if (id === 'openSessionInTab') {
         if (newTabId)
           navigate('worktree', { cwd: context.cwd, tabId: newTabId, isSessionMode: true });
         else openNewTab(context, true);
-      } else if (event.shiftKey && key === 't') {
-        event.preventDefault();
-        runAction(openTerminalTab(context, newTabId));
-      } else if (key === 't') {
-        event.preventDefault();
-        openNewTab(context);
-      } else if (key === 'n') {
-        event.preventDefault();
-        openNewTab(context, true);
-      }
+      } else if (id === 'newTerminal') runAction(openTerminalTab(context, newTabId));
+      else if (id === 'newTab') openNewTab(context);
+      else openNewTab(context, true);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {

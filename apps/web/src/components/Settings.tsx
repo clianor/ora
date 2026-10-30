@@ -32,9 +32,9 @@ const navSections: { title: string; items: NavItem[] }[] = [
   {
     title: '앱',
     items: [
-      { icon: SettingsIcon, label: '일반' },
+      { icon: SettingsIcon, label: '일반', page: 'general' },
       { icon: Palette, label: '모양', page: 'appearance' },
-      { icon: Keyboard, label: '키보드 단축키' },
+      { icon: Keyboard, label: '키보드 단축키', page: 'keys' },
       { icon: Bell, label: '알림', page: 'notifications' },
     ],
   },
@@ -42,9 +42,9 @@ const navSections: { title: string; items: NavItem[] }[] = [
     title: '엔진',
     items: [
       { icon: KeyRound, label: '계정', page: 'accounts' },
-      { icon: Cpu, label: '모델' },
-      { icon: Shield, label: '권한' },
-      { icon: Box, label: '격리' },
+      { icon: Cpu, label: '모델', page: 'models' },
+      { icon: Shield, label: '권한', page: 'permissions' },
+      { icon: Box, label: '격리', page: 'isolation' },
       { icon: Gauge, label: '비용 상한', page: 'cost' },
       { icon: Plug, label: 'MCP', page: 'mcp' },
       { icon: Sparkles, label: '스킬', page: 'skills' },

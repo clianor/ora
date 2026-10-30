@@ -433,6 +433,39 @@ test(
   TEST_TIMEOUT_MS,
 );
 
+test(
+  '승인 생략 모드에서도 restrictedFolders 안의 쓰기는 승인을 묻고, 그 밖의 쓰기는 묻지 않는다',
+  async () => {
+    const project = createProject();
+    mkdirSync(join(project.dir, 'locked'));
+    await runCli(
+      project,
+      [
+        respond(
+          use('r1', 'file_write', { path: 'locked/secret.txt', content: 'x' }),
+          use('r2', 'file_write', { path: 'open.txt', content: 'y' }),
+        ),
+        respond({ type: 'text', text: '끝났습니다.' }),
+      ],
+      [],
+      {
+        permissions: {
+          mode: 'bypass-permissions',
+          restrictedFolders: [join(project.dir, 'locked')],
+        },
+      },
+    );
+
+    const { events } = readSession(project);
+    expect(existsSync(join(project.dir, 'locked', 'secret.txt'))).toBe(false);
+    expect(existsSync(join(project.dir, 'open.txt'))).toBe(true);
+    expect(
+      events.filter((event) => event.type === 'permission').map((event) => event.payload.decision),
+    ).toEqual(['denied', 'auto']);
+  },
+  TEST_TIMEOUT_MS,
+);
+
 interface RunningCli {
   readonly child: ChildProcess;
   readonly output: () => CliResult;
@@ -2453,7 +2486,7 @@ test(
     expect(same.reviewRequests).toHaveLength(0);
     expect(same.todos[0]).toMatchObject({ status: 'verified' });
 
-    const fallback = await runReviewCase([{ error: { kind: 'error', message: '일반 오류' } }], {
+    const fallback = await runReviewCase([{ error: { kind: 'server', message: '서버 오류' } }], {
       default: { chain: ['claude/main-m'] },
       review: { chain: ['claude/review-m', 'claude/main-m'] },
     });

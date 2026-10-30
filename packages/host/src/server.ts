@@ -36,6 +36,10 @@ import {
   accountProviderSchema,
   addApiKeyBodySchema,
   costSettingsSchema,
+  generalSettingsSchema,
+  isolationSettingsSchema,
+  modelSettingsSchema,
+  permissionSettingsSchema,
   mcpServerAddBodySchema,
   mcpServerPatchBodySchema,
   setPriorityBodySchema,
@@ -64,6 +68,7 @@ import type { UserTodoAction } from '@ora/core';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
 import { AccountApiError, createAccountApi } from './account-api.ts';
 import { createCostApi } from './cost-api.ts';
+import { createSettingsApi } from './settings-api.ts';
 import { createMcpApi } from './mcp-api.ts';
 import { createMemoryApi } from './memory-api.ts';
 import { createSkillsApi } from './skills-api.ts';
@@ -311,6 +316,11 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
   const costApi = createCostApi({
     env: options.env,
     ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+  });
+  const settingsApi = createSettingsApi({
+    env: options.env,
+    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+    listMcpToolNames: () => mcpApi.toolNames(),
   });
   const skillsApi = createSkillsApi({
     env: options.env,
@@ -872,6 +882,68 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       if (method !== 'PUT') throw new HttpError(405, '허용하지 않는 메서드입니다.');
       reply(res, 200, await costApi.set(parseBody(costSettingsSchema, await readJson(req))));
       return;
+    }
+    if (segments[1] === 'settings' && segments.length === 3) {
+      const page = segments[2];
+      if (method !== 'GET' && method !== 'PUT') {
+        throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      }
+      const isRead = method === 'GET';
+      const body = isRead ? undefined : await readJson(req);
+      if (page === 'general') {
+        reply(
+          res,
+          200,
+          isRead
+            ? await settingsApi.getGeneral()
+            : await settingsApi.setGeneral(parseBody(generalSettingsSchema, body)),
+        );
+        return;
+      }
+      if (page === 'models') {
+        reply(
+          res,
+          200,
+          isRead
+            ? await settingsApi.getModels()
+            : await settingsApi.setModels(parseBody(modelSettingsSchema, body)),
+        );
+        return;
+      }
+      if (page === 'permissions') {
+        reply(
+          res,
+          200,
+          isRead
+            ? await settingsApi.getPermissions()
+            : await settingsApi.setPermissions(parseBody(permissionSettingsSchema, body)),
+        );
+        return;
+      }
+      if (page === 'isolation') {
+        const running = live.size + resuming.size;
+        reply(
+          res,
+          200,
+          isRead
+            ? await settingsApi.getIsolation(running)
+            : await settingsApi.setIsolation(parseBody(isolationSettingsSchema, body), running),
+        );
+        return;
+      }
+      throw new HttpError(404, '없는 설정 페이지입니다.');
+    }
+    if (segments[1] === 'permission-rules') {
+      if (segments.length === 2 && method === 'GET') {
+        reply(res, 200, await settingsApi.listRules());
+        return;
+      }
+      if (segments.length === 3 && method === 'DELETE') {
+        const result = await settingsApi.removeRule(decodeURIComponent(segments[2] ?? ''));
+        reply(res, result.error === undefined ? 200 : 409, result);
+        return;
+      }
+      throw new HttpError(405, '허용하지 않는 메서드입니다.');
     }
     if (segments[1] === 'mcp-servers') {
       const [, , rawName, action] = segments;

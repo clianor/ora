@@ -1,4 +1,4 @@
-import { ModelLimitError } from '@ora/core';
+import { ModelLimitError, ModelServerError } from '@ora/core';
 import type { ModelRequest, ModelStreamEvent } from '@ora/core';
 import type { CatalogModel, WireFormat } from './catalog.ts';
 
@@ -83,6 +83,13 @@ export class UsageLimitError extends ModelLimitError {
     this.name = 'UsageLimitError';
   }
 }
+
+/** 같은 계정으로 다시 보내도 소용없는 서버 쪽 상태(5xx·408)인지 본다. */
+const isServerStatus = (status: number): boolean => status >= 500 || status === 408;
+
+/** 재시도를 다 쓴 뒤의 오류다. 서버 쪽 상태면 다음 모델로 넘어가는 오류로, 아니면 일반 오류로 만든다. */
+export const failedResponse = (status: number, message: string): Error =>
+  isServerStatus(status) ? new ModelServerError(message) : new Error(message);
 
 /** 서버가 토큰을 거부(401)한 응답이다. OAuth 계정이면 `createFetchModel`이 토큰을 강제로 갱신해 한 번 다시 보낸다. */
 export class WireAuthError extends Error {

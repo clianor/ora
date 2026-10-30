@@ -87,6 +87,9 @@ export class ModelLimitError extends Error {
   }
 }
 
+/** 서버 오류(5xx·408)나 일시적 연결 오류가 같은 계정의 재시도를 다 쓴 뒤에도 이어졌다는 오류다. 엔진이 다음 모델로 넘어간다. 계정은 바꾸지 않는다. */
+export class ModelServerError extends Error {}
+
 /** 모델 하나의 100만 토큰당 단가다. 비용 가드레일 판정에만 쓴다. 캐시 단가를 비우면 입력 단가로 계산한다. */
 export interface ModelPricing {
   readonly inputPerMTok: number;
@@ -118,7 +121,6 @@ export interface ModelRouter {
   chain(role: string): readonly ModelChainEntry[];
   open(entry: ModelChainEntry): Promise<ModelPort>;
   readonly fallback: {
-    readonly on: 'any' | 'usage-limit' | 'except-usage-limit';
     readonly revertPolicy: 'cooldown-expiry' | 'never';
   };
 }

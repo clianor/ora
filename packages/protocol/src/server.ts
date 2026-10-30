@@ -3,6 +3,7 @@ import { isolationSchema, permissionModeSchema, sessionIdSchema } from './common
 import {
   approvalDecisionSchema,
   approvalRequestSchema,
+  approvalRuleSchema,
   questionAnswerSchema,
   questionRequestSchema,
 } from './interaction.ts';
@@ -38,7 +39,6 @@ export const routingResponseSchema = z.strictObject({
   roles: z.record(z.string(), z.array(routingEntrySchema)),
   catalog: z.array(routingCatalogEntrySchema),
   fallback: z.strictObject({
-    on: z.enum(['any', 'usage-limit', 'except-usage-limit']),
     revertPolicy: z.enum(['cooldown-expiry', 'never']),
   }),
 });
@@ -170,3 +170,78 @@ export const costSettingsSchema = z.strictObject({
   pricing: z.record(z.string().min(1), modelPricingSchema),
 });
 export type CostSettings = z.infer<typeof costSettingsSchema>;
+
+/** 설정 › 일반에서 고를 수 있는 값의 범위다. 저장 API와 화면이 같은 값을 쓴다. */
+export const GENERAL_SETTINGS_RANGES = {
+  maxSteps: { min: 1, max: 1000 },
+  maxRepairsPerTodo: { min: 0, max: 20 },
+  noProgressSteps: { min: 1, max: 50 },
+  maxConcurrentSessions: { min: 1, max: 16 },
+  compactAtRatio: { min: 0.1, max: 0.95 },
+} as const;
+
+const rangedInt = (range: { min: number; max: number }) =>
+  z.number().int().min(range.min).max(range.max);
+
+/** 설정 › 일반의 값이다. 세션이 시작할 때 읽으므로 바꾼 값은 다음 세션부터 쓴다. */
+export const generalSettingsSchema = z.strictObject({
+  maxSteps: rangedInt(GENERAL_SETTINGS_RANGES.maxSteps),
+  maxRepairsPerTodo: rangedInt(GENERAL_SETTINGS_RANGES.maxRepairsPerTodo),
+  noProgressSteps: rangedInt(GENERAL_SETTINGS_RANGES.noProgressSteps),
+  maxConcurrentSessions: rangedInt(GENERAL_SETTINGS_RANGES.maxConcurrentSessions),
+  isReviewEnabled: z.boolean(),
+  compactAtRatio: z
+    .number()
+    .min(GENERAL_SETTINGS_RANGES.compactAtRatio.min)
+    .max(GENERAL_SETTINGS_RANGES.compactAtRatio.max),
+  isIdleSummaryEnabled: z.boolean(),
+});
+export type GeneralSettings = z.infer<typeof generalSettingsSchema>;
+
+/** 체인 항목 `<프로바이더>/<모델>[:<추론 강도>]`다. */
+export const chainEntryTextSchema = z
+  .string()
+  .regex(/^(claude|codex|grok)\/[^:\s]+(:(low|medium|high))?$/, {
+    error: '체인 항목은 <claude|codex|grok>/<모델>[:<low|medium|high>] 형식입니다.',
+  });
+
+/** 설정 › 모델의 값이다. 비어 있는 역할의 체인은 `default` 체인을 쓴다. */
+export const modelSettingsSchema = z.strictObject({
+  roles: z.record(z.string().min(1), z.array(chainEntryTextSchema)),
+  revertPolicy: z.enum(['cooldown-expiry', 'never']),
+});
+export type ModelSettings = z.infer<typeof modelSettingsSchema>;
+
+export const toolPolicySchema = z.enum(['allow', 'prompt', 'deny']);
+
+/** 설정 › 권한의 값이다. `restrictedFolders` 안의 쓰기와 실행은 어떤 모드에서도 승인을 묻는다. */
+export const permissionSettingsSchema = z.strictObject({
+  mode: permissionModeSchema,
+  tools: z.record(z.string().min(1), toolPolicySchema),
+  restrictedFolders: z.array(z.string().min(1)),
+});
+export type PermissionSettings = z.infer<typeof permissionSettingsSchema>;
+
+/** 권한 화면이 도구 정책을 더할 때 고르는 도구 이름이다. */
+export const permissionSettingsResponseSchema = permissionSettingsSchema.extend({
+  availableTools: z.array(z.string()),
+});
+export type PermissionSettingsResponse = z.infer<typeof permissionSettingsResponseSchema>;
+
+/** 설정 › 격리의 값이다. */
+export const isolationSettingsSchema = z.strictObject({ isolation: isolationSchema });
+export type IsolationSettings = z.infer<typeof isolationSettingsSchema>;
+
+export const isolationSettingsResponseSchema = isolationSettingsSchema.extend({
+  runningSessionCount: z.number().int().nonnegative(),
+  /** 엔진이 읽지 않는 홈 디렉터리 아래 폴더 이름이다 (SPEC 5.6절). */
+  unreadDirectories: z.array(z.string()),
+});
+export type IsolationSettingsResponse = z.infer<typeof isolationSettingsResponseSchema>;
+
+/** "항상 승인한 명령" 목록이다. `error`가 있으면 파일을 읽지 못한 것이므로 지울 수 없다. */
+export const permissionRulesResponseSchema = z.strictObject({
+  rules: z.array(z.strictObject({ key: z.string(), rule: approvalRuleSchema })),
+  error: z.string().optional(),
+});
+export type PermissionRulesResponse = z.infer<typeof permissionRulesResponseSchema>;

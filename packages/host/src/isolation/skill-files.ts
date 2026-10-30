@@ -4,7 +4,8 @@ import { join, sep } from 'node:path';
 import type { SkillEntry } from '@ora/core';
 import type { SkillScope } from '@ora/protocol';
 
-const HARNESS_DIRS = ['.agents', '.claude', '.pi', '.omp', '.codex', '.gemini'];
+/** 엔진이 읽지 않는 홈 디렉터리 아래 폴더다 (SPEC 5.6절). 스킬 로더가 이 목록으로 심링크를 따라간 경로를 걸러 내고, 설정 › 격리 화면이 같은 목록을 보인다. */
+export const HARNESS_DIRS = ['.agents', '.claude', '.pi', '.omp', '.codex', '.gemini'];
 const SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const MAX_SKILL_BYTES = 262144;
 

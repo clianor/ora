@@ -2,6 +2,13 @@ import type {
   AccountProvider,
   ApprovalDecision,
   CostSettings,
+  GeneralSettings,
+  IsolationSettings,
+  IsolationSettingsResponse,
+  ModelSettings,
+  PermissionRulesResponse,
+  PermissionSettings,
+  PermissionSettingsResponse,
   McpServerAddBody,
   McpServerStatus,
   SkillListResponse,
@@ -162,6 +169,15 @@ export interface OraActions {
   refreshCostSettings: () => Promise<void>;
   /** 비용 상한과 단가를 설정 파일에 씁니다. 서버가 형식을 거부하면 거부합니다. 다음에 시작하거나 이어 가는 세션부터 적용합니다. */
   saveCostSettings: (next: CostSettings) => Promise<void>;
+  /** 일반·모델·권한·격리 페이지와 승인 규칙 목록 중 하나를 서버에서 다시 읽습니다. */
+  refreshEngineSettings: (page: keyof EngineSettingsData) => Promise<void>;
+  /** 아래 네 저장은 설정 파일에 씁니다. 서버가 범위 밖 값을 거부하면 그 이유로 거부하고, 바꾼 값은 다음 세션부터 적용합니다. */
+  saveGeneralSettings: (next: GeneralSettings) => Promise<void>;
+  saveModelSettings: (next: ModelSettings) => Promise<void>;
+  savePermissionSettings: (next: PermissionSettings) => Promise<void>;
+  saveIsolationSettings: (next: IsolationSettings) => Promise<void>;
+  /** `permissions.json`의 규칙 하나를 지웁니다. 파일이 깨졌으면 그 이유로 거부합니다. */
+  deleteApprovalRule: (key: string) => Promise<void>;
   /** MCP 서버 목록과 상태를 서버에서 다시 읽습니다. */
   refreshMcpServers: () => Promise<void>;
   /** 스킬 목록과 최근 회상을 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 스킬도 읽습니다. */
@@ -207,6 +223,23 @@ export interface CostSettingsData {
   status: 'loading' | 'ready' | 'error';
   errorMessage?: string;
   settings?: CostSettings;
+}
+
+/** 설정 페이지 하나의 읽기 결과입니다. 다시 읽다 실패해도 앞서 읽은 값은 남습니다. */
+export interface Loadable<T> {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  value?: T;
+}
+
+/** 설정 › 일반, 모델, 권한, 격리 페이지가 그리는 데이터입니다. */
+export interface EngineSettingsData {
+  general: Loadable<GeneralSettings>;
+  models: Loadable<ModelSettings>;
+  permissions: Loadable<PermissionSettingsResponse>;
+  isolation: Loadable<IsolationSettingsResponse>;
+  /** 권한 페이지의 "항상 승인한 명령" 목록입니다. */
+  approvalRules: Loadable<PermissionRulesResponse>;
 }
 
 /** 설정 › MCP 페이지가 그리는 데이터입니다. */
@@ -264,6 +297,7 @@ export interface OraStore {
   actions: OraActions;
   accounts: AccountsData;
   costSettings: CostSettingsData;
+  engineSettings: EngineSettingsData;
   mcpServers: McpServersData;
   skills: SkillsData;
   memory: MemoryData;

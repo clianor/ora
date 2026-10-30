@@ -116,8 +116,10 @@ const configSchema = z.object({
     .object({
       mode: permissionModeSchema.default('bypass-permissions'),
       tools: z.record(z.string(), z.enum(['allow', 'prompt', 'deny'])).default({}),
+      /** 이 폴더 안의 쓰기와 실행은 어떤 권한 모드에서도 승인을 묻는다. */
+      restrictedFolders: z.array(z.string().min(1)).default([]),
     })
-    .default({ mode: 'bypass-permissions', tools: {} }),
+    .default({ mode: 'bypass-permissions', tools: {}, restrictedFolders: [] }),
   providers: z
     .strictObject({
       claude: claudeProviderSchema.default(claudeProviderSchema.parse({})),
@@ -133,10 +135,15 @@ const configSchema = z.object({
   roles: z.record(z.string().min(1), z.strictObject({ chain: chainSchema })).default({}),
   fallback: z
     .strictObject({
-      on: z.enum(['any', 'usage-limit', 'except-usage-limit']).default('any'),
+      on: z
+        .never({
+          error:
+            'fallback.on은 없어졌습니다. 다음 모델로 넘어가는 경우는 사용 한도(모든 계정)와 서버 오류(재시도 소진)로 고정되었으므로 이 키를 지웁니다.',
+        })
+        .optional(),
       revertPolicy: z.enum(['cooldown-expiry', 'never']).default('cooldown-expiry'),
     })
-    .default({ on: 'any', revertPolicy: 'cooldown-expiry' }),
+    .default({ revertPolicy: 'cooldown-expiry' }),
   /** 계정마다 우선순위와 예비 한도를 정한다. API 키 계정도 `ora login <프로바이더> --api-key-env`로 만든 계정이므로 여기에 적는다. */
   accountPolicies: z.array(accountPolicySchema).default([]),
   retry: z

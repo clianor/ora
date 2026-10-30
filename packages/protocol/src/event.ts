@@ -157,8 +157,12 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       layer: z.enum(['transport', 'session']),
       /** 같은 요청을 다시 보낸 횟수다. 첫 재시도가 1이다. */
       attempt: z.number().int().positive(),
-      /** `revert`는 첫 모델의 한도 해제 시각이 지나 엔진이 첫 모델로 되돌아간 경우다. */
-      reason: z.enum(['usage-limit', 'error', 'revert']),
+      /**
+       * `usage-limit`: 모든 계정이 한도에 걸려 다음 모델로 넘어갔다.
+       * `server-error`: 5xx·408·연결 오류가 같은 계정의 재시도를 다 쓴 뒤에도 이어져 다음 모델로 넘어갔다.
+       * `revert`: 첫 모델의 한도 해제 시각이 지나 첫 모델로 돌아왔다. `error`는 옛 기록에만 있다.
+       */
+      reason: z.enum(['usage-limit', 'server-error', 'error', 'revert']),
       /** 실패한 요청의 오류 문구다. 토큰을 지운 뒤 적는다. */
       message: z.string().optional(),
       /** 프로바이더가 알려 준 사용 한도 해제 시각(ISO)이다. 알려 주지 않으면 없다. */

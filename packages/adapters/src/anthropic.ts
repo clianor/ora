@@ -1,5 +1,5 @@
 import { defaultSleep, readSse } from './fetch/http.ts';
-import { scrubText } from '@ora/core';
+import { ModelServerError, scrubText } from '@ora/core';
 import type { ModelCompactResult, ModelMessage, ModelRequest, ModelStreamEvent } from '@ora/core';
 import type { CompactionReplay } from '@ora/protocol';
 import { createFrameAssembler, toApiName } from './anthropic-frames.ts';
@@ -26,7 +26,7 @@ import {
   toOauthToolName,
 } from './fetch/claude-identity.ts';
 import type { CatalogModel } from './fetch/catalog.ts';
-import { UsageLimitError, WireAuthError } from './fetch/wire.ts';
+import { failedResponse, UsageLimitError, WireAuthError } from './fetch/wire.ts';
 import type { WireCredential, WireStream } from './fetch/wire.ts';
 
 const ERROR_BODY_MAX_CHARS = 500;
@@ -257,11 +257,9 @@ export const streamAnthropicMessages: WireStream = async function* ({
       } catch (error) {
         if (signal.aborted) throw error;
         if (attempt + 1 >= RETRY_MAX_ATTEMPTS) {
-          throw new Error(
+          throw new ModelServerError(
             redact(`Anthropic 요청이 네트워크 오류로 실패했습니다: ${String(error)}`),
-            {
-              cause: error,
-            },
+            { cause: error },
           );
         }
         await sleep(Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS), signal);
@@ -283,10 +281,13 @@ export const streamAnthropicMessages: WireStream = async function* ({
       const retryable =
         response.status >= 500 ||
         (RETRYABLE_STATUSES as readonly number[]).includes(response.status);
-      if (!retryable || attempt + 1 >= RETRY_MAX_ATTEMPTS) throw new Error(summary);
+      if (!retryable || attempt + 1 >= RETRY_MAX_ATTEMPTS)
+        throw failedResponse(response.status, summary);
       if (hint !== undefined && hint > RETRY_MAX_DELAY_MS) {
         const message = `${summary} (재시도 대기 ${Math.ceil(hint / 1000)}초가 상한을 넘어 중단합니다)`;
-        throw response.status === 429 ? new UsageLimitError(message, resetAt) : new Error(message);
+        throw response.status === 429
+          ? new UsageLimitError(message, resetAt)
+          : failedResponse(response.status, message);
       }
       await sleep(hint ?? Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS), signal);
     }
@@ -417,7 +418,7 @@ export async function compactAnthropicMessages({
     if (received.status === 429 && /usage|limit/i.test(text)) throw new UsageLimitError(summary);
     const retryable =
       received.status >= 500 || (RETRYABLE_STATUSES as readonly number[]).includes(received.status);
-    if (!retryable || last) throw new Error(summary);
+    if (!retryable || last) throw failedResponse(received.status, summary);
     await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt, signal);
   }
   const result = (await response.json()) as {

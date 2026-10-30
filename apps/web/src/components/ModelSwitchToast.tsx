@@ -16,6 +16,8 @@ const timeFormat = new Intl.DateTimeFormat('ko-KR', {
 function describeSwitch({ reason, from, resetAt, message }: ModelSwitchData): string {
   if (reason === 'revert')
     return `첫 모델로 돌아왔습니다. 앞 모델 ${from}: 사용 한도가 풀렸습니다.`;
+  if (reason === 'server-error')
+    return `앞 모델 ${from}: 서버 오류가 이어져 다음 모델로 넘어갔습니다.`;
   if (reason === 'error')
     return `앞 모델 ${from}: 요청이 오류로 실패했습니다. ${message ?? ''}`.trim();
   const until =

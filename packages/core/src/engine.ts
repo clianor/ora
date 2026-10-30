@@ -32,13 +32,18 @@ import { findHarnessCliCall } from './harness-cli.ts';
 import { addedLines, findStubs, judgeGate } from './gate.ts';
 import type { GateResult } from './gate.ts';
 import type { ToolPolicy } from './permission.ts';
-import type { AlwaysApprovalPort, ApprovalPort, QuestionPort } from './ports/approval.ts';
+import type {
+  AlwaysApprovalPort,
+  ApprovalPort,
+  QuestionPort,
+  RestrictedFolderPort,
+} from './ports/approval.ts';
 import type { McpNoticePort } from './ports/mcp-notices.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
 import type { ConflictJudge, MemoryPort } from './ports/memory.ts';
 import type { SkillEntry, SkillPort } from './ports/skills.ts';
 import { scoreBm25 } from './relevance.ts';
-import { CostStopError, ModelLimitError } from './ports/model.ts';
+import { CostStopError, ModelLimitError, ModelServerError } from './ports/model.ts';
 import type {
   ModelChainEntry,
   ModelCompactResult,
@@ -147,6 +152,8 @@ export interface EngineDeps {
   readonly questions?: QuestionPort;
   /** "항상 승인" 저장소다. 없으면 "항상 승인"을 이 세션 동안의 승인으로 다룬다. */
   readonly alwaysApprovals?: AlwaysApprovalPort;
+  /** 이 폴더 안의 쓰기와 실행은 어떤 권한 모드에서도 승인을 묻는다. 없으면 제한 폴더가 없다. */
+  readonly restrictedFolders?: RestrictedFolderPort;
   /** MCP 서버 연결·장애 알림이다. 엔진이 스텝마다 꺼내 세션 기록에 남긴다. */
   readonly mcpNotices?: McpNoticePort;
   /** 없으면 스킬을 쓰지 않는다. */
@@ -659,6 +666,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       harnessFiles.length > 0 && typeof command === 'string'
         ? findHarnessCliCall(command)
         : undefined;
+    // 제한 폴더 안의 쓰기와 실행은 권한 모드·도구 정책·기억된 승인과 상관없이 매번 묻는다.
+    const targetPath = joinCwd(input.cwd, call.input.path ?? call.input.cwd);
+    const isRestricted =
+      tier !== 'read' && (await deps.restrictedFolders?.contains(targetPath)) === true;
+    const mustAsk = blockedCli !== undefined || isRestricted;
     const record = (
       decision: 'auto' | 'approved' | 'denied',
       extra: { scope?: ApprovalScope; editedCommand?: string; warning?: string } = {},
@@ -675,7 +687,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         },
       });
 
-    if (verdict === 'auto' && blockedCli === undefined) {
+    if (verdict === 'auto' && !mustAsk) {
       await record('auto');
       return {};
     }
@@ -692,11 +704,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         ? { tool: call.tool, command, cwd }
         : { tool: call.tool, args: rest };
     const key = ruleKey(rule);
-    if (blockedCli === undefined && sessionRules.some((entry) => ruleKey(entry) === key)) {
+    if (!mustAsk && sessionRules.some((entry) => ruleKey(entry) === key)) {
       await record('approved', { scope: 'session' });
       return {};
     }
-    if (blockedCli === undefined && (await deps.alwaysApprovals?.has(rule))) {
+    if (!mustAsk && (await deps.alwaysApprovals?.has(rule))) {
       await record('approved', { scope: 'always' });
       return {};
     }
@@ -1488,13 +1500,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     if (history.length > before) historySeqs.push(recorder.lastSeq());
     else historySeqs[historySeqs.length - 1] = recorder.lastSeq();
   };
-  const shouldFallback = (error: unknown) => {
-    const { on } = router.fallback;
-    if (on === 'any') return true;
-    return error instanceof ModelLimitError === (on === 'usage-limit');
-  };
   /**
-   * 역할의 체인에서 지금 위치의 모델로 요청 한 번을 보낸다. 실패하면 `fallback.on`에 맞을 때 다음 모델로 같은 요청을 다시 보내고 `retry` 이벤트를 남긴다.
+   * 역할의 체인에서 지금 위치의 모델로 요청 한 번을 보낸다. 사용 한도나 서버 오류로 실패하면 다음 모델로 같은 요청을 다시 보내고 `retry` 이벤트를 남긴다. 그 밖의 오류는 던진다.
    * 첫 모델이 한도 오류로 넘어갔고 그 해제 시각이 지났으면, 요청 전에 첫 모델로 되돌아간다. 취소는 폴백하지 않는다.
    */
   const requestModel = async (
@@ -1507,7 +1514,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     const chain = router.chain(role);
     let attempt = 0;
     const emitRetry = async (
-      reason: 'usage-limit' | 'error' | 'revert',
+      reason: 'usage-limit' | 'server-error' | 'revert',
       error: unknown,
       delayMs: number,
     ) => {
@@ -1567,14 +1574,20 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         };
       } catch (error) {
         if (signal.aborted || softStop.aborted) throw error;
-        if (state.position + 1 >= chain.length || !shouldFallback(error)) throw error;
+        const isFallbackError =
+          error instanceof ModelLimitError || error instanceof ModelServerError;
+        if (state.position + 1 >= chain.length || !isFallbackError) throw error;
         if (state.position === 0) {
           if (error instanceof ModelLimitError && error.resetAtMs !== undefined) {
             state.resetAtMs = error.resetAtMs;
           } else delete state.resetAtMs;
         }
         state.position += 1;
-        await emitRetry(error instanceof ModelLimitError ? 'usage-limit' : 'error', error, 0);
+        await emitRetry(
+          error instanceof ModelLimitError ? 'usage-limit' : 'server-error',
+          error,
+          0,
+        );
       }
     }
   };

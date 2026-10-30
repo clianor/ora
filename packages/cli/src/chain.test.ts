@@ -95,16 +95,34 @@ test(
 );
 
 test(
-  'fallback.on이 usage-limit이면 일반 오류는 폴백하지 않고 세션이 failed로 끝난다',
+  '서버 오류가 재시도를 다 쓴 뒤에도 이어지면 다음 모델로 넘어가고 retry 이유가 server-error다',
   async () => {
-    const { retries, requests, end } = await runChain([failure, text], {
-      ...chain,
-      fallback: { on: 'usage-limit' },
-    });
+    const { retries, requests } = await runChain([{ error: { kind: 'server' } }, text], chain);
+
+    expect(retries.map((retry) => [retry.reason, retry.switchedTo])).toEqual([
+      ['server-error', 'm2'],
+    ]);
+    expect(requests.map((request) => request.chainPosition)).toEqual([1]);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '그 밖의 오류(400 등)는 다음 모델로 넘어가지 않고 세션이 failed로 끝난다',
+  async () => {
+    const { retries, requests, end } = await runChain([failure, text], chain);
 
     expect(retries).toEqual([]);
     expect(requests).toEqual([]);
     expect(end).toMatchObject({ status: 'failed', summary: '일반 오류' });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '옛 설정의 fallback.on은 대체 방법을 알려 주는 오류로 시작을 막는다',
+  async () => {
+    await expect(runChain([text], { ...chain, fallback: { on: 'any' } })).rejects.toThrow();
   },
   TEST_TIMEOUT_MS,
 );

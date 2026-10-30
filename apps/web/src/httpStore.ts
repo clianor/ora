@@ -1,6 +1,11 @@
 import {
   accountListResponseSchema,
   costSettingsSchema,
+  generalSettingsSchema,
+  isolationSettingsResponseSchema,
+  modelSettingsSchema,
+  permissionRulesResponseSchema,
+  permissionSettingsResponseSchema,
   mcpServerListResponseSchema,
   skillListResponseSchema,
   memoryDeleteResponseSchema,
@@ -56,6 +61,7 @@ import { getModelState } from './lib/routing.ts';
 import type {
   AccountsData,
   CostSettingsData,
+  EngineSettingsData,
   McpServersData,
   SkillsData,
   MemoryData,
@@ -218,6 +224,13 @@ export function createHttpStore(): OraStoreSource {
   let accounts: AccountsData = { status: 'loading', providers: [] };
   let accountPollTimer: ReturnType<typeof setTimeout> | null = null;
   let costSettings: CostSettingsData = { status: 'loading' };
+  let engineSettings: EngineSettingsData = {
+    general: { status: 'loading' },
+    models: { status: 'loading' },
+    permissions: { status: 'loading' },
+    isolation: { status: 'loading' },
+    approvalRules: { status: 'loading' },
+  };
   let mcpPollTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpServers: McpServersData = { status: 'loading', servers: [] };
   let skills: SkillsData = { status: 'loading' };
@@ -325,6 +338,7 @@ export function createHttpStore(): OraStoreSource {
       actions,
       accounts,
       costSettings,
+      engineSettings,
       mcpServers,
       skills,
       memory,
@@ -571,6 +585,32 @@ export function createHttpStore(): OraStoreSource {
     notifySoon();
   };
 
+  const engineSettingRequests = {
+    general: { path: '/api/settings/general', schema: generalSettingsSchema },
+    models: { path: '/api/settings/models', schema: modelSettingsSchema },
+    permissions: { path: '/api/settings/permissions', schema: permissionSettingsResponseSchema },
+    isolation: { path: '/api/settings/isolation', schema: isolationSettingsResponseSchema },
+    approvalRules: { path: '/api/permission-rules', schema: permissionRulesResponseSchema },
+  } as const;
+  const refreshEngineSettings = async (page: keyof EngineSettingsData): Promise<void> => {
+    const { path, schema } = engineSettingRequests[page];
+    try {
+      const value = await requestJson<unknown>(path, schema);
+      engineSettings = { ...engineSettings, [page]: { status: 'ready', value } };
+    } catch (error) {
+      const previous = engineSettings[page].value;
+      engineSettings = {
+        ...engineSettings,
+        [page]: {
+          status: 'error',
+          errorMessage: toMessage(error),
+          ...(previous === undefined ? {} : { value: previous }),
+        },
+      };
+    }
+    notifySoon();
+  };
+
   const applyMcpServers = (servers: McpServerStatus[]): void => {
     mcpServers = { status: 'ready', servers };
     // 연결 중인 서버가 있으면 끝날 때까지 상태를 다시 읽는다.
@@ -736,6 +776,40 @@ export function createHttpStore(): OraStoreSource {
       await requestJson('/api/cost-settings', costSettingsSchema, { method: 'PUT', body: next });
       await refreshCostSettings();
     },
+    refreshEngineSettings,
+    saveGeneralSettings: async (next) => {
+      await requestJson('/api/settings/general', generalSettingsSchema, {
+        method: 'PUT',
+        body: next,
+      });
+      await refreshEngineSettings('general');
+    },
+    saveModelSettings: async (next) => {
+      await requestJson('/api/settings/models', modelSettingsSchema, { method: 'PUT', body: next });
+      await refreshEngineSettings('models');
+    },
+    savePermissionSettings: async (next) => {
+      await requestJson('/api/settings/permissions', permissionSettingsResponseSchema, {
+        method: 'PUT',
+        body: next,
+      });
+      await refreshEngineSettings('permissions');
+    },
+    saveIsolationSettings: async (next) => {
+      await requestJson('/api/settings/isolation', isolationSettingsResponseSchema, {
+        method: 'PUT',
+        body: next,
+      });
+      await refreshEngineSettings('isolation');
+    },
+    deleteApprovalRule: async (key) => {
+      await requestJson(
+        `/api/permission-rules/${encodeURIComponent(key)}`,
+        permissionRulesResponseSchema,
+        { method: 'DELETE' },
+      );
+      await refreshEngineSettings('approvalRules');
+    },
     refreshMcpServers,
     refreshSkills,
     refreshMemory,
@@ -871,6 +945,7 @@ export function createHttpStore(): OraStoreSource {
     actions,
     accounts,
     costSettings,
+    engineSettings,
     mcpServers,
     skills,
     memory,
@@ -879,6 +954,9 @@ export function createHttpStore(): OraStoreSource {
   refreshList().catch(() => undefined);
   refreshAccounts().catch(() => undefined);
   refreshCostSettings().catch(() => undefined);
+  for (const page of ['general', 'models', 'permissions', 'isolation', 'approvalRules'] as const) {
+    refreshEngineSettings(page).catch(() => undefined);
+  }
   refreshMcpServers().catch(() => undefined);
   refreshSkills().catch(() => undefined);
   refreshMemory().catch(() => undefined);

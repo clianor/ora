@@ -20,6 +20,8 @@ export interface McpApi {
   setEnabled(name: string, enabled: boolean): Promise<McpServerListResponse | undefined>;
   remove(name: string): Promise<McpServerListResponse | undefined>;
   reconnect(name: string): Promise<McpServerListResponse | undefined>;
+  /** 지금 연결된 MCP 서버의 도구 이름이다. */
+  toolNames(): Promise<string[]>;
   close(): Promise<void>;
 }
 
@@ -120,6 +122,10 @@ export function createMcpApi(options: McpApiOptions): McpApi {
       if (!manager.status().some((server) => server.name === name)) return undefined;
       await manager.reconnect(name);
       return respond();
+    },
+    async toolNames() {
+      await ensureStarted();
+      return manager.tools().map((tool) => tool.name);
     },
     close: () => manager.close(),
   };

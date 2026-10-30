@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { findPaletteAction, shortcutKeys } from '../lib/shortcuts.ts';
 import { cn } from '../lib/cn.ts';
 import { navigate, type Route } from '../lib/route.ts';
 import { focusTodoPanel } from './RightPanel.tsx';
@@ -49,7 +50,13 @@ function buildItems(repos: readonly RepoNode[]): PaletteItem[] {
       route: 'worktree' as const,
       sessionId: node.record.id,
     })),
-    { group: '명령', icon: SquarePen, label: '새 세션 시작', shortcut: '⌘N', route: 'worktree' },
+    {
+      group: '명령',
+      icon: SquarePen,
+      label: '새 세션 시작',
+      shortcut: shortcutKeys('newSession'),
+      route: 'worktree',
+    },
     ...sessions
       .filter(
         ({ node }) => node.record.status === 'crashed' || node.record.status === 'interrupted',
@@ -65,11 +72,17 @@ function buildItems(repos: readonly RepoNode[]): PaletteItem[] {
       group: '이동',
       icon: ListChecks,
       label: '할 일 패널',
-      shortcut: '⌘1',
+      shortcut: shortcutKeys('todoPanel'),
       route: 'worktree',
       focusTodos: true,
     },
-    { group: '이동', icon: Settings, label: '설정', shortcut: '⌘,', route: 'settings' },
+    {
+      group: '이동',
+      icon: Settings,
+      label: '설정',
+      shortcut: shortcutKeys('settings'),
+      route: 'settings',
+    },
   ];
 }
 
@@ -117,16 +130,12 @@ export function CommandPalette({ repos, initialQuery, onClose }: CommandPaletteP
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setActive(Math.min(activeIndex + 1, ordered.length - 1));
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setActive(Math.max(activeIndex - 1, 0));
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      run(ordered[activeIndex]);
-    }
+    const action = findPaletteAction(event.key);
+    if (action === undefined) return;
+    event.preventDefault();
+    if (action === 'down') setActive(Math.min(activeIndex + 1, ordered.length - 1));
+    else if (action === 'up') setActive(Math.max(activeIndex - 1, 0));
+    else run(ordered[activeIndex]);
   };
 
   return (

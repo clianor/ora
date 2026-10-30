@@ -7,6 +7,9 @@ import { AppearancePage, SettingsNav } from './components/Settings.tsx';
 import { McpPage } from './components/McpPage.tsx';
 import { SkillsPage } from './components/SkillsPage.tsx';
 import { MemoryPage } from './components/MemoryPage.tsx';
+import { GeneralPage, IsolationPage, KeysPage } from './components/EngineSettings.tsx';
+import { ModelsPage } from './components/ModelsPage.tsx';
+import { PermissionsPage } from './components/PermissionsPage.tsx';
 import { CostPage, NotificationsPage } from './components/SettingsPages.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { focusTodoPanel } from './components/RightPanel.tsx';
@@ -15,6 +18,7 @@ import { EmptyWelcome } from './components/Welcome.tsx';
 import { WorktreeScreen } from './components/WorktreeScreen.tsx';
 import { togglePanel } from './lib/panel.ts';
 import { navigate, setPaletteOpen, useRouteState, type RouteState } from './lib/route.ts';
+import { findShortcut } from './lib/shortcuts.ts';
 import { useDesktopNotifications } from './lib/notify.ts';
 import { useStore } from './store.tsx';
 
@@ -22,24 +26,20 @@ function useShortcuts(state: RouteState) {
   /** 창 전체에서 키보드 단축키(⌘K, ⌘Y, ⌘,, ⌘1, ⌥⌘B)를 받으려면 window 이벤트를 구독해야 합니다. */
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!event.metaKey && !event.ctrlKey) return;
-      // ⌥를 누르면 event.key가 다른 글자로 바뀌므로 물리 키(code)로 판정합니다.
-      if (event.altKey && event.code === 'KeyB') {
-        event.preventDefault();
-        togglePanel();
-      } else if (event.key === 'k') {
-        event.preventDefault();
-        setPaletteOpen(!state.isPaletteOpen);
-      } else if (event.key === 'y') {
-        event.preventDefault();
-        navigate('history');
-      } else if (event.key === ',') {
-        event.preventDefault();
-        navigate('settings');
-      } else if (event.key === '1') {
-        event.preventDefault();
-        focusTodoPanel();
-      }
+      const id = findShortcut(event, [
+        'togglePanel',
+        'palette',
+        'history',
+        'settings',
+        'todoPanel',
+      ]);
+      if (id === undefined) return;
+      event.preventDefault();
+      if (id === 'togglePanel') togglePanel();
+      else if (id === 'palette') setPaletteOpen(!state.isPaletteOpen);
+      else if (id === 'history') navigate('history');
+      else if (id === 'settings') navigate('settings');
+      else focusTodoPanel();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
@@ -63,6 +63,11 @@ function Screen({ state }: { state: RouteState }) {
           <SettingsNav current={page} {...(state.cwd === undefined ? {} : { cwd: state.cwd })} />
           <main className="flex min-w-0 flex-1 flex-col">
             {page === 'accounts' && <AccountsPage />}
+            {page === 'general' && <GeneralPage />}
+            {page === 'keys' && <KeysPage />}
+            {page === 'models' && <ModelsPage />}
+            {page === 'permissions' && <PermissionsPage />}
+            {page === 'isolation' && <IsolationPage />}
             {page === 'cost' && <CostPage />}
             {page === 'notifications' && <NotificationsPage />}
             {page === 'mcp' && <McpPage />}

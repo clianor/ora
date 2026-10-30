@@ -3,7 +3,7 @@
  * `openai-codex-responses`는 ChatGPT 구독의 `chatgpt.com/backend-api/codex/responses`가 쓴다.
  * 요청 모양은 pi-mono와 omp의 공개 소스에서 확인한 값이다.
  */
-import { estimateTokens, scrubText } from '@ora/core';
+import { estimateTokens, ModelServerError, scrubText } from '@ora/core';
 import type { ModelCompactResult, ModelRequest, ModelUsage, StopReason } from '@ora/core';
 import type { ContentBlock } from '@ora/protocol';
 import { z } from 'zod';
@@ -16,7 +16,7 @@ import {
 } from '../anthropic-profile.ts';
 import type { CatalogModel } from './catalog.ts';
 import { defaultSleep, readSse } from './http.ts';
-import { UsageLimitError, WireAuthError } from './wire.ts';
+import { failedResponse, UsageLimitError, WireAuthError } from './wire.ts';
 import type { WireCredential, WireOptions, WireStream } from './wire.ts';
 
 const ERROR_BODY_MAX_CHARS = 500;
@@ -281,9 +281,10 @@ async function postJson(
     } catch (error) {
       if (signal.aborted) throw error;
       if (attempt + 1 >= maxAttempts) {
-        throw new Error(redact(`${label} 요청이 네트워크 오류로 실패했습니다: ${String(error)}`), {
-          cause: error,
-        });
+        throw new ModelServerError(
+          redact(`${label} 요청이 네트워크 오류로 실패했습니다: ${String(error)}`),
+          { cause: error },
+        );
       }
       await sleep(Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS), signal);
       continue;
@@ -304,10 +305,12 @@ async function postJson(
     }
     const retryable =
       response.status >= 500 || (RETRYABLE_STATUSES as readonly number[]).includes(response.status);
-    if (!retryable || attempt + 1 >= maxAttempts) throw new Error(summary);
+    if (!retryable || attempt + 1 >= maxAttempts) throw failedResponse(response.status, summary);
     if (hint !== undefined && hint > RETRY_MAX_DELAY_MS) {
       const message = `${summary} (재시도 대기 ${Math.ceil(hint / 1000)}초가 상한을 넘어 중단합니다)`;
-      throw response.status === 429 ? new UsageLimitError(message, resetAt) : new Error(message);
+      throw response.status === 429
+        ? new UsageLimitError(message, resetAt)
+        : failedResponse(response.status, message);
     }
     await sleep(hint ?? Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS), signal);
   }
