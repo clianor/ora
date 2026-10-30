@@ -492,7 +492,7 @@ ${section('엔진', [
   ['gauge', '비용 상한'],
   ['plug', 'MCP'],
   ['sparkles', '스킬'],
-  ['brain', '기억'],
+  ['brain', '메모리'],
 ])}
 </Frame>`;
 }
@@ -1761,6 +1761,106 @@ ${v3Group(c, '알림을 보낼 사건', '', [
   });
 }
 
+/** 설정 › 메모리. 메모리는 자동으로 저장하고 모델이 하루 한 번 다듬는다. 사람은 보고 지운다. 되돌리기는 M3이다. */
+function v3MemoryScreen() {
+  const c = palette('Slate');
+  const item = ({ text, from, used, tag = null, hover = false }) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={12} ${hover ? `bg="${c.hover}"` : ''}>
+<Frame w="fill" h="hug" flex="col" gap={5}>${T(c, 14, 21, 400, 'ink', text, 'w="fill" textAutoResize="height"')}<Frame w="hug" h="hug" flex="row" items="center" gap={8}>${tag ? v3Badge(c, tag[0], tag[1]) : ''}${T(c, 12, 16, 400, 'ink3', from)}</Frame></Frame>
+<Frame w={96} h="hug" flex="col" gap={2}>${T(c, 12, 16, 400, 'ink3', '쓴 횟수')}${T(c, 12, 16, 500, 'ink2', used)}</Frame>
+${hover ? button(c, 'ghost', '지우기', { icon: 'trash-2' }) : '<Frame w={78} h={30} />'}
+</Frame>`;
+  const tidy = `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={14} py={12} rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'sparkles', 'ink2', 15)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, 'ink', '오늘 03:12에 모델이 메모리를 다듬었습니다')}${T(c, 12, 16, 400, 'ink3', '합침 2 · 문장 고침 1 · 틀린 메모리 보관 1 · 다음은 내일, 또는 새 메모리 20개가 쌓이면')}</Frame>${button(c, 'secondary', '지금 다듬기')}</Frame>`;
+  return v3SettingsPage(c, '33 V3 Settings Memory · Slate', '메모리', {
+    title: '메모리',
+    desc: 'Ora가 작업하면서 알게 된 사실과 선호입니다. 작업이 끝나면 알아서 저장하고, 모델이 하루 한 번 다듬습니다. 틀린 메모리는 지우면 됩니다.',
+    body: `${tidy}
+${v3Group(c, '이 프로젝트 · math-demo', '3개', [
+  item({
+    text: 'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.',
+    from: 'add 함수 버그 수정에서 · 2분 전',
+    used: '3회',
+  }),
+  item({
+    text: '이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.',
+    from: 'README 예제 출력 갱신에서 · 어제',
+    used: '0회',
+    tag: ['출처 없음', 'warn'],
+    hover: true,
+  }),
+  item({
+    text: 'README 예제는 실제 실행 출력과 대조한 뒤에 고친다.',
+    from: '문서 갱신에서 · 3일 전',
+    used: '5회',
+  }),
+])}
+${v3Group(c, '모든 프로젝트', '2개', [
+  item({
+    text: '사용자는 커밋 메시지를 한국어로 쓰기를 원한다.',
+    from: 'ora 엔진 작업에서 · 어제',
+    used: '12회',
+  }),
+  item({
+    text: 'node 18에서는 fetch 실험 경고가 나오므로 출력 비교에서 뺀다.',
+    from: 'notes 작업에서 · 94일 전',
+    used: '0회',
+    tag: ['오래 안 씀', 'ink2'],
+  }),
+])}`,
+  });
+}
+
+/** 세션이 끝나며 메모리를 저장한 순간. 대화 끝에 저장한 내용이 한 줄씩 보이고, 줄의 지우기 단추로 바로 지운다. */
+function v3MemorySavedScreen() {
+  const c = palette('Slate');
+  const saved = (text, hover = false) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={8} px={10} py={6} rounded={8} ${hover ? `bg="${c.raised}"` : ''}>${I(c, 'brain', 'ink2', 14)}${T(c, 13, 18, 500, 'ink2', '메모리에 저장했습니다')}${T(c, 13, 18, 400, 'ink3', '·')}${T(c, 13, 18, 400, 'ink', text, 'grow={1} maxLines={1} truncate')}${hover ? button(c, 'ghost', '지우기', { icon: 'trash-2' }) : ''}</Frame>`;
+  const blocks = [
+    userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'file-pen', verb: '수정', target: 'math.js', result: '+1 −1' })}${toolRowV2(c, { icon: 'square-terminal', verb: '검증', target: 'node check.js', result: 'exit 0', resultColor: 'ok' })}</Frame>`,
+    paraV2(c, `${icode(c, 'add')}를 덧셈으로 고쳤고, ${icode(c, 'node check.js')}가 통과했습니다.`),
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${saved('math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.')}${saved('이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.', true)}</Frame>`,
+  ];
+  return windowV3(c, '34 V3 Memory Saved · Slate', {
+    side: sidebarV3(c, { groups: V3_GROUPS }),
+    main:
+      titleTabsV3(c, { tabs: V2_TABS, active: 0, right: v3Right(c) }) +
+      threadV2(c, blocks, {
+        composer: composerV2(c),
+        status: [
+          ['단계 Learn'],
+          ['스텝 9/50'],
+          ['격리 harness'],
+          ['컨텍스트 14%'],
+          ['캐시 적중 83%'],
+        ],
+      }),
+    panel: v3Panel(c, {
+      objective: PHASE_OBJECTIVE,
+      phases: [
+        PHASE_FIND,
+        {
+          name: '수정',
+          open: true,
+          criterion: 'node check.js가 exit 0으로 끝난다',
+          todos: [
+            {
+              id: 't2',
+              title: 'math.js의 add를 덧셈으로 고친다',
+              status: 'verified',
+              origin: 'repo',
+              cmd: '$ node check.js',
+              result: 'exit 0',
+            },
+          ],
+        },
+      ],
+      current: null,
+    }),
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -1794,4 +1894,6 @@ export const SCREENS = [
   { file: 'v3-settings-mcp-slate', jsx: v3McpScreen },
   { file: 'v3-settings-skills-slate', jsx: v3SkillsScreen },
   { file: 'v3-settings-notify-slate', jsx: v3NotifyScreen },
+  { file: 'v3-settings-memory-slate', jsx: v3MemoryScreen },
+  { file: 'v3-memory-saved-slate', jsx: v3MemorySavedScreen },
 ];
