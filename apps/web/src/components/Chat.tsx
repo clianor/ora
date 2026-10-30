@@ -30,6 +30,7 @@ import { MarkdownText } from './Markdown.tsx';
 import { CacheStat } from './CacheStat.tsx';
 import { CompactionMark } from './CompactionMark.tsx';
 import { ReviewNote } from './ReviewCard.tsx';
+import { MemorySavedNote } from './MemorySavedNote.tsx';
 import { ContextStat } from './ContextStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
 
@@ -126,7 +127,12 @@ function AssistantMessage() {
           tools: { Fallback: ToolLine },
           ToolGroup,
           data: {
-            by_name: { compaction: CompactionMark, mcp: McpNote, review: ReviewNote },
+            by_name: {
+              compaction: CompactionMark,
+              mcp: McpNote,
+              review: ReviewNote,
+              memory: MemorySavedNote,
+            },
             Fallback: WarningNote,
           },
         }}

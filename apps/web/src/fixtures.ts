@@ -28,6 +28,7 @@ import type {
   CostSettingsData,
   McpServersData,
   SkillsData,
+  MemoryData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -1684,6 +1685,117 @@ const fixtureSkills: SkillsData = {
     ],
   },
 };
+// 대화 끝에 메모리를 저장한 시안입니다. 주소는 `#/session/memory-saved`입니다. 설정 › 메모리 시안은 `#/settings/memory`입니다.
+const memorySessionId = 's-20261030-mem0e1';
+const makeMemory = createEventFactory(memorySessionId);
+const memorySavedView: SessionView = finishView({
+  record: createRecord(memorySessionId, 'add 함수 버그 수정', 'running', 'math-demo'),
+  events: [
+    sessionStart(makeMemory),
+    ...createStageEvents(makeMemory, 'learn', stageOrder),
+    makeMemory('message', '14:00', 'user', {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.',
+        },
+      ],
+    }),
+    makeMemory('message', '14:06', 'model', {
+      role: 'assistant',
+      content: [{ type: 'text', text: '`add`를 덧셈으로 고쳤고, `node check.js`가 통과했습니다.' }],
+    }),
+    makeMemory('memory_saved', '14:07', 'engine', {
+      lessonId: 'L-20261030-001',
+      text: 'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.',
+      isUnsourced: false,
+    }),
+    makeMemory('memory_saved', '14:07', 'engine', {
+      lessonId: 'L-20261029-002',
+      text: '이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.',
+      isUnsourced: true,
+    }),
+  ],
+  todos: mathTodos,
+  repoLabel: 'math-demo · main',
+  diff: null,
+  statusLine: ['스텝 9/50', '격리 harness'],
+});
+
+const fixtureMemory: MemoryData = {
+  status: 'ready',
+  list: {
+    projectName: 'math-demo',
+    project: [
+      {
+        id: 'L-20261030-001',
+        text: 'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.',
+        scope: 'project',
+        savedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+        sessionId: memorySessionId,
+        sessionTitle: 'add 함수 버그 수정',
+        useCount: 3,
+        isUnsourced: false,
+        isStale: false,
+      },
+      {
+        id: 'L-20261029-002',
+        text: '이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.',
+        scope: 'project',
+        savedAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+        sessionTitle: 'README 예제 출력 갱신',
+        useCount: 0,
+        isUnsourced: true,
+        isStale: false,
+      },
+      {
+        id: 'L-20261027-003',
+        text: 'README 예제는 실제 실행 출력과 대조한 뒤에 고친다.',
+        scope: 'project',
+        savedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+        sessionTitle: '문서 갱신',
+        useCount: 5,
+        isUnsourced: false,
+        isStale: false,
+      },
+    ],
+    global: [
+      {
+        id: 'L-20261029-004',
+        text: '사용자는 커밋 메시지를 한국어로 쓰기를 원한다.',
+        scope: 'global',
+        savedAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+        sessionTitle: 'ora 엔진 작업',
+        useCount: 12,
+        isUnsourced: false,
+        isStale: false,
+      },
+      {
+        id: 'L-20260728-005',
+        text: 'node 18에서는 fetch 실험 경고가 나오므로 출력 비교에서 뺀다.',
+        scope: 'global',
+        savedAt: new Date(Date.now() - 94 * 86_400_000).toISOString(),
+        sessionTitle: 'notes 작업',
+        useCount: 0,
+        isUnsourced: false,
+        isStale: true,
+      },
+    ],
+    deletedIds: [],
+    archivedIds: [],
+    lastPass: {
+      at: new Date(new Date().setHours(3, 12, 0, 0)).toISOString(),
+      outcome: 'ok',
+      merged: 2,
+      rewritten: 1,
+      archived: 1,
+      flagged: 1,
+      skippedBatches: 0,
+    },
+    isTidying: false,
+  },
+};
 
 const detailedViews = new Map<string, SessionView>(
   [
@@ -1702,6 +1814,7 @@ const detailedViews = new Map<string, SessionView>(
     costStopView,
     mcpView,
     skillsView,
+    memorySavedView,
     reviewView,
     reviewSkippedView,
   ].map((view) => [view.record.id, view]),
@@ -1723,6 +1836,7 @@ const devAliases = new Map<string, string>([
   ['cost-stop', costStopView.record.id],
   ['mcp', mcpView.record.id],
   ['skills', skillsView.record.id],
+  ['memory-saved', memorySavedView.record.id],
   ['review', reviewView.record.id],
   ['review-skipped', reviewSkippedView.record.id],
 ]);
@@ -1755,6 +1869,9 @@ type StatefulActionName =
   | 'setAccountPriority'
   | 'refreshCostSettings'
   | 'saveCostSettings'
+  | 'refreshMemory'
+  | 'deleteMemory'
+  | 'tidyMemory'
   | 'refreshMcpServers'
   | 'addMcpServer'
   | 'setMcpServerEnabled'
@@ -1920,6 +2037,14 @@ export function createFixtureStore(): OraStoreSource {
     });
     return Promise.resolve();
   };
+  let memory: MemoryData = fixtureMemory;
+  const changeMemory = (list: NonNullable<MemoryData['list']>) => {
+    memory = { status: 'ready', list };
+    snapshot = { ...snapshot, memory };
+    listeners.forEach((listener) => {
+      listener();
+    });
+  };
   let snapshot: OraStore;
 
   const tabsByCwd = new Map(Object.entries(fixtureTabs));
@@ -2031,6 +2156,35 @@ export function createFixtureStore(): OraStoreSource {
       return Promise.resolve();
     },
     refreshCostSettings: () => Promise.resolve(),
+    refreshMemory: () => Promise.resolve(),
+    deleteMemory: (id) => {
+      const list = memory.list;
+      if (list === undefined) return Promise.resolve();
+      changeMemory({
+        ...list,
+        project: list.project.filter((item) => item.id !== id),
+        global: list.global.filter((item) => item.id !== id),
+        deletedIds: [...list.deletedIds, id],
+      });
+      return Promise.resolve();
+    },
+    tidyMemory: () => {
+      const list = memory.list;
+      if (list === undefined) return Promise.resolve();
+      changeMemory({
+        ...list,
+        lastPass: {
+          at: new Date().toISOString(),
+          outcome: 'ok',
+          merged: 0,
+          rewritten: 0,
+          archived: 0,
+          flagged: 0,
+          skippedBatches: 0,
+        },
+      });
+      return Promise.resolve();
+    },
     refreshMcpServers: () => Promise.resolve(),
     addMcpServer: (body) =>
       changeMcpServers((servers) => [
@@ -2124,6 +2278,7 @@ export function createFixtureStore(): OraStoreSource {
     costSettings,
     mcpServers,
     skills: fixtureSkills,
+    memory,
   };
   return {
     subscribe: (listener) => {

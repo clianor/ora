@@ -2264,7 +2264,39 @@ test(
 );
 
 test(
-  '유지보수 패스의 충돌 판정: 확신하면 기존 교훈을 아카이브하고, 확신이 없으면 리뷰 큐로 보내고, 형식이 두 번 틀리면 건드리지 않는다',
+  '출처 없는 메모리 후보는 리뷰 큐 없이 출처 없음 표시와 함께 바로 저장하고 저장 이벤트를 남긴다',
+  async () => {
+    const project = createProject();
+    const result = await runCli(
+      project,
+      [
+        ...setupResponses,
+        ...repairResponses('f', 'a - b', 'a + b', true),
+        respond(use('k1', 'stage.advance', { to: 'operate' })),
+        respond(use('k2', 'stage.advance', { to: 'learn' })),
+        respond(use('k3', 'memory.propose', { text: '테스트는 node check.js로 돈다.' })),
+        finalReport,
+      ],
+      ['--permission', 'bypass-permissions'],
+    );
+    expect(result.code).toBe(0);
+
+    const memoryDir = join(project.home, 'memory');
+    const lessons = readFileSync(join(memoryDir, 'LESSONS.md'), 'utf8');
+    expect(lessons).toMatch(/^## L-\d{8}-001 · .* · retention:default · unsourced$/m);
+    expect(lessons).toContain('테스트는 node check.js로 돈다.\n근거: 출처 없음');
+    expect(existsSync(join(memoryDir, 'review-queue.md'))).toBe(false);
+    const saved = readSession(project).events.find((event) => event.type === 'memory_saved');
+    expect(saved?.payload).toMatchObject({
+      text: '테스트는 node check.js로 돈다.',
+      isUnsourced: true,
+    });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '유지보수 패스의 충돌 판정: 확신하면 기존 교훈을 아카이브하고, 확신이 없으면 둘 다 남기고, 형식이 두 번 틀리면 건드리지 않는다',
   async () => {
     const seed =
       '## L-20200101-001 · 2020-01-01 · [project:project] · lesson · retention:default\nadd는 두 수를 더한다.\n근거: 이전 세션\n\n';
@@ -2314,12 +2346,13 @@ test(
     expect(confident.log).toContain(` · invalidate · L-20200101-001,${newId} · `);
 
     const unsure = await runCase([judgeReply(false)]);
-    expect(unsure.lessons.match(/^## L-/gm)).toHaveLength(1);
+    expect(unsure.lessons.match(/^## L-/gm)).toHaveLength(2);
     expect(unsure.lessons).toContain('L-20200101-001');
-    expect(unsure.read('review-queue.md')).toContain(
-      '사유: 기존 교훈 L-20200101-001와 충돌할 수 있음',
+    expect(existsSync(join(unsure.memoryDir, 'archive'))).toBe(false);
+    expect(existsSync(join(unsure.memoryDir, 'review-queue.md'))).toBe(false);
+    expect(unsure.log).toMatch(
+      / · skip · L-\d{8}-\d{3},L-20200101-001 · 충돌 여부에 확신이 없어 둘 다 남김/,
     );
-    expect(unsure.log).toMatch(/ · defer · L-\d{8}-\d{3},Q-\d{8}-001 · /);
 
     const broken = await runCase([
       respond({ type: 'text', text: '모르겠습니다' }),

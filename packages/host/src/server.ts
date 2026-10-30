@@ -65,10 +65,13 @@ import type { LaunchRequest, SessionHandle } from './supervisor.ts';
 import { AccountApiError, createAccountApi } from './account-api.ts';
 import { createCostApi } from './cost-api.ts';
 import { createMcpApi } from './mcp-api.ts';
+import { createMemoryApi } from './memory-api.ts';
 import { createSkillsApi } from './skills-api.ts';
 import { createTerminalManager } from './terminal.ts';
 
 const COOKIE_NAME = 'ora_token';
+/** 호스트가 전체 패스 실행 조건을 확인하는 간격이다. 하루 한 번, 새 메모리 20개 조건은 이 간격마다 본다. */
+const MEMORY_TICK_MS = 10 * 60_000;
 const MAX_BODY_BYTES = 1_048_576;
 const HEARTBEAT_MS = 15_000;
 const BIND_HOST = '127.0.0.1';
@@ -313,6 +316,23 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     env: options.env,
     ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
   });
+  const memoryApi = createMemoryApi({
+    env: options.env,
+    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+    ...(options.modelScriptPath === undefined ? {} : { modelScriptPath: options.modelScriptPath }),
+    hasLiveSession: () => live.size > 0 || resuming.size > 0,
+  });
+  const tickMemory = () => {
+    if (closing) return;
+    memoryApi.tick().catch((error: unknown) => {
+      process.stderr.write(
+        `메모리 다듬기를 건너뜁니다: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    });
+  };
+  tickMemory();
+  const memoryTimer = setInterval(tickMemory, MEMORY_TICK_MS);
+  memoryTimer.unref();
 
   const publish = (sessionId: string, name: string | undefined, data: unknown, id?: number) => {
     for (const subscriber of subscribers.get(sessionId) ?? []) subscriber.send(name, data, id);
@@ -819,6 +839,31 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       reply(res, 200, await skillsApi.list(await canonicalPath(rawCwd)));
       return;
     }
+    if (segments[1] === 'memory') {
+      const [, , action] = segments;
+      if (action === undefined) {
+        if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const rawCwd = url.searchParams.get('cwd');
+        if (rawCwd === null) {
+          reply(res, 200, await memoryApi.list());
+          return;
+        }
+        await assertKnownWorktree(rawCwd);
+        reply(res, 200, await memoryApi.list(await canonicalPath(rawCwd)));
+        return;
+      }
+      if (action === 'tidy') {
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        reply(res, 200, await memoryApi.tidy());
+        return;
+      }
+      if (method !== 'DELETE') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      if (!(await memoryApi.remove(decodeURIComponent(action)))) {
+        throw new HttpError(404, '메모리를 찾을 수 없습니다.');
+      }
+      reply(res, 200, { deleted: true });
+      return;
+    }
     if (segments[1] === 'cost-settings' && segments.length === 2) {
       if (method === 'GET') {
         reply(res, 200, await costApi.get());
@@ -1134,6 +1179,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     origin,
     port,
     async close() {
+      clearInterval(memoryTimer);
       await accountApi.close();
       await mcpApi.close();
       await terminals.closeAll();

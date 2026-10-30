@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ora/core": "workspace:*"
+    "@ora/core": "workspace:*",
+    "@ora/protocol": "workspace:*",
+    "zod": "catalog:"
   }
 }

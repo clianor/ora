@@ -246,6 +246,8 @@ export function buildThread(
       }
     } else if (event.type === 'review') {
       assistantContent.push({ type: 'data-review', data: event.payload });
+    } else if (event.type === 'memory_saved') {
+      assistantContent.push({ type: 'data-memory', data: event.payload });
     } else if (event.type === 'recall') {
       for (const skill of event.payload.skills) {
         assistantContent.push({

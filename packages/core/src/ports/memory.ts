@@ -4,9 +4,8 @@ export interface MemoryCandidate {
 }
 
 export type MemoryDecision =
-  | { readonly decision: 'remember'; readonly lessonId: string }
+  | { readonly decision: 'remember'; readonly lessonId: string; readonly isUnsourced: boolean }
   | { readonly decision: 'refuse'; readonly reason: string }
-  | { readonly decision: 'defer'; readonly reason: string }
   | { readonly decision: 'rejected'; readonly reason: string };
 
 export interface RecallRequest {
@@ -30,8 +29,6 @@ export interface MaintenanceResult {
   readonly merged: readonly { readonly keptId: string; readonly archivedIds: readonly string[] }[];
   /** 새 교훈과 모순이어서 아카이브로 옮긴 기존 교훈이다. */
   readonly invalidated: readonly { readonly id: string; readonly replacedBy: string }[];
-  /** 충돌할 수 있어 LESSONS.md에서 빼고 리뷰 큐로 보낸 새 교훈이다. */
-  readonly deferred: readonly { readonly id: string; readonly queueId: string }[];
 }
 
 /** 새 교훈과 같은 범위의 기존 교훈 후보의 관계를 모델이 판정한 결과다. 모델 응답 형식이 두 번 틀리면 판정 함수는 `undefined`를 돌려준다. */

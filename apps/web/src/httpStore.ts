@@ -3,6 +3,9 @@ import {
   costSettingsSchema,
   mcpServerListResponseSchema,
   skillListResponseSchema,
+  memoryDeleteResponseSchema,
+  memoryListResponseSchema,
+  memoryPassSummarySchema,
   changesResponseSchema,
   branchResponseSchema,
   accountViewSchema,
@@ -55,6 +58,7 @@ import type {
   CostSettingsData,
   McpServersData,
   SkillsData,
+  MemoryData,
   OraActions,
   OraStore,
   OraStoreSource,
@@ -218,6 +222,8 @@ export function createHttpStore(): OraStoreSource {
   let mcpServers: McpServersData = { status: 'loading', servers: [] };
   let skills: SkillsData = { status: 'loading' };
   let skillsCwd: string | undefined;
+  let memory: MemoryData = { status: 'loading' };
+  let memoryCwd: string | undefined;
   const tabs = new Map<string, WorktreeTabs>();
   const terminals = new Map<string, Terminal>();
   const branches = new Map<string, string>();
@@ -321,6 +327,7 @@ export function createHttpStore(): OraStoreSource {
       costSettings,
       mcpServers,
       skills,
+      memory,
     };
   };
 
@@ -387,6 +394,7 @@ export function createHttpStore(): OraStoreSource {
       listRefreshTimer = null;
       refreshList().catch(() => undefined);
       refreshSkills(skillsCwd).catch(() => undefined);
+      refreshMemory(memoryCwd).catch(() => undefined);
     }, refreshDelayMs);
   };
 
@@ -595,6 +603,19 @@ export function createHttpStore(): OraStoreSource {
     }
     notifySoon();
   };
+  const refreshMemory = async (cwd?: string): Promise<void> => {
+    memoryCwd = cwd;
+    const query = cwd === undefined ? '' : `?cwd=${encodeURIComponent(cwd)}`;
+    try {
+      memory = {
+        status: 'ready',
+        list: await requestJson(`/api/memory${query}`, memoryListResponseSchema),
+      };
+    } catch (error) {
+      memory = { status: 'error', errorMessage: toMessage(error) };
+    }
+    notifySoon();
+  };
   const changeMcpServers = async (
     path: string,
     init: { method: 'POST' | 'PATCH' | 'DELETE'; body?: unknown },
@@ -717,6 +738,17 @@ export function createHttpStore(): OraStoreSource {
     },
     refreshMcpServers,
     refreshSkills,
+    refreshMemory,
+    deleteMemory: async (id) => {
+      await requestJson(`/api/memory/${encodeURIComponent(id)}`, memoryDeleteResponseSchema, {
+        method: 'DELETE',
+      });
+      await refreshMemory(memoryCwd);
+    },
+    tidyMemory: async () => {
+      await requestJson('/api/memory/tidy', memoryPassSummarySchema, { method: 'POST', body: {} });
+      await refreshMemory(memoryCwd);
+    },
     addMcpServer: (body) => changeMcpServers('/api/mcp-servers', { method: 'POST', body }),
     setMcpServerEnabled: (name, enabled) =>
       changeMcpServers(`/api/mcp-servers/${encodeURIComponent(name)}`, {
@@ -841,6 +873,7 @@ export function createHttpStore(): OraStoreSource {
     costSettings,
     mcpServers,
     skills,
+    memory,
   };
 
   refreshList().catch(() => undefined);
@@ -848,6 +881,7 @@ export function createHttpStore(): OraStoreSource {
   refreshCostSettings().catch(() => undefined);
   refreshMcpServers().catch(() => undefined);
   refreshSkills().catch(() => undefined);
+  refreshMemory().catch(() => undefined);
   requestJson('/api/routing', routingResponseSchema)
     .then((result) => {
       const chain = result.roles.default ?? [];

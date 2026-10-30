@@ -2,9 +2,17 @@ import { useSyncExternalStore } from 'react';
 
 export type Route = 'worktree' | 'history' | 'empty' | 'settings';
 
-export type SettingsPage = 'appearance' | 'accounts' | 'cost' | 'notifications' | 'mcp' | 'skills';
+export type SettingsPage =
+  'appearance' | 'accounts' | 'cost' | 'notifications' | 'mcp' | 'skills' | 'memory';
 
-const settingsPages: readonly string[] = ['accounts', 'cost', 'notifications', 'mcp', 'skills'];
+const settingsPages: readonly string[] = [
+  'accounts',
+  'cost',
+  'notifications',
+  'mcp',
+  'skills',
+  'memory',
+];
 
 export interface RouteState {
   route: Route;

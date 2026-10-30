@@ -10,3 +10,4 @@ export * from './terminal.ts';
 export * from './tabs.ts';
 export * from './mcp.ts';
 export * from './skills.ts';
+export * from './memory.ts';

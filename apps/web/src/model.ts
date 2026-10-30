@@ -5,6 +5,7 @@ import type {
   McpServerAddBody,
   McpServerStatus,
   SkillListResponse,
+  MemoryListResponse,
   LoginState,
   OraEvent,
   PendingApproval,
@@ -165,6 +166,12 @@ export interface OraActions {
   refreshMcpServers: () => Promise<void>;
   /** 스킬 목록과 최근 회상을 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 스킬도 읽습니다. */
   refreshSkills: (cwd?: string) => Promise<void>;
+  /** 메모리 목록과 마지막 전체 패스를 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 메모리도 읽습니다. */
+  refreshMemory: (cwd?: string) => Promise<void>;
+  /** 메모리 하나를 지웁니다. 서버가 아카이브로 옮깁니다. 없는 항목이면 거부합니다. */
+  deleteMemory: (id: string) => Promise<void>;
+  /** 지금 메모리를 다듬습니다. 서버가 실행 중이라고 거부하면 그 이유로 거부합니다. */
+  tidyMemory: () => Promise<void>;
   /** 서버를 설정에 더하고 연결합니다. 환경변수는 이름만 보냅니다. 서버가 거부하면 거부합니다. */
   addMcpServer: (body: McpServerAddBody) => Promise<void>;
   /** 서버를 켜거나 끕니다. 끄면 연결을 닫습니다. */
@@ -216,6 +223,13 @@ export interface SkillsData {
   list?: SkillListResponse;
 }
 
+/** 설정 › 메모리 페이지와 대화의 저장 줄이 그리는 데이터입니다. */
+export interface MemoryData {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  list?: MemoryListResponse;
+}
+
 /**
  * 앱이 하나의 Provider로 받는 저장소의 한 시점입니다. 데이터 읽기와 엔진 요청을 함께 담습니다.
  * 고정 예시 데이터 구현과 서버 구현이 모두 이 모양을 채우고, 바뀔 때마다 새 객체를 돌려줍니다.
@@ -252,6 +266,7 @@ export interface OraStore {
   costSettings: CostSettingsData;
   mcpServers: McpServersData;
   skills: SkillsData;
+  memory: MemoryData;
 }
 
 export interface OraStoreSource {

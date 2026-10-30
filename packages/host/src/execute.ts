@@ -61,7 +61,7 @@ import { SHELL_PIDS_FILE } from './recovery.ts';
 const PROMPTS_DIR = fileURLToPath(new URL('../../../prompts/', import.meta.url));
 const INSTRUCTION_NAMES = ['AGENTS.md', 'CLAUDE.md', 'AGENTS.local.md', 'CLAUDE.local.md'];
 
-function findGitRoot(start: string): string | undefined {
+export function findGitRoot(start: string): string | undefined {
   for (let dir = start; ; dir = dirname(dir)) {
     if (existsSync(join(dir, '.git'))) return dir;
     if (dirname(dir) === dir) return undefined;
@@ -212,7 +212,7 @@ export function createIpcPorts(send: (message: WorkerMessage) => void) {
   };
 }
 
-interface ModelRouterOptions {
+export interface ModelRouterOptions {
   readonly command: LaunchCommand;
   readonly config: Config;
   readonly chains: Record<string, ModelChainEntry[]>;
@@ -231,7 +231,7 @@ const SCRIPTED_ENTRY: ModelChainEntry = {
 };
 
 /** 역할의 체인을 내주고, 체인 항목으로 모델을 만든다. 같은 항목은 한 번만 만든다. `--model-script`가 있으면 모든 항목이 같은 스크립트를 재생한다. */
-function createModelRouter(options: ModelRouterOptions): ModelRouter {
+export function createModelRouter(options: ModelRouterOptions): ModelRouter {
   const { command, config, chains } = options;
   const catalog = createCatalog(config.models);
   const opened = new Map<string, Promise<ModelPort>>();

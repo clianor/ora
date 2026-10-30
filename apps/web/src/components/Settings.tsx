@@ -48,12 +48,12 @@ const navSections: { title: string; items: NavItem[] }[] = [
       { icon: Gauge, label: '비용 상한', page: 'cost' },
       { icon: Plug, label: 'MCP', page: 'mcp' },
       { icon: Sparkles, label: '스킬', page: 'skills' },
-      { icon: Brain, label: '기억' },
+      { icon: Brain, label: '메모리', page: 'memory' },
     ],
   },
 ];
 
-/** 설정 항목 목록입니다. 모양, 알림, 계정, 비용 상한, MCP 페이지만 이동할 수 있고, 나머지 항목은 이름만 보여 줍니다. */
+/** 설정 항목 목록입니다. `page`가 있는 항목만 이동할 수 있고, 나머지 항목은 이름만 보여 줍니다. */
 export function SettingsNav({ current, cwd }: { current: SettingsPage; cwd?: string }) {
   const [query, setQuery] = useState('');
   return (

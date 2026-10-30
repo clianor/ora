@@ -412,7 +412,8 @@ export async function listSessions(
 ): Promise<SessionRecord[]> {
   const oraHome = resolveOraHome(env);
   const config = await loadConfig(configPath, oraHome);
-  return listSessionRecords(resolveSessionsDir(config, oraHome));
+  const records = await listSessionRecords(resolveSessionsDir(config, oraHome));
+  return records.filter((record) => record.actor !== 'routine:memory');
 }
 
 /**

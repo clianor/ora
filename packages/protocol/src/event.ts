@@ -184,6 +184,15 @@ export const oraEventSchema = z.discriminatedUnion('type', [
     'memory',
     z.strictObject({ learnSkipped: z.literal(true), reason: z.literal('cost_limit') }),
   ),
+  // `memory.propose`가 항목을 저장했다는 기록이다. 대화가 "메모리에 저장했습니다 · <내용>" 줄을 보인다. 출처 없이 저장했으면 `isUnsourced`가 true다. 저장하지 않은 판정(refuse, rejected)은 `tool_result`에만 남는다.
+  defineEvent(
+    'memory_saved',
+    z.strictObject({
+      lessonId: z.string().min(1),
+      text: z.string().min(1),
+      isUnsourced: z.boolean(),
+    }),
+  ),
   // 다른 모델의 검토 기록이다. `completed`는 검토를 받은 결과이고 `findings`가 지적 목록이다. `major`가 하나라도 있으면 `verdict`는 `changes`다. `skipped`는 검토할 다른 모델이 없어 건너뛴 경우이고, `failed`는 응답 형식이 두 번 틀려 결과를 얻지 못한 경우다. 두 경우 모두 todo 판정에는 영향이 없다.
   defineEvent(
     'review',

@@ -1243,8 +1243,21 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       { text: data.text, ...(data.source === undefined ? {} : { source: data.source }) },
       input.sessionId,
     );
+    if (decision.decision === 'remember') {
+      await emit('engine', {
+        type: 'memory_saved',
+        payload: {
+          lessonId: decision.lessonId,
+          text: data.text.trim(),
+          isUnsourced: decision.isUnsourced,
+        },
+      });
+    }
     const detail = 'lessonId' in decision ? decision.lessonId : decision.reason;
-    return { status: 'ok', text: `판정: ${decision.decision} (${detail})` };
+    return {
+      status: 'ok',
+      text: `판정: ${decision.decision} (${detail})${decision.decision === 'remember' && decision.isUnsourced ? ' 출처 없음 표시' : ''}`,
+    };
   };
 
   const runControl = async (
