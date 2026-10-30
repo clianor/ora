@@ -101,7 +101,7 @@ export function ToolLine({ toolName, args, result }: ToolCallMessagePartProps) {
         )}
         {!outcome && (
           <span className="ml-auto flex items-center gap-1.5 text-xs leading-4 font-medium text-foreground-subtle">
-            <LoaderCircle aria-hidden className="size-3.5 animate-spin" />
+            <LoaderCircle aria-hidden className="size-3.5 motion-safe:animate-spin" />
             실행 중
           </span>
         )}

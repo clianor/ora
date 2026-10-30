@@ -112,7 +112,11 @@ function WorktreeRow({
                 <StatusIcon
                   role="img"
                   aria-label={statusLabel[session.record.status]}
-                  className={cn('size-3.5 shrink-0', color)}
+                  className={cn(
+                    'size-3.5 shrink-0',
+                    color,
+                    StatusIcon === Loader && 'motion-safe:animate-spin',
+                  )}
                 />
                 <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-foreground">
                   {session.record.title}

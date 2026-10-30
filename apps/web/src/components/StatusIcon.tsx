@@ -18,7 +18,12 @@ export function StatusIcon({ status, className }: { status: SessionStatus; class
     <Icon
       role="img"
       aria-label={statusLabel[status]}
-      className={cn('size-3.5 shrink-0', color, className)}
+      className={cn(
+        'size-3.5 shrink-0',
+        color,
+        Icon === Loader && 'motion-safe:animate-spin',
+        className,
+      )}
     />
   );
 }

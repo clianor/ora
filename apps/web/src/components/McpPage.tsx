@@ -76,7 +76,7 @@ function ServerRow({
         >
           <StateIcon
             aria-hidden
-            className={cn('size-3.5', server.state === 'connecting' && 'animate-spin')}
+            className={cn('size-3.5', server.state === 'connecting' && 'motion-safe:animate-spin')}
           />
           {label}
         </span>

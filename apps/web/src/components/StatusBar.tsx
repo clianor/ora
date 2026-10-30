@@ -1,5 +1,6 @@
 import type { AccountProvider, AccountView } from '@ora/protocol';
 import { Loader, SquareTerminal } from 'lucide-react';
+import { cn } from '../lib/cn.ts';
 import { runningStatuses } from '../lib/status.ts';
 import { listWorktrees } from '../lib/worktrees.ts';
 import { useStore } from '../store.tsx';
@@ -86,7 +87,13 @@ export function StatusBar() {
       ))}
       <div className="ml-auto flex items-center gap-4.5">
         <span className="flex items-center gap-1.5">
-          <Loader aria-hidden className="size-3.5 text-foreground-subtle" />
+          <Loader
+            aria-hidden
+            className={cn(
+              'size-3.5 text-foreground-subtle',
+              runningSessions > 0 && 'motion-safe:animate-spin',
+            )}
+          />
           세션 {runningSessions}개 실행 중
         </span>
         <span className="flex items-center gap-1.5">
