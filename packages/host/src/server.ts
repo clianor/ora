@@ -212,6 +212,10 @@ async function readChanges(cwd: string): Promise<ChangesResponse> {
 /** 워크트리 키로 쓰는 경로의 단일 정규화 지점이다. `/tmp` 같은 심볼릭 링크를 풀어 한 폴더가 한 워크트리가 되게 하고, 풀지 못하면 받은 경로를 쓴다. */
 const canonicalPath = (path: string): Promise<string> => realpath(path).catch(() => path);
 
+/** 세션 기록의 `repo`를 워크트리 키와 같은 경로로 맞춘다. 목록과 상세가 같은 규칙을 써야 웹이 한 워크트리를 두 그룹으로 나누지 않는다. */
+const withCanonicalRepo = async <T extends { repo?: string }>(record: T): Promise<T> =>
+  record.repo === undefined ? record : { ...record, repo: await canonicalPath(record.repo) };
+
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
   const right = Buffer.from(b);
@@ -992,13 +996,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       if (method === 'GET') {
         const records = await listSessions(options.env, options.configPath);
         reply(res, 200, {
-          sessions: await Promise.all(
-            records.map(async (record) =>
-              record.repo === undefined
-                ? record
-                : { ...record, repo: await canonicalPath(record.repo) },
-            ),
-          ),
+          sessions: await Promise.all(records.map(withCanonicalRepo)),
         });
         return;
       }
@@ -1044,7 +1042,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
           ? undefined
           : (catalogOf(modelId)?.contextWindow ?? 200_000);
       const detail: SessionDetailResponse = {
-        session,
+        session: await withCanonicalRepo(session),
         todos: await readTodos(sessionDir),
         live: entry !== undefined,
         maxSteps: config.limits.maxSteps,

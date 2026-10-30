@@ -322,7 +322,7 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
                 cwd={cwd}
                 context={context}
                 runningCount={runningCount}
-                title={`${ref?.repo.name ?? basename(cwd)} · ${ref?.node.name ?? basename(cwd)}`}
+                title={`${ref?.repo.name ?? basename(cwd)} · ${store.getNewSessionContext(cwd).branch ?? ref?.node.name ?? basename(cwd)}`}
                 repoName={ref?.repo.name ?? basename(cwd)}
                 isSessionMode={state.isSessionMode === true}
                 isModelPickerOpen={state.isModelPickerOpen === true}

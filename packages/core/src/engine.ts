@@ -1517,6 +1517,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       reason: 'usage-limit' | 'server-error' | 'revert',
       error: unknown,
       delayMs: number,
+      switchedFrom: string,
     ) => {
       attempt += 1;
       const target = entryAt(role, state.position);
@@ -1531,6 +1532,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             ? { resetAt: new Date(error.resetAtMs).toISOString() }
             : {}),
           delayMs,
+          switchedFrom,
           switchedTo: target.model,
           chainPosition: state.position,
           role,
@@ -1543,9 +1545,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       state.resetAtMs !== undefined &&
       clock.now().getTime() >= state.resetAtMs
     ) {
+      const revertedFrom = entryAt(role, state.position).model;
       state.position = 0;
       delete state.resetAtMs;
-      await emitRetry('revert', undefined, 0);
+      await emitRetry('revert', undefined, 0, revertedFrom);
     }
     for (;;) {
       for (
@@ -1587,6 +1590,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           error instanceof ModelLimitError ? 'usage-limit' : 'server-error',
           error,
           0,
+          port.model,
         );
       }
     }

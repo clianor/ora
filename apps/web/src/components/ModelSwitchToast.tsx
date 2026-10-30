@@ -13,18 +13,17 @@ const timeFormat = new Intl.DateTimeFormat('ko-KR', {
   timeZone: 'Asia/Seoul',
 });
 
-function describeSwitch({ reason, from, resetAt, message }: ModelSwitchData): string {
-  if (reason === 'revert')
-    return `첫 모델로 돌아왔습니다. 앞 모델 ${from}: 사용 한도가 풀렸습니다.`;
+function describeSwitch({ reason, from, to, resetAt, message }: ModelSwitchData): string {
+  const previous = `${from ?? '앞'} 모델`;
+  if (reason === 'revert') return `사용 한도가 풀려 ${to} 모델로 돌아왔습니다.`;
   if (reason === 'server-error')
-    return `앞 모델 ${from}: 서버 오류가 이어져 다음 모델로 넘어갔습니다.`;
-  if (reason === 'error')
-    return `앞 모델 ${from}: 요청이 오류로 실패했습니다. ${message ?? ''}`.trim();
+    return `${previous}에서 서버 오류가 이어져 ${to} 모델로 넘어갔습니다.`;
+  if (reason === 'error') return `${previous} 요청이 오류로 실패했습니다. ${message ?? ''}`.trim();
   const until =
     resetAt === undefined
       ? ''
-      : ` ${timeFormat.format(new Date(resetAt))}에 한도가 풀리면 다시 돌아옵니다.`;
-  return `앞 모델 ${from}: 사용 한도에 걸렸습니다.${until}`;
+      : ` ${timeFormat.format(new Date(resetAt))}에 한도가 풀리면 다시 ${previous}로 돌아갑니다.`;
+  return `${previous}이 사용 한도에 걸렸습니다.${until}`;
 }
 
 /**

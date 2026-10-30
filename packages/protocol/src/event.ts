@@ -169,6 +169,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       /** 프로바이더가 알려 준 사용 한도 해제 시각(ISO)이다. 알려 주지 않으면 없다. */
       resetAt: z.iso.datetime({ offset: true }).optional(),
       delayMs: z.number().int().nonnegative(),
+      /** 넘어가기 전에 요청이 실패한 모델의 id다. 옛 기록에는 없다. */
+      switchedFrom: z.string().min(1).optional(),
       /** 바뀐 모델의 id다. */
       switchedTo: z.string().min(1),
       chainPosition: z.number().int().nonnegative(),

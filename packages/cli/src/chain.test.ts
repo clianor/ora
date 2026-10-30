@@ -62,6 +62,7 @@ test(
       expect.objectContaining({
         layer: 'session',
         reason: 'usage-limit',
+        switchedFrom: 'm1',
         switchedTo: 'm2',
         chainPosition: 1,
         role: 'default',
@@ -85,9 +86,9 @@ test(
   async () => {
     const { retries, requests } = await runChain([limit(0), text, text], chain);
 
-    expect(retries.map((retry) => [retry.reason, retry.switchedTo])).toEqual([
-      ['usage-limit', 'm2'],
-      ['revert', 'm1'],
+    expect(retries.map((retry) => [retry.reason, retry.switchedFrom, retry.switchedTo])).toEqual([
+      ['usage-limit', 'm1', 'm2'],
+      ['revert', 'm2', 'm1'],
     ]);
     expect(requests.map((request) => request.chainPosition)).toEqual([1, 0]);
   },
@@ -99,8 +100,8 @@ test(
   async () => {
     const { retries, requests } = await runChain([{ error: { kind: 'server' } }, text], chain);
 
-    expect(retries.map((retry) => [retry.reason, retry.switchedTo])).toEqual([
-      ['server-error', 'm2'],
+    expect(retries.map((retry) => [retry.reason, retry.switchedFrom, retry.switchedTo])).toEqual([
+      ['server-error', 'm1', 'm2'],
     ]);
     expect(requests.map((request) => request.chainPosition)).toEqual([1]);
   },

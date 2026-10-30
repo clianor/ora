@@ -77,12 +77,12 @@ export interface CompactionMarkData {
   items: { tool: string; target: string }[];
 }
 
-/** `retry` 이벤트 하나가 만든 모델 전환입니다. 화면 오른쪽 위 알림이 씁니다. from은 전환 전에 쓰던 모델입니다. */
+/** `retry` 이벤트 하나가 만든 모델 전환입니다. 화면 오른쪽 위 알림이 씁니다. from은 전환 전에 쓰던 모델이고, 옛 기록에서 찾지 못하면 없습니다. */
 export interface ModelSwitchData {
   seq: number;
   ts: string;
   reason: Extract<OraEvent, { type: 'retry' }>['payload']['reason'];
-  from: string;
+  from?: string;
   to: string;
   /** 실패한 요청의 오류 원문입니다. 표시의 title로만 보입니다. */
   message?: string;
@@ -115,7 +115,7 @@ export function getStageIndex(events: readonly OraEvent[]): number | null {
   return entered ? stages.indexOf(entered.payload.stage) : null;
 }
 
-/** `retry` 이벤트마다 전환 전과 후의 모델을 찾습니다. 전환 전 모델은 같은 역할이 직전 체인 위치에서 마지막으로 요청한 모델입니다. */
+/** `retry` 이벤트마다 전환 전과 후의 모델을 찾습니다. 전환 전 모델은 이벤트의 `switchedFrom`이고, 옛 기록은 같은 역할이 직전 체인 위치에서 마지막으로 요청한 모델로 대신합니다. */
 export function listModelSwitches(events: readonly OraEvent[]): ModelSwitchData[] {
   const modelNames = new Map<string, string>();
   const positions = new Map<string, number>();
@@ -128,15 +128,17 @@ export function listModelSwitches(events: readonly OraEvent[]): ModelSwitchData[
       return [];
     }
     if (event.type !== 'retry') return [];
-    const { role, chainPosition, reason, message, resetAt, switchedTo } = event.payload;
+    const { role, chainPosition, reason, message, resetAt, switchedFrom, switchedTo } =
+      event.payload;
     const previous = positions.get(role) ?? 0;
     positions.set(role, chainPosition);
+    const from = switchedFrom ?? modelNames.get(`${role}:${previous}`);
     return [
       {
         seq: event.seq,
         ts: event.ts,
         reason,
-        from: modelNames.get(`${role}:${previous}`) ?? (previous === 0 ? '첫 모델' : '이전 모델'),
+        ...(from === undefined ? {} : { from }),
         to: switchedTo,
         ...(message === undefined ? {} : { message }),
         ...(resetAt === undefined ? {} : { resetAt }),

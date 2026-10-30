@@ -87,6 +87,38 @@ test('심볼릭 링크로 가리킨 폴더의 탭은 실제 경로와 같은 워
   expect(tabsResponseSchema.parse(reread.json).tabs).toEqual(tabs);
 });
 
+test('세션 목록과 상세는 별칭 경로의 repo를 같은 실제 경로로 돌려준다', async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'ora-repo-alias-')));
+  mkdirSync(join(home, 'real'));
+  symlinkSync(join(home, 'real'), join(home, 'link'));
+  const id = 's-20261030-aliasA';
+  mkdirSync(join(home, 'sessions', id), { recursive: true });
+  writeFileSync(
+    join(home, 'sessions', id, 'session.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      id,
+      createdAt: '2026-10-30T14:31:06.711+09:00',
+      updatedAt: '2026-10-30T14:31:06.806+09:00',
+      title: 't',
+      actor: 'user',
+      status: 'stopped',
+      endReason: 'max_steps',
+      repo: join(home, 'link'),
+      models: [],
+      permissionMode: 'bypass-permissions',
+      isolation: 'harness',
+      promptHash: 'h',
+      engineVersion: '0.0.0',
+    }),
+  );
+  const call = await boot(home);
+  const list = (await call('/api/sessions')).json as { sessions: { repo: string }[] };
+  const detail = (await call(`/api/sessions/${id}`)).json as { session: { repo: string } };
+  expect(list.sessions.map((session) => session.repo)).toEqual([join(home, 'real')]);
+  expect(detail.session.repo).toBe(join(home, 'real'));
+});
+
 test('변경 목록은 HEAD 기준 증감과 추적하지 않는 파일을 돌려주고 git 저장소가 아니면 isRepo를 끈다', async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'ora-changes-')));
   const call = await boot(home);
