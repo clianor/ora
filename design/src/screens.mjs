@@ -2217,7 +2217,7 @@ ${v3Save(c, '')}`,
   });
 }
 
-// M3 3단계 시안이다. 2026-10-31 사용자 결정(SPEC v0.40): 머지는 사용자가 GitHub PR에서 하고, Ora는 PR 상태를 보이며 머지된 worktree를 한꺼번에 지운다.
+// M3 3단계 시안이다. 2026-10-31 사용자 결정(SPEC v0.40·v0.41): 머지는 사용자가 GitHub PR에서 하고, Ora는 PR 상태를 보이며 머지된 워크트리를 한꺼번에 지운다. 되돌리기는 되감기와 고쳐 보내기로 한다.
 const M3_PR_GROUPS = ({ selected = 'ora/fix-negative-add' } = {}) => [
   {
     repo: 'math-demo',
@@ -2250,7 +2250,7 @@ function m3PrStatusScreen() {
     c,
     'git-pull-request',
     'ok',
-    `${T(c, 13, 18, 500, 'ink', '#42', '', mono)}${T(c, 13, 18, 500, 'ink2', '열림')}${T(c, 13, 18, 400, 'ink3', '·')}${I(c, 'circle-check', 'ok', 13)}${T(c, 13, 18, 500, 'ink2', '검사 통과')}`,
+    `${T(c, 13, 18, 500, 'ink', '#42', '', mono)}${T(c, 13, 18, 500, 'ink2', 'Open')}${T(c, 13, 18, 400, 'ink3', '·')}${I(c, 'circle-check', 'ok', 13)}${T(c, 13, 18, 500, 'ink2', '검사 통과')}`,
   );
   return windowV3(c, '45 M3 PR Status · Slate', {
     side: sidebarV3(c, { groups: M3_PR_GROUPS() }),
@@ -2286,23 +2286,36 @@ function m3PrStatusScreen() {
   });
 }
 
-/** "머지된 worktree 삭제" 확인 창. 커밋하지 않은 변경이나 실행 중인 세션이 있는 worktree는 고를 수 없고 이유를 보인다. */
+/**
+ * "머지된 워크트리 삭제" 확인 창. 판정은 브랜치의 가장 최근 PR 상태만 본다.
+ * Merged는 처음부터 골라 두고, Closed는 따로 묶어 고르지 않은 채 보인다. 데이터를 잃을 수 있는 항목은 고를 수 없고 이유를 보인다.
+ */
 function m3CleanupScreen() {
   const c = palette('Slate');
-  const row = ({ name, num, when, checked = false, blocked = null }) =>
-    `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={12} py={10} rounded={8} ${checked ? `bg="${c.raised}"` : ''}>${I(c, checked ? 'square-check' : 'square', blocked ? 'ink3' : 'ink', 16)}${I(c, 'git-merge', blocked ? 'ink3' : 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, blocked ? 'ink3' : 'ink', name, '', mono)}${
-      blocked
-        ? `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, 'triangle-alert', 'warn', 12)}${T(c, 12, 16, 500, 'ink2', blocked)}</Frame>`
-        : T(c, 12, 16, 400, 'ink3', `#${num} · ${when} 머지`)
-    }</Frame>${blocked ? T(c, 12, 16, 400, 'ink3', `#${num}`, '', mono) : ''}</Frame>`;
-  const dialog = `<Frame name="CleanupMerged" w={540} h="hug" flex="col" gap={14} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'trash-2', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '머지된 worktree 삭제')}${SP}${T(c, 12, 16, 400, 'ink3', 'math-demo')}${I(c, 'x', 'ink3', 15)}</Frame>
-${T(c, 13, 20, 400, 'ink2', 'PR이 머지된 worktree입니다. 고른 항목의 폴더와 로컬 브랜치를 지웁니다. 원격 브랜치와 세션 기록은 남습니다.', 'w="fill" textAutoResize="height"')}
+  const row = ({ name, num, note, state = 'merged', checked = false, blocked = null }) => {
+    const icon = state === 'merged' ? 'git-merge' : 'git-pull-request-closed';
+    const body = blocked
+      ? `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, 'triangle-alert', 'warn', 12)}${T(c, 12, 16, 500, 'ink2', blocked)}</Frame>`
+      : T(c, 12, 16, 400, 'ink3', note);
+    return `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={12} py={9} rounded={8} ${checked ? `bg="${c.raised}"` : ''}>${I(c, checked ? 'square-check' : 'square', blocked ? 'ink3' : 'ink', 16)}${I(c, icon, blocked ? 'ink3' : 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, blocked ? 'ink3' : 'ink', name, '', mono)}${body}</Frame>${T(c, 12, 16, 400, 'ink3', `#${num}`, '', mono)}</Frame>`;
+  };
+  const head = (label, note) =>
+    `<Frame w="fill" h={26} flex="row" items="center" gap={8} px={4}>${T(c, 12, 16, 600, 'ink2', label)}${T(c, 12, 16, 400, 'ink3', note, 'grow={1}')}</Frame>`;
+  const dialog = `<Frame name="CleanupMerged" w={560} h="hug" flex="col" gap={12} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'trash-2', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '머지된 워크트리 삭제')}${SP}${T(c, 12, 16, 400, 'ink3', 'math-demo')}${I(c, 'x', 'ink3', 15)}</Frame>
+${T(c, 13, 20, 400, 'ink2', '브랜치의 가장 최근 PR 상태로 고릅니다. 고른 항목의 폴더와 로컬 브랜치를 지우고, 원격 브랜치와 세션 기록은 남깁니다.', 'w="fill" textAutoResize="height"')}
 <Frame w="fill" h="hug" flex="col" gap={2}>
-${row({ name: 'ora/old-cleanup', num: 35, when: '2일 전', checked: true })}
-${row({ name: 'ora/fix-typo', num: 40, when: '3시간 전', checked: true })}
+${head('Merged', 'PR을 머지한 워크트리')}
+${row({ name: 'ora/old-cleanup', num: 35, note: '2일 전 머지', checked: true })}
+${row({ name: 'ora/fix-typo', num: 40, note: '3시간 전 머지', checked: true })}
 ${row({ name: 'ora/hotfix-login', num: 41, blocked: '커밋하지 않은 변경 3개' })}
+${row({ name: 'ora/api-retry', num: 44, blocked: '머지 뒤 새 커밋 2개' })}
 ${row({ name: 'ora/docs-tweak', num: 37, blocked: '실행 중인 세션 1개' })}
+</Frame>
+<Frame w="fill" h="hug" flex="col" gap={2}>
+${head('Closed', '머지하지 않고 닫은 PR')}
+${row({ name: 'ora/try-sqlite', num: 31, state: 'closed', note: '5일 전 닫음 · 커밋은 원격 브랜치에 남아 있습니다' })}
+${row({ name: 'ora/spike-cache', num: 29, state: 'closed', blocked: '원격에 없는 커밋 3개 · 지우면 사라집니다' })}
 </Frame>
 <Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '2개 고름', 'grow={1}')}${button(c, 'ghost', '취소')}<Frame w="hug" h={30} flex="row" items="center" gap={6} px={12} rounded={8} bg="${c.delBg}">${I(c, 'trash-2', 'del', 14)}${T(c, 13, 18, 600, 'del', '2개 삭제')}</Frame></Frame>
 </Frame>`;
@@ -2327,117 +2340,121 @@ ${row({ name: 'ora/docs-tweak', num: 37, blocked: '실행 중인 세션 1개' })
   });
 }
 
-const M3_RESTORE_POINTS = [
-  ['15:02', 't3 검증 뒤', 'e41c9a2'],
-  ['14:48', 't2 검증 뒤', 'a1b2c3d'],
-  ['14:31', '계획을 세운 뒤', '9f0d1e4'],
-];
+const M3_EDIT_TASK =
+  '달이 끝나는 순간을 현재 달로 보는 캐시 만료 판정을 고치고, 달이 바뀌는 시각을 확인하는 테스트를 더해 주세요.';
+const M3_EDIT_SECOND = 'config.js의 기본 만료 시간도 1시간으로 바꿔 주세요.';
+const m3Faded = (c, html) =>
+  `<Frame w="fill" h="hug" flex="col" gap={14} opacity={0.4}>${html}</Frame>`;
+const m3SecondTurn = (c) =>
+  [
+    toolRowV2(c, { icon: 'file-pen', verb: '편집', target: 'config.js', result: '+1 −1' }),
+    toolRowV2(c, { icon: 'file-plus', verb: '만들기', target: 'cache.test.js', result: '+18' }),
+    toolRowV2(c, {
+      icon: 'circle-check',
+      verb: '검증',
+      target: 'node check.js',
+      result: 'exit 0',
+      resultColor: 'ok',
+    }),
+    paraV2(c, '기본 만료 시간을 1시간으로 바꾸고, 달이 바뀌는 시각 테스트를 더했습니다.'),
+  ].join('');
+const m3FirstTurn = (c) =>
+  [
+    toolRowV2(c, { icon: 'file-pen', verb: '편집', target: 'cache.js', result: '+6 −2' }),
+    paraV2(c, `${icode(c, 'isExpired')}가 달 마지막 순간을 다음 달로 보도록 고쳤습니다.`),
+  ].join('');
+const m3SessionTabs = (c, state) =>
+  titleTabsV3(c, {
+    tabs: [{ title: '캐시 만료 판정 고치기', state }],
+    active: 0,
+    right: `${m3TitleChip(c, 'git-pull-request-create', 'ink2', T(c, 13, 18, 500, 'ink2', 'PR 만들기'))}${v3Right(c)}`,
+  });
+const m3UndoLine = (c) =>
+  `<Frame w={720} h={24} flex="row" items="center" gap={8} px={12}>${T(c, 12, 16, 400, 'ink3', '완료 · 스텝 21/50 · 격리 harness', 'grow={1}')}<Frame w="hug" h={24} flex="row" items="center" gap={5} px={6} rounded={6}>${I(c, 'undo-2', 'ink2', 12)}${T(c, 12, 16, 500, 'ink2', '마지막 요청 되돌리기')}</Frame></Frame>`;
 
 /**
- * 세션의 복원 지점. 대화 안에 만든 자리를 표시하고, 입력창 아래 단추로 목록을 연다.
- * 복원 지점은 브랜치를 바꾸지 않는 스냅샷이고, 되돌리기는 포크로만 한다. PR이 없는 worktree는 제목 줄에 "PR 만들기" 링크를 둔다.
+ * 메시지 고쳐 보내기. 사용자 메시지에 마우스를 올리면 되감기와 고쳐 보내기 단추가 보인다.
+ * 고치는 동안 그 뒤의 대화는 흐리게 두어, 보내면 빠질 부분을 미리 보인다. 실행 중에는 두 단추를 끈다.
  */
-function m3RestorePointsScreen() {
+function m3EditMessageScreen() {
   const c = palette('Slate');
-  const marker = ([time, label, sha]) =>
-    `<Frame w="fill" h={28} flex="row" items="center" gap={8}><Frame w="fill" h={1} bg="${c.line}" />${I(c, 'bookmark', 'ink3', 13)}${T(c, 12, 16, 500, 'ink2', `복원 지점 · ${time} · ${label}`)}${T(c, 12, 16, 400, 'ink3', sha, '', mono)}<Frame w="fill" h={1} bg="${c.line}" /></Frame>`;
-  const point = ([time, label, sha], i) =>
-    `<Frame w="fill" h={40} flex="row" items="center" gap={10} px={12} rounded={8} ${i === 1 ? `bg="${c.hover}"` : ''}>${I(c, 'bookmark', 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={1}>${T(c, 13, 18, 500, 'ink', `${time} · ${label}`)}${T(c, 11, 14, 400, 'ink3', sha, '', mono)}</Frame>${button(c, i === 1 ? 'secondary' : 'ghost', '포크', { icon: 'git-fork' })}</Frame>`;
-  const popover = `<Frame name="RestorePoints" position="absolute" x={980} y={548} w={360} h="hug" flex="col" gap={4} p={8} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
-<Frame w="fill" h={32} flex="row" items="center" gap={8} px={8}>${T(c, 13, 18, 600, 'ink', '복원 지점', 'grow={1}')}${button(c, 'secondary', '지금 만들기', { icon: 'bookmark-plus' })}</Frame>
-${M3_RESTORE_POINTS.map(point).join('')}
-${T(c, 12, 18, 400, 'ink3', '포크하면 그 시점의 코드와 대화로 새 worktree에서 세션을 이어 갑니다. 이 세션과 브랜치는 그대로 남습니다.', 'w="fill" textAutoResize="height" px={8} py={6}')}
+  const actions = `<Frame w="fill" h={26} flex="row" items="center" justify="end" gap={2}>${button(c, 'ghost', '되감기', { icon: 'undo-2' })}${button(c, 'ghost', '고쳐 보내기', { icon: 'pencil' })}</Frame>`;
+  const editing = `<Frame w="fill" h="hug" flex="col" gap={10} px={14} py={11} rounded={10} bg="${c.raised}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+${T(c, 14, 22, 400, 'ink', 'config.js의 기본 만료 시간을 30분으로 바꿔 주세요. 테스트는 그대로 두세요.', 'w="fill" textAutoResize="height"')}
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'info', 'ink3', 13)}${T(c, 12, 16, 400, 'ink3', '보내면 이 메시지 직전으로 되감고 다시 시작합니다 · 파일 1개를 되돌리고 1개를 지웁니다', 'grow={1}')}${button(c, 'ghost', '취소')}${button(c, 'primary', '고쳐 보내기', { keyHint: '↵' })}</Frame>
 </Frame>`;
-  const below = `<Frame w={720} h={24} flex="row" items="center" gap={8} px={12}>${T(c, 12, 16, 400, 'ink3', '단계 Verify · 스텝 14/50 · 격리 harness', 'grow={1}')}<Frame w="hug" h={24} flex="row" items="center" gap={5} px={6} rounded={6} bg="${c.hover}">${I(c, 'bookmark', 'ink2', 12)}${T(c, 12, 16, 500, 'ink2', '복원 지점 3')}</Frame></Frame>`;
-  const createPr = m3TitleChip(
-    c,
-    'git-pull-request-create',
-    'ink2',
-    T(c, 13, 18, 500, 'ink2', 'PR 만들기'),
-  );
-  return windowV3(c, '47 M3 Restore Points · Slate', {
+  return windowV3(c, '47 M3 Edit Message · Slate', {
     side: sidebarV3(c, { groups: M3_PR_GROUPS({ selected: 'ora/fix-cache' }) }),
     main:
-      titleTabsV3(c, {
-        tabs: [{ title: '캐시 만료 판정 고치기', state: 'running' }],
-        active: 0,
-        right: `${createPr}${v3Right(c)}`,
-      }) +
+      m3SessionTabs(c, 'done') +
       threadV2(
         c,
         [
-          userBoxV2(
-            c,
-            '달이 끝나는 순간을 현재 달로 보는 캐시 만료 판정을 고치고, 달이 바뀌는 시각을 확인하는 테스트를 더해 주세요.',
-          ),
-          marker(M3_RESTORE_POINTS[2]),
-          toolRowV2(c, { icon: 'file-pen', verb: '편집', target: 'cache.js', result: '+6 −2' }),
-          toolRowV2(c, {
-            icon: 'circle-check',
-            verb: '검증',
-            target: 'node check.js',
-            result: 'exit 0',
-            resultColor: 'ok',
-          }),
-          marker(M3_RESTORE_POINTS[1]),
-          toolRowV2(c, {
-            icon: 'file-pen',
-            verb: '편집',
-            target: 'cache.test.js',
-            result: '+18 −0',
-          }),
-          paraV2(c, '달 마지막 날 23:59:59와 다음 달 0시를 나눠 확인하는 테스트를 더했습니다.'),
-          marker(M3_RESTORE_POINTS[0]),
+          `<Frame w="fill" h="hug" flex="col" gap={4}>${actions}${userBoxV2(c, M3_EDIT_TASK)}</Frame>`,
+          m3FirstTurn(c),
+          editing,
+          m3Faded(c, m3SecondTurn(c)),
         ],
         {
-          composer: `<Frame w="hug" h="hug" flex="col" gap={6}>${composerV2(c, { running: true })}${below}</Frame>`,
+          composer: `<Frame w="hug" h="hug" flex="col" gap={6}>${composerV2(c, {})}${m3UndoLine(c)}</Frame>`,
         },
       ),
     status: statusBarV3(c, V3_STATUS),
-    overlay: popover,
   });
 }
 
-/** 복원 지점에서 포크. 만들기 창을 "기준: 복원 지점"으로 열고, 만든 뒤 새 worktree의 새 탭에서 세션을 이어 간다. */
-function m3ForkScreen() {
+/** 되감기 확인 창. 되돌릴 파일, 지울 파일, 사용자가 고친 뒤라 덮일 파일, 빠질 메시지, 브랜치에 남는 커밋을 미리 보인다. */
+function m3RewindConfirmScreen() {
   const c = palette('Slate');
-  const info = (label, value, isMono = true) =>
-    `<Frame w="fill" h="hug" flex="row" items="start" gap={8}>${T(c, 12, 16, 400, 'ink3', label, 'w={64}')}${T(c, 12, 16, 500, 'ink2', value, 'w="fill" textAutoResize="height"', isMono ? mono : undefined)}</Frame>`;
-  const dialog = `<Frame name="ForkWorktree" w={520} h="hug" flex="col" gap={16} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'git-fork', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '복원 지점에서 포크')}${SP}${T(c, 12, 16, 400, 'ink3', 'math-demo')}${I(c, 'x', 'ink3', 15)}</Frame>
-<Frame w="fill" h="hug" flex="col" gap={6}>${m3Label(c, '이름')}${m3Input(c, 'fix-cache-fork', { mono: true })}${T(c, 12, 16, 400, 'ink3', '소문자, 숫자, 하이픈, /만 씁니다')}</Frame>
-<Frame w="fill" h="hug" flex="col" gap={6}>${m3Label(c, '기준')}<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={10} py={8} rounded={8} bg="${c.sunken}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'bookmark', 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={1}>${T(c, 13, 18, 500, 'ink', '14:48 · t2 검증 뒤')}<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${T(c, 12, 16, 400, 'ink3', '캐시 만료 판정 고치기 ·')}${T(c, 12, 16, 400, 'ink3', 'ora/fix-cache · a1b2c3d', '', mono)}</Frame></Frame></Frame></Frame>
-<Frame w="fill" h="hug" flex="col" gap={6} px={12} py={10} rounded={8} bg="${c.raised}">
-${info('브랜치', 'ora/fix-cache-fork')}
-${info('폴더', '~/.ora/worktrees/math-demo/fix-cache-fork')}
-${info('세션', '이 시점까지의 대화와 할 일을 가져와 새 탭에서 이어 갑니다', false)}
-${info('초기 명령', M3_CMDS.join('  ·  '))}
+  const file = (icon, color, path, note) =>
+    `<Frame w="fill" h={24} flex="row" items="center" gap={8} px={4}>${I(c, icon, color, 13)}${T(c, 12, 16, 500, 'ink', path, '', mono)}${T(c, 12, 16, 400, 'ink3', note, 'grow={1}')}</Frame>`;
+  const section = (title, rows) =>
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 12, 16, 600, 'ink2', title, 'pl={4} pb={2}')}${rows.join('')}</Frame>`;
+  const dialog = `<Frame name="RewindConfirm" w={560} h="hug" flex="col" gap={14} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'undo-2', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '이 메시지 직전으로 되감기')}${SP}${I(c, 'x', 'ink3', 15)}</Frame>
+<Frame w="fill" h="hug" px={12} py={9} rounded={8} bg="${c.sunken}">${T(c, 13, 20, 400, 'ink2', M3_EDIT_SECOND, 'w="fill" textAutoResize="height"')}</Frame>
+${section('되돌릴 파일 1개', [file('file-pen', 'ink2', 'config.js', '이 메시지 직전 내용으로')])}
+${section('지울 파일 1개', [file('file-minus', 'del', 'cache.test.js', '이 세션이 그 뒤에 새로 만든 파일')])}
+<Frame w="fill" h="hug" flex="col" gap={4} px={12} py={10} rounded={8} bg="${c.raised}">
+<Frame w="fill" h="hug" flex="row" items="center" gap={6}>${I(c, 'triangle-alert', 'warn', 14)}${T(c, 13, 18, 600, 'ink', '직접 고친 내용이 덮이는 파일 1개')}</Frame>
+${file('file-pen', 'warn', 'config.js', '세션이 마지막으로 쓴 뒤 14:52에 바뀌었습니다')}
 </Frame>
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '포크', { keyHint: '↵' })}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={4}>
+${T(c, 12, 18, 400, 'ink3', '대화에서 메시지 5개가 빠집니다. 이 지점 뒤의 커밋 1개는 브랜치에 남습니다.', 'w="fill" textAutoResize="height"')}
+${T(c, 12, 18, 400, 'ink3', '이 세션이 바꾸지 않은 파일은 그대로 둡니다. 되감은 뒤 다음 메시지를 보내기 전까지 되감기를 취소할 수 있습니다.', 'w="fill" textAutoResize="height"')}
+</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '되감기', { keyHint: '↵' })}</Frame>
 </Frame>`;
   const overlay = `<Frame position="absolute" x={0} y={0} w={1440} h={900} flex="col" items="center" justify="center" bg="${c.overlay}">${dialog}</Frame>`;
-  return windowV3(c, '48 M3 Fork · Slate', {
+  return windowV3(c, '48 M3 Rewind Confirm · Slate', {
     side: sidebarV3(c, { groups: M3_PR_GROUPS({ selected: 'ora/fix-cache' }) }),
     main:
-      titleTabsV3(c, {
-        tabs: [{ title: '캐시 만료 판정 고치기', state: 'running' }],
-        active: 0,
-        right: v3Right(c),
-      }) +
+      m3SessionTabs(c, 'done') +
       threadV2(
         c,
-        [
-          userBoxV2(
-            c,
-            '달이 끝나는 순간을 현재 달로 보는 캐시 만료 판정을 고치고, 달이 바뀌는 시각을 확인하는 테스트를 더해 주세요.',
-          ),
-        ],
+        [userBoxV2(c, M3_EDIT_TASK), m3FirstTurn(c), userBoxV2(c, M3_EDIT_SECOND), m3SecondTurn(c)],
         {
-          composer: composerV2(c, { running: true }),
+          composer: composerV2(c, {}),
         },
       ),
     status: statusBarV3(c, V3_STATUS),
     overlay,
+  });
+}
+
+/** 되감은 뒤. 되감은 메시지를 입력창에 되돌려 두고, 알림에서 되감기를 취소할 수 있다. */
+function m3RewoundScreen() {
+  const c = palette('Slate');
+  const toast = `<Frame name="RewoundToast" position="absolute" x={1004} y={64} w={420} h="hug" flex="row" items="center" gap={10} px={14} py={12} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${I(c, 'undo-2', 'ink', 16)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 600, 'ink', '되감았습니다')}${T(c, 12, 16, 400, 'ink3', '파일 1개를 되돌리고 1개를 지웠습니다')}</Frame>${button(c, 'secondary', '되감기 취소')}</Frame>`;
+  return windowV3(c, '49 M3 Rewound · Slate', {
+    side: sidebarV3(c, { groups: M3_PR_GROUPS({ selected: 'ora/fix-cache' }) }),
+    main:
+      m3SessionTabs(c, 'done') +
+      threadV2(c, [userBoxV2(c, M3_EDIT_TASK), m3FirstTurn(c)], {
+        composer: composerV2(c, { placeholder: M3_EDIT_SECOND }),
+      }),
+    status: statusBarV3(c, V3_STATUS),
+    overlay: toast,
   });
 }
 
@@ -2488,6 +2505,7 @@ export const SCREENS = [
   { file: 'm3-settings-repos-slate', jsx: m3ReposScreen },
   { file: 'm3-pr-status-slate', jsx: m3PrStatusScreen },
   { file: 'm3-cleanup-merged-slate', jsx: m3CleanupScreen },
-  { file: 'm3-restore-points-slate', jsx: m3RestorePointsScreen },
-  { file: 'm3-fork-slate', jsx: m3ForkScreen },
+  { file: 'm3-edit-message-slate', jsx: m3EditMessageScreen },
+  { file: 'm3-rewind-confirm-slate', jsx: m3RewindConfirmScreen },
+  { file: 'm3-rewound-slate', jsx: m3RewoundScreen },
 ];

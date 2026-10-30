@@ -223,7 +223,7 @@ export function sidebarV3(c, { groups }) {
     const [icon, col] = SESSION_ICON[state];
     return `<Frame w="fill" h={30} flex="row" items="center" gap={8} pl={28} pr={10}>${I(c, icon, col, 13)}${T(c, 13, 18, 400, 'ink', title, 'grow={1} maxLines={1} truncate')}${T(c, 12, 16, 400, 'ink3', age)}</Frame>`;
   };
-  // PR 상태는 아이콘 모양으로 서로 구분한다. "머지됨" 상태는 글자로도 적어 색에만 기대지 않는다.
+  // PR 상태는 아이콘 모양으로 서로 구분한다. Merged는 GitHub와 같은 영어 글자로도 적어 색에만 기대지 않는다.
   const PR_STATE = {
     open: ['git-pull-request', 'ok'],
     draft: ['git-pull-request-draft', 'ink3'],
@@ -239,7 +239,7 @@ export function sidebarV3(c, { groups }) {
     const [icon, col] = PR_STATE[state];
     const tail =
       state === 'merged'
-        ? T(c, 12, 16, 500, 'ink2', '머지됨')
+        ? T(c, 12, 16, 500, 'ink2', 'Merged')
         : `${T(c, 12, 16, 500, 'ink2', `#${num}`, '', mono)}${checks ? I(c, CHECKS[checks][0], CHECKS[checks][1], 12) : ''}`;
     return `<Frame w="hug" h="hug" flex="row" items="center" gap={4}>${I(c, icon, col, 13)}${tail}</Frame>`;
   };
@@ -261,7 +261,7 @@ export function sidebarV3(c, { groups }) {
       ? `<Frame w="fill" h="hug" flex="col" pb={4} rounded={10} bg="${c.raised}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${wtRow(w)}${(w.sessions ?? []).map(sessionRow).join('')}</Frame>`
       : wtRow(w);
   const mergedRow = (count) =>
-    `<Frame w="fill" h={30} flex="row" items="center" gap={8} px={10}>${I(c, 'trash-2', 'ink3', 13)}${T(c, 12, 16, 500, 'ink2', `머지된 worktree ${count}개 삭제…`)}</Frame>`;
+    `<Frame w="fill" h={30} flex="row" items="center" gap={8} px={10}>${I(c, 'trash-2', 'ink3', 13)}${T(c, 12, 16, 500, 'ink2', `머지된 워크트리 ${count}개 삭제…`)}</Frame>`;
   const group = ({ repo, worktrees, merged = 0 }) =>
     `<Frame w="fill" h="hug" flex="col" gap={2}><Frame w="fill" h={34} flex="row" items="center" gap={10} px={10}>${I(c, 'folder-git-2', 'ink2', 15)}${T(c, 14, 20, 600, 'ink', repo, 'grow={1}')}${I(c, 'plus', 'ink3', 15)}</Frame>${worktrees.map(wt).join('')}${merged ? mergedRow(merged) : ''}</Frame>`;
   return `<Frame name="SidebarV3" w={300} h="fill" flex="row" bg="${c.sidebar}"><Frame w="fill" h="fill" flex="col">
