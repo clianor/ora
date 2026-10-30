@@ -8,6 +8,7 @@ import type {
   LoginState,
   McpServerStatus,
   ProviderAccounts,
+  WorktreeRecord,
 } from '@ora/protocol';
 import type {
   Actor,
@@ -1370,7 +1371,7 @@ function withCwd(repoName: string, nodes: WorktreeNode[]): WorktreeNode[] {
   }));
 }
 
-const repos: RepoNode[] = rawRepos.map((repo) => {
+const baseRepos: RepoNode[] = rawRepos.map((repo) => {
   const [first, ...others] = repo.worktrees;
   const worktrees =
     repo.name === 'math-demo' && first
@@ -1390,6 +1391,73 @@ const repos: RepoNode[] = rawRepos.map((repo) => {
       : repo.worktrees;
   return { ...repo, worktrees: withCwd(repo.name, worktrees) };
 });
+
+// 새 worktree 시안입니다. 주소는 `#/worktree?cwd=~/.ora/worktrees/math-demo/fix-negative-add`(생성 중),
+// `#/worktree?cwd=~/.ora/worktrees/math-demo/fix-setup-fail`(초기 명령 실패)입니다.
+const setupCommandTexts = ['cp ../.env .env', 'pnpm install', 'pnpm build'];
+const createSetupRecord = (
+  name: string,
+  status: WorktreeRecord['status'],
+  steps: WorktreeRecord['commands'][number]['status'][],
+  terminalId: string,
+): WorktreeRecord => ({
+  id: `w-${name
+    .slice(0, 8)
+    .replaceAll(/[^a-z0-9]/g, 'x')
+    .padEnd(8, 'x')}`,
+  repo: '~/projects/math-demo',
+  name,
+  branch: `ora/${name}`,
+  path: `~/.ora/worktrees/math-demo/${name}`,
+  parent: 'main',
+  baseRef: '3f9c2a1',
+  status,
+  createdAt: `${day}T09:40:00+09:00`,
+  updatedAt: `${day}T09:41:00+09:00`,
+  commands: setupCommandTexts.map((command, index) => ({
+    command,
+    status: steps[index] ?? 'pending',
+    ...(steps[index] === 'failed' ? { exitCode: 1 } : {}),
+  })),
+  terminalId,
+  ...(status === 'setup-failed' ? { failure: 'pnpm install · exit 1' } : {}),
+});
+const fixtureWorktrees: WorktreeRecord[] = [
+  createSetupRecord('fix-negative-add', 'setup', ['done', 'running', 'pending'], 't-setup01'),
+  createSetupRecord('fix-setup-fail', 'setup-failed', ['done', 'failed', 'skipped'], 't-setup02'),
+];
+const repos: RepoNode[] = baseRepos.map((repo) => ({
+  ...repo,
+  path: `~/projects/${repo.name}`,
+  worktrees:
+    repo.name === 'math-demo'
+      ? [
+          ...repo.worktrees,
+          ...fixtureWorktrees.map((setup): WorktreeNode => ({
+            name: setup.branch,
+            cwd: setup.path,
+            title: setup.path,
+            setup,
+            sessions: [],
+            stack: [],
+          })),
+        ]
+      : repo.worktrees,
+}));
+const setupTerminals: Terminal[] = fixtureWorktrees.map((setup) => ({
+  id: setup.terminalId ?? '',
+  cwd: setup.path,
+  status: 'running',
+  cols: 100,
+  rows: 30,
+  createdAt: `${day}T09:40:00+09:00`,
+}));
+const setupScripts: Record<string, string> = {
+  't-setup01':
+    '$ cp ../.env .env\r\n$ pnpm install\r\nLockfile is up to date, resolution step is skipped\r\nProgress: resolved 212, reused 208, downloaded 4, added 61\r\n',
+  't-setup02':
+    '$ cp ../.env .env\r\n$ pnpm install\r\nProgress: resolved 212, reused 208, downloaded 0, added 0\r\n \u001b[31mERR_PNPM_FETCH_404\u001b[0m  GET https://registry.npmjs.org/@math-demo%2Futil: Not Found - 404\r\n',
+};
 
 const fixtureTerminal: Terminal = {
   id: 't-fixtur1',
@@ -1412,6 +1480,13 @@ const fixtureTabs: Record<string, WorktreeTabs> = {
     activeTabId: 'run1',
   },
 };
+
+for (const setup of fixtureWorktrees) {
+  fixtureTabs[setup.path] = {
+    tabs: [{ id: `setup-${setup.name}`, kind: 'terminal', terminalId: setup.terminalId ?? '' }],
+    activeTabId: `setup-${setup.name}`,
+  };
+}
 
 const fixtureTerminalScript =
   '~/projects/math-demo (main) $ node check.js\r\nok\r\n~/projects/math-demo (main) $ git status --short\r\n \u001b[31mM\u001b[0m \u001b[31mmath.js\u001b[0m\r\n~/projects/math-demo (main) $ ';
@@ -1902,7 +1977,12 @@ type StatefulActionName =
   | 'killTerminal'
   | 'sendTerminalInput'
   | 'resizeTerminal'
-  | 'watchTerminal';
+  | 'watchTerminal'
+  | 'createWorktree'
+  | 'loadWorktreeOptions'
+  | 'rerunWorktreeSetup'
+  | 'saveReposSettings'
+  | 'openNewTab';
 
 const fixtureActions: Omit<OraActions, StatefulActionName> = {
   createSession: () => Promise.resolve(sessionView.record.id),
@@ -2055,6 +2135,24 @@ export function createFixtureStore(): OraStoreSource {
         },
       ],
     }),
+    repos: ready({
+      repos: [
+        {
+          path: '~/projects/math-demo',
+          name: 'math-demo',
+          setupCommands: setupCommandTexts,
+          worktreeCount: 3,
+          folder: '~/.ora/worktrees/math-demo',
+        },
+        {
+          path: '~/Desktop/ora',
+          name: 'ora',
+          setupCommands: [],
+          worktreeCount: 2,
+          folder: '~/.ora/worktrees/ora',
+        },
+      ],
+    }),
   };
   const changeEngineSettings = (change: Partial<EngineSettingsData>): Promise<void> => {
     engineSettings = { ...engineSettings, ...change };
@@ -2121,7 +2219,10 @@ export function createFixtureStore(): OraStoreSource {
   let snapshot: OraStore;
 
   const tabsByCwd = new Map(Object.entries(fixtureTabs));
-  const terminalsById = new Map([[fixtureTerminal.id, fixtureTerminal]]);
+  const terminalsById = new Map([
+    [fixtureTerminal.id, fixtureTerminal],
+    ...setupTerminals.map((terminal): [string, Terminal] => [terminal.id, terminal]),
+  ]);
   let terminalCount = 0;
 
   const commit = (next: ProviderAccounts[]) => {
@@ -2179,13 +2280,54 @@ export function createFixtureStore(): OraStoreSource {
     },
     sendTerminalInput: () => Promise.resolve(),
     resizeTerminal: () => Promise.resolve(),
-    watchTerminal: (_id, handlers) => {
+    watchTerminal: (id, handlers) => {
       const timer = setTimeout(() => {
-        handlers.onOutput(new TextEncoder().encode(fixtureTerminalScript));
+        handlers.onOutput(new TextEncoder().encode(setupScripts[id] ?? fixtureTerminalScript));
       }, 0);
       return () => {
         clearTimeout(timer);
       };
+    },
+    createWorktree: (body) => {
+      const created = createSetupRecord(body.name, 'ready', [], 't-setup01');
+      tabsByCwd.set(created.path, {
+        tabs: [{ id: `setup-${body.name}`, kind: 'terminal', terminalId: 't-setup01' }],
+        activeTabId: `setup-${body.name}`,
+      });
+      return Promise.resolve(created);
+    },
+    openNewTab: (cwd) => {
+      const current = tabsByCwd.get(cwd) ?? { tabs: [] };
+      const tab = {
+        id: `new-${String(current.tabs.length)}`,
+        kind: 'new' as const,
+        isSessionMode: true,
+      };
+      tabsByCwd.set(cwd, { tabs: [...current.tabs, tab], activeTabId: tab.id });
+      refresh();
+      return Promise.resolve(tab.id);
+    },
+    loadWorktreeOptions: () =>
+      Promise.resolve({
+        repoName: 'math-demo',
+        branches: ['main', 'docs/readme-pnpm'],
+        current: 'main',
+        folder: '~/.ora/worktrees/math-demo',
+        setupCommands: setupCommandTexts,
+      }),
+    rerunWorktreeSetup: () => Promise.resolve(),
+    saveReposSettings: (next) => {
+      const known = engineSettings.repos.value?.repos ?? [];
+      return changeEngineSettings({
+        repos: ready({
+          repos: known.map((repo) => ({
+            ...repo,
+            setupCommands:
+              next.repos.find((entry) => entry.path === repo.path)?.setupCommands ??
+              repo.setupCommands,
+          })),
+        }),
+      });
     },
     refreshAccounts: () => Promise.resolve(),
     startLogin: (provider) => {
@@ -2343,6 +2485,7 @@ export function createFixtureStore(): OraStoreSource {
     sidebar: { repos, deviceName: 'MacBook-Pro' },
     sessionsWithoutFolder: [],
     getBranch: (cwd) => worktreeNames.get(cwd),
+    getWorktreeSetup: (cwd) => fixtureWorktrees.find((item) => item.path === cwd),
     getDefaultBranch: (cwd) => (worktreeNames.has(cwd) ? 'main' : undefined),
     getChanges: (cwd) => fixtureChanges[cwd] ?? (worktreeNames.has(cwd) ? noChanges : undefined),
     getNewSessionContext: (cwd = '~/Desktop/ora') => ({

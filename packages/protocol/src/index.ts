@@ -11,3 +11,4 @@ export * from './tabs.ts';
 export * from './mcp.ts';
 export * from './skills.ts';
 export * from './memory.ts';
+export * from './worktrees.ts';

@@ -4,6 +4,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useAui,
+  useAuiState,
   useExternalStoreRuntime,
   type TextMessagePartProps,
   type ThreadMessageLike,
@@ -21,7 +22,8 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { Popover } from 'radix-ui';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { getComposerDraft, setComposerDraft } from '../lib/composerDraft.ts';
 import type { ComposerChips, Effort, RoutingModel, SessionView, StatusItem } from '../model.ts';
 import { cn } from '../lib/cn.ts';
 import type { CacheView } from '../lib/cache.ts';
@@ -67,6 +69,29 @@ export function SteerRestore({ failure }: { failure: SessionView['steerFailure']
   useEffect(() => {
     if (failure) aui.composer.setText(failure.texts.join('\n'));
   }, [aui, failure]);
+  return null;
+}
+
+/** 탭마다 보내지 않은 입력창 글을 브라우저 저장소에 보관하고, 탭을 다시 열면 되살립니다. 글을 보내면 입력창이 비면서 보관한 글도 지웁니다. */
+export function DraftSync({ draftKey }: { draftKey: string }) {
+  const aui = useAui();
+  const text = useAuiState((state) => state.composer.text);
+  const isRestored = useRef(false);
+  const hasSavedText = useRef(false);
+  /** 입력창 글은 assistant-ui 런타임이 갖고 있어서, 보관한 글을 되살리고 바뀐 글을 저장하려면 런타임과 브라우저 저장소를 맞춰야 합니다. */
+  useEffect(() => {
+    if (!isRestored.current) {
+      isRestored.current = true;
+      const saved = getComposerDraft(draftKey);
+      if (saved !== '') {
+        aui.composer.setText(saved);
+        return;
+      }
+    }
+    if (text === '' && !hasSavedText.current) return;
+    hasSavedText.current = text !== '';
+    setComposerDraft(draftKey, text);
+  }, [aui, draftKey, text]);
   return null;
 }
 

@@ -11,9 +11,25 @@ import type {
   MemoryPort,
   RecallPack,
 } from '@ora/core';
-import { archiveBlock, countSentences, parseLessons, readIfExists, readUsage } from './store.ts';
+import {
+  archiveBlock,
+  countSentences,
+  mergeStagingFile,
+  parseLessons,
+  readIfExists,
+  readStagingBlocks,
+  readUsage,
+  stagingPath,
+  withMemoryLock,
+} from './store.ts';
 
-export { deleteMemory, listMemories, readPassState } from './store.ts';
+export {
+  deleteMemory,
+  listMemories,
+  mergeOrphanStaging,
+  readPassState,
+  withMemoryLock,
+} from './store.ts';
 export { runFullPass, shouldRunFullPass } from './full-pass.ts';
 export type { FullPassOptions, MemoryAsk } from './full-pass.ts';
 
@@ -64,21 +80,25 @@ function looksLikeRawLog(text: string): boolean {
 }
 
 /**
- * LESSONS.md를 직접 쓰는 기억 저장소다 (M1 단일 세션 허용 범위).
+ * 스테이징 파일(`staging/<세션 ID>.md`)에 쌓는 기억 저장소다 (SPEC 3.5절). 세션은 LESSONS.md에 직접 쓰지 않고, 세션이 끝날 때 `maintain`이 잠금을 잡고 LESSONS.md에 합친다.
  * 판정 순서는 Refuse, 형식 반려, Remember다. 출처가 없으면 `unsourced` 표시를 붙여 기록한다. 한 사실이 아닌 후보는 기록하지 않는다.
  */
 export function createFileMemory(options: FileMemoryOptions): MemoryPort {
   const lessonsPath = join(options.memoryDir, 'LESSONS.md');
   const dateStamp = () => formatKst(options.clock.now()).slice(0, 10);
 
-  /** 일련번호는 LESSONS.md와 archive/에 있는 ID 가운데 가장 큰 값 다음이다. 아카이브한 ID를 다시 주지 않는다. */
+  /** 일련번호는 LESSONS.md, archive/, 스테이징 파일에 있는 ID 가운데 가장 큰 값 다음이다. 아카이브한 ID를 다시 주지 않는다. */
   async function nextId(): Promise<string> {
     const compact = dateStamp().replaceAll('-', '');
     const pattern = new RegExp(`L-${compact}-(\\d{3})`, 'g');
     const archived = (await readdir(join(options.memoryDir, 'archive')).catch(() => [])).join('\n');
-    const found = [...`${await readIfExists(lessonsPath)}\n${archived}`.matchAll(pattern)].map(
-      (match) => Number(match[1]),
-    );
+    const staged = (await readStagingBlocks(options.memoryDir))
+      .flatMap((entry) => entry.blocks)
+      .map((block) => block.id)
+      .join('\n');
+    const found = [
+      ...`${await readIfExists(lessonsPath)}\n${archived}\n${staged}`.matchAll(pattern),
+    ].map((match) => Number(match[1]));
     return `L-${compact}-${String(Math.max(0, ...found) + 1).padStart(3, '0')}`;
   }
 
@@ -148,23 +168,36 @@ export function createFileMemory(options: FileMemoryOptions): MemoryPort {
         };
       }
       const isUnsourced = source === undefined || source === '';
-      const id = await nextId();
-      await mkdir(options.memoryDir, { recursive: true });
-      await appendFile(
-        lessonsPath,
-        `## ${id} · ${dateStamp()} · [project:${options.projectId}] · lesson · retention:default${isUnsourced ? ' · unsourced' : ''}\n${text}\n근거: ${isUnsourced ? '출처 없음' : source}\n세션: ${sessionId}\n저장: ${formatKst(options.clock.now())}\n\n`,
-        'utf8',
-      );
+      const { id } = await withMemoryLock(options.memoryDir, async () => {
+        const nextLessonId = await nextId();
+        await mkdir(join(options.memoryDir, 'staging'), { recursive: true });
+        await appendFile(
+          stagingPath(options.memoryDir, sessionId),
+          `## ${nextLessonId} · ${dateStamp()} · [project:${options.projectId}] · lesson · retention:default${isUnsourced ? ' · unsourced' : ''}\n${text}\n근거: ${isUnsourced ? '출처 없음' : source}\n세션: ${sessionId}\n저장: ${formatKst(options.clock.now())}\n\n`,
+          'utf8',
+        );
+        return { id: nextLessonId };
+      });
       sessionLessons.set(id, sessionId);
       return { decision: 'remember', lessonId: id, isUnsourced };
     },
 
     async maintain(judge?: ConflictJudge): Promise<MaintenanceResult> {
+      // 판정 모델 호출까지 잠금 안에서 하므로 다른 세션의 합병은 그동안 기다린다.
+      return withMemoryLock(options.memoryDir, () => maintainLocked(judge), 300_000);
+    },
+  };
+
+  async function maintainLocked(judge?: ConflictJudge): Promise<MaintenanceResult> {
+    {
       const result: {
         merged: { keptId: string; archivedIds: string[] }[];
         invalidated: { id: string; replacedBy: string }[];
       } = { merged: [], invalidated: [] };
       if (sessionLessons.size === 0) return result;
+      for (const sessionId of new Set(sessionLessons.values())) {
+        await mergeStagingFile(options.memoryDir, sessionId);
+      }
       const blocks = parseLessons(await readIfExists(lessonsPath));
       const logLines: string[] = [];
       const log = (operation: string, ids: readonly string[], reason: string) => {
@@ -261,6 +294,6 @@ export function createFileMemory(options: FileMemoryOptions): MemoryPort {
       }
       result.merged = [...mergedInto].map(([keptId, ids]) => ({ keptId, archivedIds: ids }));
       return result;
-    },
-  };
+    }
+  }
 }

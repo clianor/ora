@@ -3,11 +3,17 @@ import { Globe, MessageSquare, Smartphone, SquareTerminal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn } from '../lib/cn.ts';
 import { basename } from '../lib/path.ts';
-import { navigate, type RouteState } from '../lib/route.ts';
+import type { RouteState } from '../lib/route.ts';
 import { usePanelState } from '../lib/panel.ts';
 import { findShortcut } from '../lib/shortcuts.ts';
 import { runningStatuses } from '../lib/status.ts';
-import { openNewTab, openTerminalTab, turnIntoSessionTab, type TabContext } from '../lib/tabs.ts';
+import {
+  openNewTab,
+  openSessionMode,
+  openTerminalTab,
+  turnIntoSessionTab,
+  type TabContext,
+} from '../lib/tabs.ts';
 import { findWorktreeOfSession, listWorktrees } from '../lib/worktrees.ts';
 import { runAction, useStore } from '../store.tsx';
 import { RightPanel } from './RightPanel.tsx';
@@ -15,6 +21,7 @@ import { Sidebar } from './Sidebar.tsx';
 import { TerminalTab } from './TerminalTab.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { NewSessionWelcome } from './Welcome.tsx';
+import { SetupTab } from './SetupTab.tsx';
 import { Workbench } from './Workbench.tsx';
 
 function Notice({ title, detail }: { title: string; detail: string }) {
@@ -104,6 +111,7 @@ function TabContent({
   runningCount,
   title,
   repoName,
+  repoPath,
   isSessionMode,
   isModelPickerOpen,
 }: {
@@ -113,6 +121,7 @@ function TabContent({
   runningCount: number;
   title: string;
   repoName: string;
+  repoPath: string | undefined;
   isSessionMode: boolean;
   isModelPickerOpen: boolean;
 }) {
@@ -122,24 +131,43 @@ function TabContent({
     if (!view) {
       return <Notice title="세션을 찾지 못했습니다" detail="탭을 닫고 기록에서 다시 엽니다." />;
     }
-    return <Workbench key={view.record.id} view={view} sameFolderRunningCount={runningCount} />;
-  }
-  if (tab?.kind === 'terminal') {
     return (
-      <TerminalTab
-        key={tab.id}
-        terminalId={tab.terminalId}
-        onRestart={() => {
-          runAction(openTerminalTab(context, tab.id));
-        }}
+      <Workbench
+        key={view.record.id}
+        view={view}
+        sameFolderRunningCount={runningCount}
+        draftKey={tab.id}
       />
     );
+  }
+  if (tab?.kind === 'terminal') {
+    const setup = store.getWorktreeSetup(cwd);
+    const restart = () => {
+      runAction(openTerminalTab(context, tab.id));
+    };
+    if (setup?.terminalId === tab.terminalId) {
+      return (
+        <SetupTab
+          key={tab.id}
+          record={setup}
+          terminalId={tab.terminalId}
+          onRestart={restart}
+          onNewSession={() => {
+            openNewTab(context, true);
+          }}
+        />
+      );
+    }
+    return <TerminalTab key={tab.id} terminalId={tab.terminalId} onRestart={restart} />;
   }
   if (isSessionMode) {
     return (
       <main className="flex min-w-0 flex-1 flex-col">
         <NewSessionWelcome
           repoName={repoName}
+          draftKey={tab?.id ?? 'new'}
+          runningCount={runningCount}
+          repoPath={repoPath}
           context={store.getNewSessionContext(cwd)}
           cwd={cwd}
           isPickerOpen={isModelPickerOpen}
@@ -154,7 +182,7 @@ function TabContent({
     <NewTabChooser
       title={title}
       onPickSession={() => {
-        navigate('worktree', { cwd, tabId: tab?.id, isSessionMode: true });
+        openSessionMode(context, tab?.id);
       }}
       onPickTerminal={() => {
         runAction(openTerminalTab(context, tab?.id));
@@ -201,8 +229,7 @@ function TabEffects({
       event.preventDefault();
       const newTabId = activeTab?.kind === 'new' ? activeTab.id : undefined;
       if (id === 'openSessionInTab') {
-        if (newTabId)
-          navigate('worktree', { cwd: context.cwd, tabId: newTabId, isSessionMode: true });
+        if (newTabId) openSessionMode(context, newTabId);
         else openNewTab(context, true);
       } else if (id === 'newTerminal') runAction(openTerminalTab(context, newTabId));
       else if (id === 'newTab') openNewTab(context);
@@ -324,7 +351,11 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
                 runningCount={runningCount}
                 title={`${ref?.repo.name ?? basename(cwd)} · ${store.getNewSessionContext(cwd).branch ?? ref?.node.name ?? basename(cwd)}`}
                 repoName={ref?.repo.name ?? basename(cwd)}
-                isSessionMode={state.isSessionMode === true}
+                repoPath={ref?.repo.path}
+                isSessionMode={
+                  state.isSessionMode === true ||
+                  (activeTab?.kind === 'new' && activeTab.isSessionMode === true)
+                }
                 isModelPickerOpen={state.isModelPickerOpen === true}
               />
             </div>

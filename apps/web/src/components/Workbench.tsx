@@ -1,4 +1,4 @@
-import { Gauge, TriangleAlert, X } from 'lucide-react';
+import { Gauge, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { getStageIndex, stageLabels, stages } from '../events.ts';
 import { formatCostRatio, getCostView } from '../lib/cost.ts';
@@ -6,12 +6,21 @@ import { runningStatuses } from '../lib/status.ts';
 import type { SessionView, StatusItem } from '../model.ts';
 import { runAction, useStore } from '../store.tsx';
 import { ApprovalCard } from './ApprovalCard.tsx';
-import { ChatProvider, Composer, StatusLine, SteerRestore, ThreadView } from './Chat.tsx';
+import {
+  ChatProvider,
+  Composer,
+  DraftSync,
+  StatusLine,
+  SteerRestore,
+  ThreadView,
+} from './Chat.tsx';
 import { CostStopCard } from './CostStopCard.tsx';
 import { CrashedNotice } from './CrashedNotice.tsx';
 import { QuestionCard } from './QuestionCard.tsx';
 import { scrollIfRequested } from '../lib/notify.ts';
 import { ModelSwitchToast } from './ModelSwitchToast.tsx';
+import { findWorktreeOfSession } from '../lib/worktrees.ts';
+import { OverwriteNotice } from './OverwriteNotice.tsx';
 
 const timeFormat = new Intl.DateTimeFormat('ko-KR', {
   hour: '2-digit',
@@ -24,14 +33,17 @@ interface WorkbenchProps {
   view: SessionView;
   /** 같은 워크트리에서 실행 중인 세션 수입니다. 2개 이상이면 입력창 위에 덮어쓰기 경고를 보입니다. */
   sameFolderRunningCount: number;
+  /** 이 탭의 ID입니다. 보내지 않은 입력창 글을 이 키로 보관합니다. */
+  draftKey: string;
 }
 
 /** 세션 탭의 내용입니다. 가운데 대화와 오른쪽 할 일 패널의 두 열입니다. */
-export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
+export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchProps) {
   const store = useStore();
   const { actions, watchSession } = store;
   const { record, thread } = view;
   const sessionId = record.id;
+  const repoPath = findWorktreeOfSession(store.sidebar.repos, sessionId)?.repo.path;
 
   /** 세션의 실시간 이벤트(SSE)는 브라우저 밖 서버 연결이라 화면에 보이는 동안만 구독합니다. */
   useEffect(() => watchSession(sessionId), [watchSession, sessionId]);
@@ -95,6 +107,7 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
           onSend={(text) => actions.sendMessage(sessionId, text)}
         >
           <SteerRestore failure={view.steerFailure} />
+          <DraftSync draftKey={draftKey} />
           <ThreadView>
             {approval && (
               <div key={approval.requestId} ref={scrollIfRequested}>
@@ -154,11 +167,7 @@ export function Workbench({ view, sameFolderRunningCount }: WorkbenchProps) {
               </div>
             )}
             {isRunning && sameFolderRunningCount >= 2 && (
-              <p className="mb-2 flex w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
-                <TriangleAlert aria-hidden className="size-3.5 text-warning" />
-                같은 폴더에서 세션 {sameFolderRunningCount}개 실행 중 · 파일을 서로 덮어쓸 수
-                있습니다
-              </p>
+              <OverwriteNotice count={sameFolderRunningCount} repo={repoPath} />
             )}
             {cost.isWarned && !cost.stop && cost.ratioPct !== undefined && !isDone && (
               <p className="mb-2 flex w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">

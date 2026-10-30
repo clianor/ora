@@ -112,8 +112,24 @@ const configSchema = z.object({
       memory: z.string().nullable().default(null),
       skillsDir: z.string().nullable().default(null),
       isolationRoot: z.string().nullable().default(null),
+      worktreeRoot: z.string().nullable().default(null),
     })
-    .default({ sessions: null, memory: null, skillsDir: null, isolationRoot: null }),
+    .default({
+      sessions: null,
+      memory: null,
+      skillsDir: null,
+      isolationRoot: null,
+      worktreeRoot: null,
+    }),
+  /** 저장소마다 새 worktree를 만든 뒤 돌릴 초기 명령이다 (SPEC 2.7절). `path`는 저장소 폴더다. */
+  repos: z
+    .array(
+      z.strictObject({
+        path: z.string().min(1),
+        setupCommands: z.array(z.string().min(1)).default([]),
+      }),
+    )
+    .default([]),
   permissions: z
     .object({
       mode: permissionModeSchema.default('bypass-permissions'),

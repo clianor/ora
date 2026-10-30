@@ -1,4 +1,5 @@
 import {
+  FolderGit2,
   ArrowLeft,
   Bell,
   Box,
@@ -45,6 +46,7 @@ const navSections: { title: string; items: NavItem[] }[] = [
       { icon: Cpu, label: '모델', page: 'models' },
       { icon: Shield, label: '권한', page: 'permissions' },
       { icon: Box, label: '격리', page: 'isolation' },
+      { icon: FolderGit2, label: '저장소', page: 'repos' },
       { icon: Gauge, label: '비용 상한', page: 'cost' },
       { icon: Plug, label: 'MCP', page: 'mcp' },
       { icon: Sparkles, label: '스킬', page: 'skills' },

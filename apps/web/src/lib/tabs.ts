@@ -1,4 +1,5 @@
 import type { WorktreeTab, WorktreeTabs } from '@ora/protocol';
+import { clearComposerDraft } from './composerDraft.ts';
 import type { OraActions } from '../model.ts';
 import { runAction } from '../store.tsx';
 import { navigate } from './route.ts';
@@ -36,7 +37,24 @@ export function openSessionTab(context: TabContext, sessionId: string): void {
 }
 
 export function openNewTab(context: TabContext, isSessionMode = false): void {
-  placeTab(context, { id: createTabId(), kind: 'new' }, isSessionMode);
+  placeTab(
+    context,
+    { id: createTabId(), kind: 'new', ...(isSessionMode ? { isSessionMode: true } : {}) },
+    isSessionMode,
+  );
+}
+
+/** 고르기 화면의 새 탭을 세션 모드(입력창이 보이는 상태)로 바꿔 저장하고 엽니다. 탭이 아직 없으면 주소로만 엽니다. */
+export function openSessionMode(context: TabContext, tabId: string | undefined): void {
+  if (tabId === undefined) {
+    navigate('worktree', { cwd: context.cwd, isSessionMode: true });
+    return;
+  }
+  const tabs = context.tabs.tabs.map((tab) =>
+    tab.id === tabId && tab.kind === 'new' ? { ...tab, isSessionMode: true } : tab,
+  );
+  runAction(context.actions.saveTabs(context.cwd, { tabs, activeTabId: tabId }));
+  navigate('worktree', { cwd: context.cwd, tabId, isSessionMode: true });
 }
 
 /** 새 탭(또는 `tabId`가 없을 때 맨 뒤의 새 탭)을 세션 탭으로 바꿉니다. */
@@ -64,6 +82,7 @@ export function selectTab(context: TabContext, tabId: string): void {
 
 /** 탭을 닫습니다. 세션 탭을 닫아도 세션은 멈추지 않습니다. 보고 있던 탭을 닫으면 이웃 탭으로 옮깁니다. */
 export function closeTab(context: TabContext, tab: WorktreeTab, shouldKillTerminal: boolean): void {
+  clearComposerDraft(tab.id);
   const index = context.tabs.tabs.findIndex((item) => item.id === tab.id);
   const rest = context.tabs.tabs.filter((item) => item.id !== tab.id);
   if (tab.kind === 'terminal' && shouldKillTerminal) {

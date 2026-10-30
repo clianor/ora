@@ -1,41 +1,11 @@
-import { open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { open, readFile, rename, rm } from 'node:fs/promises';
+import { withFileLock } from '@ora/adapters';
 import { ruleKey } from '@ora/core';
 import type { AlwaysApprovalPort } from '@ora/core';
 import type { ApprovalRule, PermissionsFile } from '@ora/protocol';
 import { permissionsFileSchema } from '@ora/protocol';
 
 export const PERMISSIONS_FILE = 'permissions.json';
-
-const LOCK_RETRY_MS = 25;
-const LOCK_TIMEOUT_MS = 3000;
-// 락을 잡은 워커가 죽으면 락 파일이 남으므로 이 시간이 지난 락은 버리고 다시 잡는다.
-const LOCK_STALE_MS = 10_000;
-
-/** 락 파일을 `wx`로 만들어 잡는다. 시간 안에 잡지 못하면 예외를 던진다. */
-async function withFileLock<T>(lockPath: string, action: () => Promise<T>): Promise<T> {
-  const deadline = performance.now() + LOCK_TIMEOUT_MS;
-  for (;;) {
-    try {
-      await (await open(lockPath, 'wx')).close();
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const held = await stat(lockPath).catch(() => undefined);
-      if (held !== undefined && Date.now() - held.mtimeMs > LOCK_STALE_MS) {
-        await rm(lockPath, { force: true });
-        continue;
-      }
-      if (performance.now() > deadline)
-        throw new Error('permissions.json 락을 잡지 못했습니다.', { cause: error });
-      await new Promise((done) => setTimeout(done, LOCK_RETRY_MS));
-    }
-  }
-  try {
-    return await action();
-  } finally {
-    await rm(lockPath, { force: true });
-  }
-}
 
 export interface PermissionsStore extends AlwaysApprovalPort {
   /** 저장된 규칙이다. 파일이 깨졌으면 규칙 대신 이유를 돌려준다. */

@@ -37,6 +37,8 @@ export const sessionRecordSchema = z.strictObject({
   status: sessionStatusSchema,
   endReason: endReasonSchema.optional(),
   repo: z.string().min(1).optional(),
+  /** 사용자가 만든 `ora/*` worktree에서 연 세션만 가진다. worktree를 만든 시점 부모 브랜치의 HEAD 커밋 해시다 (SPEC 2.7절). */
+  baseRef: z.string().min(1).optional(),
   /** 세션이 실제로 쓴 모델이다. 역할과 체인 위치마다 하나이고, 가장 나중에 쓴 항목이 맨 뒤에 온다. */
   models: z.preprocess(
     fillLegacyModels,

@@ -79,7 +79,11 @@ export function TitleBar({ context, diff, onToggleSidebar }: TitleBarProps) {
               .findIndex((item) => item.id === tab.id) + 1;
           const titles = {
             session: session?.record.title ?? '세션',
-            terminal: `터미널 ${String(terminalNumber)}`,
+            terminal:
+              store.getWorktreeSetup(context.cwd)?.terminalId ===
+              (tab.kind === 'terminal' ? tab.terminalId : undefined)
+                ? '초기 명령'
+                : `터미널 ${String(terminalNumber)}`,
             new: '새 탭',
           };
           return (

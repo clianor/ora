@@ -1,11 +1,13 @@
 import type { SessionStatus } from '@ora/protocol';
 import {
+  CircleX,
   CornerDownRight,
   FolderGit2,
   GitBranch,
   History,
   Loader,
   MessageCircleQuestion,
+  Plus,
   Search,
   Settings,
   ShieldAlert,
@@ -13,7 +15,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 import { formatShortElapsed, useNow } from '../lib/now.ts';
-import { hashFor, setPaletteOpen } from '../lib/route.ts';
+import { hashFor, setCreateWorktree, setPaletteOpen } from '../lib/route.ts';
 import { runningStatuses, statusLabel } from '../lib/status.ts';
 import type { RepoNode, SidebarData, WorktreeNode } from '../model.ts';
 import { useStore } from '../store.tsx';
@@ -81,7 +83,19 @@ function WorktreeRow({
           기본
         </span>
       )}
-      {!isSelected && active.length > 0 && (
+      {(node.setup?.status === 'creating' || node.setup?.status === 'setup') && (
+        <span className="ml-auto flex items-center gap-1.5 text-xs leading-4 font-medium text-foreground-muted">
+          <Loader aria-hidden className="size-3.5 motion-safe:animate-spin" />
+          생성 중
+        </span>
+      )}
+      {node.setup?.status === 'setup-failed' && (
+        <span className="ml-auto flex items-center gap-1.5 text-xs leading-4 font-medium text-danger">
+          <CircleX aria-hidden className="size-3.5" />
+          초기 명령 실패
+        </span>
+      )}
+      {!isSelected && active.length > 0 && node.setup?.status !== 'setup-failed' && (
         <span className="ml-auto text-xs leading-4 font-medium text-foreground-muted">
           실행 {active.length}
         </span>
@@ -157,9 +171,21 @@ function RepoGroup({
     <div className="flex flex-col gap-0.5">
       <div className="flex h-8 items-center gap-2 px-2.5">
         <FolderGit2 aria-hidden className="size-3.5 text-foreground-muted" />
-        <span className="text-[13px] leading-[18px] font-semibold text-foreground">
+        <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] font-semibold text-foreground">
           {repo.name}
         </span>
+        {repo.path !== undefined && (
+          <button
+            type="button"
+            onClick={() => {
+              setCreateWorktree(repo.path);
+            }}
+            className="flex size-6 items-center justify-center rounded-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+          >
+            <Plus aria-hidden className="size-3.5" />
+            <span className="sr-only">{repo.name}에 새 worktree 만들기</span>
+          </button>
+        )}
       </div>
       {repo.worktrees.map((node) => (
         <WorktreeRow key={node.name} node={node} depth={0} selectedCwd={selectedCwd} now={now} />

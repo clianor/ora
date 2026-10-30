@@ -9,6 +9,7 @@ export type SettingsPage =
   | 'accounts'
   | 'models'
   | 'permissions'
+  | 'repos'
   | 'isolation'
   | 'cost'
   | 'notifications'
@@ -22,6 +23,7 @@ const settingsPages: readonly string[] = [
   'accounts',
   'models',
   'permissions',
+  'repos',
   'isolation',
   'cost',
   'notifications',
@@ -40,6 +42,8 @@ export interface RouteState {
   sessionId?: string;
   /** `&mode=session`은 새 탭에서 "세션"을 고른 상태입니다. */
   isSessionMode?: boolean;
+  /** `&createWorktree=<저장소 경로>`는 새 worktree 만들기 창을 연 상태입니다. */
+  createWorktreeRepo?: string;
   /** `#/settings/accounts`, `#/settings/cost`, `#/settings/notifications`, `#/settings/mcp`는 각 페이지이고, 그 밖의 `#/settings`는 모양 페이지입니다. */
   settingsPage?: SettingsPage;
   /** `&picker=1`은 새 세션 화면에서 모델 고르기 팝오버를 연 채로 엽니다. */
@@ -62,6 +66,7 @@ function parseHash(hash: string): RouteState {
   const [first = '', second] = path.split('/');
   if (first === 'palette') return { route: 'worktree', isPaletteOpen: true, paletteQuery };
   const isPaletteOpen = params.get('palette') === '1';
+  const createWorktreeRepo = params.get('createWorktree') ?? undefined;
   if (fixedRoutes.includes(first)) {
     return {
       route: first as Route,
@@ -70,6 +75,7 @@ function parseHash(hash: string): RouteState {
           ? (second as SettingsPage)
           : 'appearance',
       cwd: params.get('cwd') ?? undefined,
+      createWorktreeRepo,
       isPaletteOpen,
       paletteQuery,
     };
@@ -81,12 +87,13 @@ function parseHash(hash: string): RouteState {
       tabId: params.get('tab') ?? undefined,
       isSessionMode: params.get('mode') === 'session' || params.get('picker') === '1',
       isModelPickerOpen: params.get('picker') === '1',
+      createWorktreeRepo,
       isPaletteOpen,
       paletteQuery,
     };
   }
   const sessionId = first === 'session' || first === '' ? second : first;
-  return { route: 'worktree', sessionId, isPaletteOpen, paletteQuery };
+  return { route: 'worktree', sessionId, createWorktreeRepo, isPaletteOpen, paletteQuery };
 }
 
 interface HashOptions {
@@ -127,6 +134,16 @@ export function setPaletteOpen(isOpen: boolean): void {
   params.delete('palette');
   params.delete('q');
   if (isOpen) params.set('palette', '1');
+  const rest = params.toString();
+  window.location.hash = rest === '' ? path : `${path}?${rest}`;
+}
+
+/** 지금 주소에 새 worktree 만들기 창을 열거나(`repo`) 닫습니다(`undefined`). */
+export function setCreateWorktree(repo: string | undefined): void {
+  const [path = '', query = ''] = window.location.hash.split('?');
+  const params = new URLSearchParams(query);
+  params.delete('createWorktree');
+  if (repo !== undefined) params.set('createWorktree', repo);
   const rest = params.toString();
   window.location.hash = rest === '' ? path : `${path}?${rest}`;
 }

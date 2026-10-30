@@ -1,11 +1,119 @@
-import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { appendFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { formatKst } from '@ora/core';
 import type { Clock } from '@ora/core';
 import type { MemoryItem, MemoryListResponse, MemoryPassSummary } from '@ora/protocol';
 
 export async function readIfExists(path: string): Promise<string> {
   return readFile(path, 'utf8').catch(() => '');
+}
+
+const LOCK_RETRY_MS = 20;
+const LOCK_STALE_MS = 10 * 60_000;
+
+/** 이 컴퓨터에 그 pid의 프로세스가 없으면 true다. 신호 권한이 없는 경우(EPERM)는 살아 있다고 본다. */
+function isProcessGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+/**
+ * 메모리 폴더의 쓰기 잠금이다. `.lock`을 `wx`로 만들어 잡고, 한 번에 한 곳만 LESSONS.md와 스테이징 파일을 바꾼다 (SPEC 3.5절).
+ * 시간 안에 잡지 못하면 예외를 던진다.
+ */
+export async function withMemoryLock<T>(
+  memoryDir: string,
+  action: () => Promise<T>,
+  timeoutMs = 30_000,
+): Promise<T> {
+  await mkdir(memoryDir, { recursive: true });
+  const lockPath = join(memoryDir, '.lock');
+  const owner = `${String(process.pid)}:${randomUUID()}`;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const handle = await open(lockPath, 'wx');
+      try {
+        await handle.writeFile(owner);
+      } finally {
+        await handle.close();
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const seenOwner = await readIfExists(lockPath);
+      const ownerPid = Number(seenOwner.split(':')[0]);
+      if (Number.isInteger(ownerPid) && ownerPid > 0 && isProcessGone(ownerPid)) {
+        if (seenOwner === (await readIfExists(lockPath))) await rm(lockPath, { force: true });
+        continue;
+      }
+      const held = await stat(lockPath).catch(() => undefined);
+      if (held !== undefined && Date.now() - held.mtimeMs > LOCK_STALE_MS) {
+        const seen = await readIfExists(lockPath);
+        if (seen !== '' && seen === (await readIfExists(lockPath))) {
+          await rm(lockPath, { force: true });
+        }
+        continue;
+      }
+      if (Date.now() > deadline)
+        throw new Error('메모리 잠금을 잡지 못했습니다.', { cause: error });
+      await delay(LOCK_RETRY_MS);
+    }
+  }
+  try {
+    return await action();
+  } finally {
+    if ((await readIfExists(lockPath)) === owner) await rm(lockPath, { force: true });
+  }
+}
+
+export const stagingPath = (memoryDir: string, sessionId: string): string =>
+  join(memoryDir, 'staging', `${sessionId}.md`);
+
+/** 스테이징 파일마다 세션 ID와 그 안의 항목이다. */
+export async function readStagingBlocks(
+  memoryDir: string,
+): Promise<{ sessionId: string; blocks: LessonBlock[] }[]> {
+  const names = (await readdir(join(memoryDir, 'staging')).catch(() => [])).filter((name) =>
+    name.endsWith('.md'),
+  );
+  return Promise.all(
+    names.map(async (name) => ({
+      sessionId: name.slice(0, -3),
+      blocks: parseLessons(await readIfExists(join(memoryDir, 'staging', name))),
+    })),
+  );
+}
+
+/** 세션의 스테이징 파일을 LESSONS.md 뒤에 합치고 지운다. 잠금 안에서 부른다. 이미 합친 ID는 다시 넣지 않는다. */
+export async function mergeStagingFile(memoryDir: string, sessionId: string): Promise<void> {
+  const path = stagingPath(memoryDir, sessionId);
+  const lessonsPath = join(memoryDir, 'LESSONS.md');
+  const known = new Set(parseLessons(await readIfExists(lessonsPath)).map((block) => block.id));
+  const fresh = parseLessons(await readIfExists(path)).filter((block) => !known.has(block.id));
+  if (fresh.length > 0) {
+    await appendFile(lessonsPath, fresh.map((block) => `## ${block.raw}\n\n`).join(''), 'utf8');
+  }
+  await rm(path, { force: true });
+}
+
+/** 주인 없는 스테이징 파일을 모두 합친다. `isOrphan`이 세션 ID마다 판정한다. 합친 파일 수를 돌려준다. */
+export async function mergeOrphanStaging(
+  memoryDir: string,
+  isOrphan: (sessionId: string) => Promise<boolean>,
+): Promise<number> {
+  let merged = 0;
+  for (const { sessionId } of await readStagingBlocks(memoryDir)) {
+    if (!(await isOrphan(sessionId))) continue;
+    await withMemoryLock(memoryDir, () => mergeStagingFile(memoryDir, sessionId));
+    merged += 1;
+  }
+  return merged;
 }
 
 export function countSentences(text: string): number {
@@ -156,7 +264,10 @@ export async function listMemories(
   options: ListOptions,
 ): Promise<Omit<MemoryListResponse, 'isTidying'>> {
   const { memoryDir } = options;
-  const blocks = parseLessons(await readIfExists(join(memoryDir, 'LESSONS.md')));
+  const blocks = [
+    ...parseLessons(await readIfExists(join(memoryDir, 'LESSONS.md'))),
+    ...(await readStagingBlocks(memoryDir)).flatMap((entry) => entry.blocks),
+  ];
   const usage = await readUsage(memoryDir);
   const nowMs = options.clock.now().getTime();
   const toItem = async (block: LessonBlock, scope: 'project' | 'global'): Promise<MemoryItem> => {
@@ -204,28 +315,40 @@ export async function listMemories(
   };
 }
 
-/** 사용자가 항목을 지운다. LESSONS.md에서 빼 아카이브로 옮기고 로그에 `delete`를 남긴다. 없는 ID면 `false`다. */
+/**
+ * 사용자가 항목을 지운다. LESSONS.md나 스테이징 파일에서 빼 아카이브로 옮기고 로그에 `delete`를 남긴다. 없는 ID면 `false`다.
+ */
 export async function deleteMemory(memoryDir: string, clock: Clock, id: string): Promise<boolean> {
-  const lessonsPath = join(memoryDir, 'LESSONS.md');
-  const blocks = parseLessons(await readIfExists(lessonsPath));
-  const target = blocks.find((block) => block.id === id);
-  if (target === undefined) return false;
-  await archiveBlock(memoryDir, clock, target, USER_DELETE_REASON);
-  await writeFile(
-    lessonsPath,
-    blocks
-      .filter((block) => block.id !== id)
-      .map((block) => `## ${block.raw}\n\n`)
-      .join(''),
-    'utf8',
-  );
-  await appendLog(
-    memoryDir,
-    clock,
-    'delete',
-    [id],
-    `${USER_DELETE_REASON}: ${target.text}`,
-    'user',
-  );
-  return true;
+  return withMemoryLock(memoryDir, async () => {
+    const files = [
+      join(memoryDir, 'LESSONS.md'),
+      ...(await readStagingBlocks(memoryDir)).map((entry) =>
+        stagingPath(memoryDir, entry.sessionId),
+      ),
+    ];
+    for (const file of files) {
+      const blocks = parseLessons(await readIfExists(file));
+      const target = blocks.find((block) => block.id === id);
+      if (target === undefined) continue;
+      await archiveBlock(memoryDir, clock, target, USER_DELETE_REASON);
+      await writeFile(
+        file,
+        blocks
+          .filter((block) => block.id !== id)
+          .map((block) => `## ${block.raw}\n\n`)
+          .join(''),
+        'utf8',
+      );
+      await appendLog(
+        memoryDir,
+        clock,
+        'delete',
+        [id],
+        `${USER_DELETE_REASON}: ${target.text}`,
+        'user',
+      );
+      return true;
+    }
+    return false;
+  });
 }

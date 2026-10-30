@@ -11,6 +11,18 @@ const LOCK_STALE_MS = 90_000;
 const readLockOwner = (lockPath: string): Promise<string | undefined> =>
   readFile(lockPath, 'utf8').catch(() => undefined);
 
+/** 락 파일의 주인(`<pid>:<토큰>`) 프로세스가 이 컴퓨터에 없으면 true다. 신호 권한이 없는 경우(EPERM)는 살아 있다고 본다. */
+function isOwnerDead(owner: string | undefined): boolean {
+  const pid = Number(owner?.split(':')[0]);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
 /**
  * 락 파일을 `wx`로 만들어 잡고 `action`을 실행한다. 락 파일에는 소유자 토큰을 적어서,
  * 해제와 stale 제거는 내용이 같을 때만 지운다. 시간 안에 잡지 못하면 예외를 던진다.
@@ -29,6 +41,11 @@ export async function withFileLock<T>(lockPath: string, action: () => Promise<T>
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const seenOwner = await readLockOwner(lockPath);
+      if (isOwnerDead(seenOwner) && seenOwner === (await readLockOwner(lockPath))) {
+        await rm(lockPath, { force: true });
+        continue;
+      }
       const held = await stat(lockPath).catch(() => undefined);
       if (held !== undefined && Date.now() - held.mtimeMs > LOCK_STALE_MS) {
         const seen = await readLockOwner(lockPath);

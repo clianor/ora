@@ -52,6 +52,7 @@ import { findHarnessFiles, listSearchDirs } from './isolation/harness-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { mergeSkills, readAllSkills } from './isolation/skill-files.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
+import { findBaseRef } from './worktrees.ts';
 
 const PROMPTS_DIR = fileURLToPath(new URL('../../../prompts/', import.meta.url));
 const INSTRUCTION_NAMES = ['AGENTS.md', 'CLAUDE.md', 'AGENTS.local.md', 'CLAUDE.local.md'];
@@ -356,6 +357,7 @@ export async function executeSession(
   const oraHome = resolveOraHome(hooks.env);
   const config = await loadConfig(command.configPath, oraHome);
   const gitRoot = findGitRoot(command.cwd);
+  const baseRef = gitRoot === undefined ? undefined : await findBaseRef(oraHome, gitRoot);
   const sessionDir = join(resolveSessionsDir(config, oraHome), command.sessionId);
   const memoryDir = config.paths.memory ?? join(oraHome, 'memory');
 
@@ -502,6 +504,7 @@ export async function executeSession(
       task: resume?.plan.task ?? (command.type === 'createSession' ? command.task : ''),
       cwd: command.cwd,
       ...(gitRoot === undefined ? {} : { repo: gitRoot }),
+      ...(baseRef === undefined ? {} : { baseRef }),
       settings: {
         permissionMode:
           resume?.session.permissionMode ??

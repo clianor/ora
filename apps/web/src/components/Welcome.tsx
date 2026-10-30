@@ -3,7 +3,8 @@ import { useState, type ReactNode } from 'react';
 import { navigate } from '../lib/route.ts';
 import { useStore } from '../store.tsx';
 import type { ComposerChips, Effort, OraStore, RoutingModel, WorktreeContext } from '../model.ts';
-import { ChatProvider, Composer } from './Chat.tsx';
+import { ChatProvider, Composer, DraftSync } from './Chat.tsx';
+import { OverwriteNotice } from './OverwriteNotice.tsx';
 
 function Shortcut({ keys, label }: { keys: string; label: string }) {
   return (
@@ -26,6 +27,10 @@ function Welcome({
   cwd,
   chips,
   isPickerOpen,
+  draftKey,
+  notice,
+  runningCount = 0,
+  repoPath,
   onCreated,
 }: {
   context?: ReactNode;
@@ -33,6 +38,12 @@ function Welcome({
   cwd?: string;
   chips?: ComposerChips;
   isPickerOpen?: boolean;
+  /** 이 새 탭의 ID입니다. 보내지 않은 입력창 글을 이 키로 보관합니다. */
+  draftKey?: string;
+  notice?: string;
+  /** 같은 폴더에서 이미 도는 세션 수입니다. 1개 이상이면 덮어쓰기 경고를 보입니다. */
+  runningCount?: number;
+  repoPath?: string;
   onCreated: (sessionId: string) => void;
 }) {
   const { actions, routing } = useStore();
@@ -56,6 +67,7 @@ function Welcome({
   };
   return (
     <ChatProvider messages={[]} onSend={create}>
+      {draftKey !== undefined && <DraftSync draftKey={draftKey} />}
       <div className="flex flex-1 flex-col items-center justify-center gap-5 pb-20">
         <div className="flex w-[720px] max-w-full flex-col gap-1.5">
           <h2 className="text-2xl leading-8 font-semibold text-foreground">무엇을 할까요?</h2>
@@ -66,6 +78,12 @@ function Welcome({
         </div>
         <div className="flex w-[720px] max-w-full flex-col gap-2">
           {context && <div className="flex items-center gap-1.5">{context}</div>}
+          {notice && (
+            <p role="status" className="px-3.5 text-xs leading-4 text-foreground-muted">
+              {notice}
+            </p>
+          )}
+          {runningCount >= 1 && <OverwriteNotice count={runningCount} repo={repoPath} />}
           {error && (
             <p role="alert" className="px-3.5 text-xs leading-4 text-danger">
               {error}
@@ -111,23 +129,40 @@ export function NewSessionWelcome({
   cwd,
   isPickerOpen,
   onCreated,
+  draftKey,
+  runningCount,
+  repoPath,
 }: {
   context: WorktreeContext;
   repoName: string;
   cwd?: string;
   isPickerOpen?: boolean;
   onCreated: (sessionId: string) => void;
+  /** 이 새 탭의 ID입니다. 보내지 않은 입력창 글을 이 키로 보관합니다. */
+  draftKey?: string;
+  runningCount?: number;
+  repoPath?: string;
 }) {
+  const setup = useStore().getWorktreeSetup(cwd ?? '');
   const place =
     context.path === undefined
       ? '서버가 정한 폴더'
       : [repoName, context.branch].filter(Boolean).join(' · ');
+  const isSettingUp = setup?.status === 'creating' || setup?.status === 'setup';
   return (
     <Welcome
       cwd={cwd}
       onCreated={onCreated}
       isPickerOpen={isPickerOpen}
       chips={context.chips}
+      draftKey={draftKey}
+      runningCount={runningCount}
+      repoPath={repoPath}
+      notice={
+        isSettingUp
+          ? '초기 명령이 도는 중입니다. 입력은 채워 둔 채로 두고, 초기 명령이 끝난 뒤 보냅니다.'
+          : undefined
+      }
       subtitle={`${place}에서 시작합니다.`}
     />
   );

@@ -25,6 +25,11 @@ import type {
   Terminal,
   WorktreeTabs,
   Todo,
+  ReposSettings,
+  ReposSettingsResponse,
+  CreateWorktreeBody,
+  WorktreeOptionsResponse,
+  WorktreeRecord,
 } from '@ora/protocol';
 import type { ThreadData } from './events.ts';
 import type { CacheView } from './lib/cache.ts';
@@ -66,12 +71,16 @@ export interface WorktreeNode {
   title?: string;
   add?: number;
   del?: number;
+  /** 사용자가 만든 worktree이면 만들기·초기 명령 상태입니다. */
+  setup?: WorktreeRecord;
   sessions: SessionNode[];
   stack: WorktreeNode[];
 }
 
 export interface RepoNode {
   name: string;
+  /** 저장소 폴더입니다. 있으면 저장소 줄에 새 worktree를 만드는 "+"를 보입니다. */
+  path?: string;
   worktrees: WorktreeNode[];
 }
 
@@ -209,6 +218,16 @@ export interface OraActions {
   resizeTerminal: (terminalId: string, size: TerminalSize) => Promise<void>;
   /** 터미널 출력 스트림을 구독합니다. 돌려주는 함수로 멈춥니다. */
   watchTerminal: (terminalId: string, handlers: TerminalHandlers) => () => void;
+  /** 새 worktree를 만듭니다. git 오류 원문이나 이름 거부 이유로 거부합니다. 세션은 시작하지 않습니다. */
+  createWorktree: (body: CreateWorktreeBody) => Promise<WorktreeRecord>;
+  /** 만들기 창의 부모 브랜치 목록과 폴더·초기 명령 미리보기를 읽습니다. */
+  loadWorktreeOptions: (repo: string) => Promise<WorktreeOptionsResponse>;
+  /** 실패한 초기 명령부터 다시 돌립니다. */
+  rerunWorktreeSetup: (id: string) => Promise<void>;
+  /** 설정 › 저장소를 저장합니다. 알 수 없는 저장소는 서버가 거부합니다. */
+  saveReposSettings: (next: ReposSettings) => Promise<void>;
+  /** 그 워크트리의 저장된 탭 맨 뒤에 새 탭을 더하고 고른 상태로 저장한 뒤 탭 ID를 돌려줍니다. */
+  openNewTab: (cwd: string) => Promise<string>;
 }
 
 /** 설정 › 계정 페이지가 그리는 데이터입니다. */
@@ -240,6 +259,8 @@ export interface EngineSettingsData {
   isolation: Loadable<IsolationSettingsResponse>;
   /** 권한 페이지의 "항상 승인한 명령" 목록입니다. */
   approvalRules: Loadable<PermissionRulesResponse>;
+  /** 설정 › 저장소의 알려진 저장소 목록입니다. */
+  repos: Loadable<ReposSettingsResponse>;
 }
 
 /** 설정 › MCP 페이지가 그리는 데이터입니다. */
@@ -285,6 +306,8 @@ export interface OraStore {
   getTerminal: (terminalId: string) => Terminal | undefined;
   /** 워크트리의 브랜치입니다. 목록을 읽을 때와 `loadTabs`가 서버에서 읽어 채웁니다. git 저장소가 아니거나 detached HEAD면 undefined입니다. */
   getBranch: (cwd: string) => string | undefined;
+  /** 이 폴더가 사용자가 만든 worktree이면 그 상태입니다. */
+  getWorktreeSetup: (cwd: string) => WorktreeRecord | undefined;
   /** 서버가 알려 준 저장소의 기본 브랜치입니다. 찾지 못했으면 undefined입니다. */
   getDefaultBranch: (cwd: string) => string | undefined;
   /** `loadChanges`가 읽은 변경 목록입니다. 읽기 전에는 undefined입니다. */

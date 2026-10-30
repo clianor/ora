@@ -31,6 +31,8 @@ import {
   tabsFileSchema,
   tabsQuerySchema,
   todoActionBodySchema,
+  createWorktreeBodySchema,
+  reposSettingsSchema,
 } from '@ora/protocol';
 import {
   accountProviderSchema,
@@ -73,6 +75,7 @@ import { createMcpApi } from './mcp-api.ts';
 import { createMemoryApi } from './memory-api.ts';
 import { createSkillsApi } from './skills-api.ts';
 import { createTerminalManager } from './terminal.ts';
+import { createWorktreeApi } from './worktrees.ts';
 
 const COOKIE_NAME = 'ora_token';
 /** 호스트가 전체 패스 실행 조건을 확인하는 간격이다. 하루 한 번, 새 메모리 20개 조건은 이 간격마다 본다. */
@@ -618,6 +621,43 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
   };
 
   const terminals = createTerminalManager(options.env);
+  const tabsPath = join(oraHome, 'tabs.json');
+  const readTabsFile = async (): Promise<TabsFile> => {
+    const text = await readFile(tabsPath, 'utf8').catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    });
+    return text === undefined
+      ? { schemaVersion: 1, worktrees: {} }
+      : tabsFileSchema.parse(JSON.parse(text));
+  };
+  const worktreeApi = await createWorktreeApi({
+    env: options.env,
+    ...configArgs,
+    terminals,
+    listKnownFolders: async () => [
+      options.cwd,
+      ...(await listSessions(options.env, options.configPath)).flatMap((session) =>
+        session.repo === undefined ? [] : [session.repo],
+      ),
+    ],
+    openTerminalTab: (cwd, terminalId, replacedTerminalId) =>
+      withFileLock(`${tabsPath}.lock`, async () => {
+        const file = await readTabsFile();
+        const key = await canonicalPath(cwd);
+        const current = file.worktrees[key] ?? { tabs: [] };
+        const tab = {
+          id: crypto.randomUUID().replaceAll('-', '').slice(0, 10),
+          kind: 'terminal' as const,
+          terminalId,
+        };
+        const kept = current.tabs.filter(
+          (item) => item.kind !== 'terminal' || item.terminalId !== replacedTerminalId,
+        );
+        file.worktrees[key] = { tabs: [...kept, tab], activeTabId: tab.id };
+        await writeFileAtomic(tabsPath, `${JSON.stringify(file, null, 2)}\n`);
+      }),
+  });
 
   /** 서버 시작 폴더, 세션 기록의 저장소, 그 저장소들의 git worktree와 그 하위 폴더만 터미널 작업 폴더로 허용한다. */
   const assertKnownWorktree = async (cwd: string) => {
@@ -625,9 +665,11 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     if (real === undefined || !(await stat(real)).isDirectory())
       throw new HttpError(400, `폴더가 없습니다: ${cwd}`);
     const sessions = await listSessions(options.env, options.configPath);
+    const recorded = await worktreeApi.list();
     const roots = new Set([
       options.cwd,
       ...sessions.flatMap((session) => (session.repo === undefined ? [] : [session.repo])),
+      ...recorded.map((record) => record.repo),
     ]);
     const worktrees = await Promise.all(
       [...roots].map((root) => {
@@ -777,21 +819,36 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       reply(res, 200, routing);
       return;
     }
+    if (segments[1] === 'worktrees') {
+      const [, , rawId, action] = segments;
+      if (rawId === undefined) {
+        if (method === 'GET') {
+          reply(res, 200, { worktrees: await worktreeApi.list() });
+          return;
+        }
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const body = parseBody(createWorktreeBodySchema, await readJson(req));
+        await assertKnownWorktree(body.repo);
+        reply(res, 201, { worktree: await worktreeApi.create(body) });
+        return;
+      }
+      if (rawId === 'options' && method === 'GET') {
+        const { cwd } = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('repo') ?? '' });
+        await assertKnownWorktree(cwd);
+        reply(res, 200, await worktreeApi.options(cwd));
+        return;
+      }
+      if (action === 'rerun' && method === 'POST') {
+        reply(res, 200, { worktree: await worktreeApi.rerun(rawId) });
+        return;
+      }
+      throw new HttpError(404, '알 수 없는 API입니다.');
+    }
     if (segments[1] === 'terminals') {
       await routeTerminals(req, res, url, method, segments);
       return;
     }
     if (segments[1] === 'tabs' && segments.length === 2) {
-      const tabsPath = join(oraHome, 'tabs.json');
-      const readTabsFile = async (): Promise<TabsFile> => {
-        const text = await readFile(tabsPath, 'utf8').catch((error: unknown) => {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-          throw error;
-        });
-        return text === undefined
-          ? { schemaVersion: 1, worktrees: {} }
-          : tabsFileSchema.parse(JSON.parse(text));
-      };
       if (method === 'GET') {
         const query = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('cwd') ?? '' });
         const cwd = await canonicalPath(query.cwd);
@@ -932,6 +989,16 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
           isRead
             ? await settingsApi.getIsolation(running)
             : await settingsApi.setIsolation(parseBody(isolationSettingsSchema, body), running),
+        );
+        return;
+      }
+      if (page === 'repos') {
+        reply(
+          res,
+          200,
+          isRead
+            ? await worktreeApi.getRepos()
+            : await worktreeApi.setRepos(parseBody(reposSettingsSchema, body)),
         );
         return;
       }
@@ -1252,6 +1319,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       clearInterval(memoryTimer);
       await accountApi.close();
       await mcpApi.close();
+      await worktreeApi.close();
       await terminals.closeAll();
       closing = true;
       for (const session of live.values()) session.handle.cancel('soft');

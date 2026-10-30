@@ -8,6 +8,8 @@ import { McpPage } from './components/McpPage.tsx';
 import { SkillsPage } from './components/SkillsPage.tsx';
 import { MemoryPage } from './components/MemoryPage.tsx';
 import { GeneralPage, IsolationPage, KeysPage } from './components/EngineSettings.tsx';
+import { ReposPage } from './components/ReposPage.tsx';
+import { CreateWorktreeDialog } from './components/CreateWorktreeDialog.tsx';
 import { ModelsPage } from './components/ModelsPage.tsx';
 import { PermissionsPage } from './components/PermissionsPage.tsx';
 import { CostPage, NotificationsPage } from './components/SettingsPages.tsx';
@@ -68,6 +70,7 @@ function Screen({ state }: { state: RouteState }) {
             {page === 'models' && <ModelsPage />}
             {page === 'permissions' && <PermissionsPage />}
             {page === 'isolation' && <IsolationPage />}
+            {page === 'repos' && <ReposPage />}
             {page === 'cost' && <CostPage />}
             {page === 'notifications' && <NotificationsPage />}
             {page === 'mcp' && <McpPage />}
@@ -119,6 +122,9 @@ export function App() {
             setPaletteOpen(false);
           }}
         />
+      )}
+      {state.createWorktreeRepo !== undefined && (
+        <CreateWorktreeDialog repo={state.createWorktreeRepo} />
       )}
     </div>
   );

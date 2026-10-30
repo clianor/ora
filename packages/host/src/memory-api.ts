@@ -3,7 +3,13 @@ import { mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { createRecorder, formatKst, parseTranscript } from '@ora/core';
 import type { Clock, ModelChainEntry, ModelPort, ModelUsage } from '@ora/core';
-import { deleteMemory, listMemories, runFullPass, shouldRunFullPass } from '@ora/memory';
+import {
+  deleteMemory,
+  listMemories,
+  mergeOrphanStaging,
+  runFullPass,
+  shouldRunFullPass,
+} from '@ora/memory';
 import type { MemoryAsk } from '@ora/memory';
 import type { MemoryListResponse, MemoryPassSummary, SessionRecord } from '@ora/protocol';
 import {
@@ -38,10 +44,20 @@ export interface MemoryApi {
   remove(id: string): Promise<boolean>;
   /** "지금 다듬기"다. 패스가 돌고 있거나 실행 중인 세션이 있으면 `UsageError`로 거부한다. */
   tidy(): Promise<MemoryPassSummary>;
+  /** 주인 없는 스테이징 파일을 LESSONS.md에 합친다. 합친 파일 수를 돌려준다. */
+  mergeStaging(): Promise<number>;
   /** 호스트의 주기 확인이다. 하루가 지났거나 새 메모리가 20개를 넘었고 세션이 없으면 전체 패스를 돌린다. */
   tick(): Promise<void>;
 }
 
+// ponytail: 프로세스가 죽었는지 알 수 없어서, 실행 중으로 남은 세션도 기록을 30분 동안 고치지 않았으면 주인 없는 것으로 본다. 일찍 합쳐도 메모리를 잃지는 않는다.
+const ACTIVE_STATUSES = new Set<SessionRecord['status']>([
+  'created',
+  'running',
+  'awaiting_approval',
+  'awaiting_user',
+]);
+const ORPHAN_AFTER_MS = 30 * 60_000;
 const systemClock: Clock = { now: () => new Date() };
 const RECENT_SESSION_LIMIT = 10;
 const MAX_TASK_CHARS = 200;
@@ -294,6 +310,14 @@ export function createMemoryApi(options: MemoryApiOptions): MemoryApi {
     async remove(id) {
       return deleteMemory((await load()).memoryDir, systemClock, id);
     },
+    async mergeStaging() {
+      const { memoryDir, sessionsDir } = await load();
+      return mergeOrphanStaging(memoryDir, async (sessionId) => {
+        const record = await readSessionRecordOrWarn(join(sessionsDir, sessionId));
+        if (record === undefined || !ACTIVE_STATUSES.has(record.status)) return true;
+        return Date.now() - Date.parse(record.updatedAt) > ORPHAN_AFTER_MS;
+      });
+    },
     async tidy() {
       if (isTidying) throw new UsageError('이미 메모리를 다듬는 중입니다.');
       if (options.hasLiveSession()) {
@@ -304,6 +328,7 @@ export function createMemoryApi(options: MemoryApiOptions): MemoryApi {
       return runPass();
     },
     async tick() {
+      await this.mergeStaging();
       if (isTidying) return;
       const { memoryDir } = await load();
       const due = await shouldRunFullPass({

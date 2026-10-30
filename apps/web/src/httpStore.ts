@@ -38,6 +38,11 @@ import {
   terminalSseEventNames,
   steerFailedSchema,
   todoActionResponseSchema,
+  worktreeListResponseSchema,
+  worktreeResponseSchema,
+  worktreeOptionsResponseSchema,
+  reposSettingsResponseSchema,
+  type WorktreeRecord,
   type ApprovalDecision,
   type CostSettings,
   type McpServerStatus,
@@ -154,26 +159,47 @@ async function requestJson<T>(
 }
 
 /**
- * 세션의 `repo` 경로마다 저장소 그룹과 워크트리 행 하나를 만듭니다(SPEC 2.7절).
- * 서버 시작 폴더는 세션이 없어도 행으로 둡니다. 작업 폴더가 없는 세션은 여기에 넣지 않습니다.
+ * 세션의 `repo` 경로마다 워크트리 행 하나를 만들고, 저장소 기준으로 묶습니다(SPEC 2.7절).
+ * 사용자가 만든 worktree는 그 저장소 그룹에 넣습니다. 서버 시작 폴더는 세션이 없어도 행으로 둡니다.
+ * 작업 폴더가 없는 세션은 여기에 넣지 않습니다.
  */
-function buildRepos(records: readonly SessionRecord[], startCwd: string | undefined): RepoNode[] {
-  const groups = new Map<string, SessionRecord[]>();
-  if (startCwd !== undefined) groups.set(startCwd, []);
-  for (const record of records) {
-    if (record.repo === undefined) continue;
-    groups.set(record.repo, [...(groups.get(record.repo) ?? []), record]);
+function buildRepos(
+  records: readonly SessionRecord[],
+  startCwd: string | undefined,
+  worktrees: readonly WorktreeRecord[],
+): RepoNode[] {
+  const byPath = new Map(worktrees.map((item) => [item.path, item]));
+  const folders = new Map<string, SessionRecord[]>();
+  const add = (folder: string, record?: SessionRecord) => {
+    folders.set(folder, [...(folders.get(folder) ?? []), ...(record ? [record] : [])]);
+  };
+  if (startCwd !== undefined) add(startCwd);
+  for (const item of worktrees) {
+    add(item.repo);
+    add(item.path);
   }
-  return [...groups.entries()].map(([repo, list]) => {
-    const worktree: WorktreeNode = {
-      name: basename(repo),
-      cwd: repo,
-      title: repo,
+  for (const record of records) {
+    if (record.repo !== undefined) add(record.repo, record);
+  }
+  const groups = new Map<string, WorktreeNode[]>();
+  for (const [folder, list] of folders) {
+    const setup = byPath.get(folder);
+    const node: WorktreeNode = {
+      name: setup?.name ?? basename(folder),
+      cwd: folder,
+      title: folder,
+      ...(setup === undefined ? {} : { setup }),
       sessions: list.map((record) => ({ record, todoTitles: [] })),
       stack: [],
     };
-    return { name: basename(repo), worktrees: [worktree] };
-  });
+    const repo = setup?.repo ?? folder;
+    groups.set(repo, [...(groups.get(repo) ?? []), node]);
+  }
+  return [...groups.entries()].map(([repo, nodes]) => ({
+    name: basename(repo),
+    path: repo,
+    worktrees: nodes.toSorted((a, b) => Number(a.cwd !== repo) - Number(b.cwd !== repo)),
+  }));
 }
 
 function buildStatusLine(events: readonly OraEvent[], maxSteps: number | undefined): StatusItem[] {
@@ -215,6 +241,8 @@ export function createHttpStore(): OraStoreSource {
   let listLoaded: 'loading' | 'ready' | 'error' = 'loading';
   let listError: string | undefined;
   let info: InfoResponse | null = null;
+  let worktrees: WorktreeRecord[] = [];
+  let worktreePollTimer: ReturnType<typeof setTimeout> | null = null;
   let routing: RoutingData | null = null;
   let infoError: string | undefined;
   let snapshot: OraStore;
@@ -230,6 +258,7 @@ export function createHttpStore(): OraStoreSource {
     permissions: { status: 'loading' },
     isolation: { status: 'loading' },
     approvalRules: { status: 'loading' },
+    repos: { status: 'loading' },
   };
   let mcpPollTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpServers: McpServersData = { status: 'loading', servers: [] };
@@ -268,7 +297,13 @@ export function createHttpStore(): OraStoreSource {
 
   /** 폴더를 고르지 않은 새 세션은 서버가 알려 준 기본 작업 폴더와 브랜치를 보여 줍니다. */
   function getNewSessionContext(cwd?: string): WorktreeContext {
-    if (cwd !== undefined) return { path: cwd, branch: branches.get(cwd) };
+    if (cwd !== undefined) {
+      return {
+        path: cwd,
+        branch: branches.get(cwd),
+        chips: info ? { permission: permissionLabel[info.permissionMode] } : undefined,
+      };
+    }
     return {
       path: info?.cwd,
       branch: info?.branch,
@@ -320,11 +355,12 @@ export function createHttpStore(): OraStoreSource {
       status: listLoaded,
       errorMessage: listError,
       infoError,
-      sidebar: { repos: buildRepos(records, info?.cwd), deviceName: '이 컴퓨터' },
+      sidebar: { repos: buildRepos(records, info?.cwd, worktrees), deviceName: '이 컴퓨터' },
       sessionsWithoutFolder: records
         .filter((record) => record.repo === undefined)
         .map((record) => ({ record, todoTitles: [] })),
       getBranch: (cwd) => branches.get(cwd),
+      getWorktreeSetup: (cwd) => worktrees.find((item) => item.path === cwd),
       getDefaultBranch: (cwd) => defaultBranches.get(cwd),
       getChanges: (cwd) => changes.get(cwd),
       getNewSessionContext: getNewSessionContext,
@@ -591,6 +627,7 @@ export function createHttpStore(): OraStoreSource {
     permissions: { path: '/api/settings/permissions', schema: permissionSettingsResponseSchema },
     isolation: { path: '/api/settings/isolation', schema: isolationSettingsResponseSchema },
     approvalRules: { path: '/api/permission-rules', schema: permissionRulesResponseSchema },
+    repos: { path: '/api/settings/repos', schema: reposSettingsResponseSchema },
   } as const;
   const refreshEngineSettings = async (page: keyof EngineSettingsData): Promise<void> => {
     const { path, schema } = engineSettingRequests[page];
@@ -653,6 +690,29 @@ export function createHttpStore(): OraStoreSource {
       };
     } catch (error) {
       memory = { status: 'error', errorMessage: toMessage(error) };
+    }
+    notifySoon();
+  };
+  /** 만든 worktree의 상태를 읽습니다. 만들거나 초기 명령이 도는 동안은 1초마다 다시 읽습니다. */
+  const refreshWorktrees = async (): Promise<void> => {
+    try {
+      const next = (await requestJson('/api/worktrees', worktreeListResponseSchema)).worktrees;
+      for (const item of next) {
+        const before = worktrees.find((entry) => entry.id === item.id);
+        if (before?.terminalId !== item.terminalId) {
+          actions.loadTabs(item.path).catch(() => undefined);
+        }
+      }
+      worktrees = next;
+      requestBranches(next.map((item) => item.path));
+      if (next.some((item) => item.status === 'creating' || item.status === 'setup')) {
+        worktreePollTimer ??= setTimeout(() => {
+          worktreePollTimer = null;
+          refreshWorktrees().catch(() => undefined);
+        }, 1000);
+      }
+    } catch {
+      // 다음 목록 갱신에서 다시 읽습니다.
     }
     notifySoon();
   };
@@ -810,6 +870,47 @@ export function createHttpStore(): OraStoreSource {
       );
       await refreshEngineSettings('approvalRules');
     },
+    openNewTab: async (cwd) => {
+      const saved = await requestJson(
+        `/api/tabs?cwd=${encodeURIComponent(cwd)}`,
+        tabsResponseSchema,
+      );
+      const tab = {
+        id: crypto.randomUUID().replaceAll('-', '').slice(0, 10),
+        kind: 'new' as const,
+        isSessionMode: true,
+      };
+      await actions.saveTabs(cwd, { tabs: [...saved.tabs.tabs, tab], activeTabId: tab.id });
+      return tab.id;
+    },
+    createWorktree: async (body) => {
+      const created = await requestJson('/api/worktrees', worktreeResponseSchema, {
+        method: 'POST',
+        body,
+      });
+      await refreshWorktrees();
+      await refreshEngineSettings('repos');
+      return created.worktree;
+    },
+    loadWorktreeOptions: (repo) =>
+      requestJson(
+        `/api/worktrees/options?repo=${encodeURIComponent(repo)}`,
+        worktreeOptionsResponseSchema,
+      ),
+    rerunWorktreeSetup: async (id) => {
+      await requestJson(`/api/worktrees/${id}/rerun`, worktreeResponseSchema, {
+        method: 'POST',
+        body: {},
+      });
+      await refreshWorktrees();
+    },
+    saveReposSettings: async (next) => {
+      await requestJson('/api/settings/repos', reposSettingsResponseSchema, {
+        method: 'PUT',
+        body: next,
+      });
+      await refreshEngineSettings('repos');
+    },
     refreshMcpServers,
     refreshSkills,
     refreshMemory,
@@ -932,6 +1033,7 @@ export function createHttpStore(): OraStoreSource {
     sidebar: { repos: [], deviceName: '이 컴퓨터' },
     sessionsWithoutFolder: [],
     getBranch: () => undefined,
+    getWorktreeSetup: () => undefined,
     getDefaultBranch: () => undefined,
     getChanges: () => undefined,
     getNewSessionContext: getNewSessionContext,
@@ -954,9 +1056,17 @@ export function createHttpStore(): OraStoreSource {
   refreshList().catch(() => undefined);
   refreshAccounts().catch(() => undefined);
   refreshCostSettings().catch(() => undefined);
-  for (const page of ['general', 'models', 'permissions', 'isolation', 'approvalRules'] as const) {
+  for (const page of [
+    'general',
+    'models',
+    'permissions',
+    'isolation',
+    'approvalRules',
+    'repos',
+  ] as const) {
     refreshEngineSettings(page).catch(() => undefined);
   }
+  refreshWorktrees().catch(() => undefined);
   refreshMcpServers().catch(() => undefined);
   refreshSkills().catch(() => undefined);
   refreshMemory().catch(() => undefined);

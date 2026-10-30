@@ -165,6 +165,8 @@ export interface RunInput {
   readonly task: string;
   readonly cwd: string;
   readonly repo?: string;
+  /** 사용자가 만든 worktree에서 연 세션이면 그 worktree를 만든 시점의 기준 커밋 해시다. */
+  readonly baseRef?: string;
   readonly settings: EngineSettings;
   readonly configSummary: Record<string, unknown>;
   /** 하드 킬 신호다. 진행 중인 도구 호출과 모델 요청을 바로 끊는다. */
@@ -400,6 +402,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     actor: 'user',
     status: 'created',
     ...(input.repo === undefined ? {} : { repo: input.repo }),
+    ...(input.baseRef === undefined ? {} : { baseRef: input.baseRef }),
     models: [],
     permissionMode: settings.permissionMode,
     isolation: settings.isolation,

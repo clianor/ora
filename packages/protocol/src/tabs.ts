@@ -7,7 +7,11 @@ const tabIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 export const worktreeTabSchema = z.discriminatedUnion('kind', [
   z.strictObject({ id: tabIdSchema, kind: z.literal('session'), sessionId: sessionIdSchema }),
   z.strictObject({ id: tabIdSchema, kind: z.literal('terminal'), terminalId: terminalIdSchema }),
-  z.strictObject({ id: tabIdSchema, kind: z.literal('new') }),
+  z.strictObject({
+    id: tabIdSchema,
+    kind: z.literal('new'),
+    isSessionMode: z.boolean().optional(),
+  }),
 ]);
 export type WorktreeTab = z.infer<typeof worktreeTabSchema>;
 

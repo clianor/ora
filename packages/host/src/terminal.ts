@@ -24,7 +24,11 @@ interface TerminalSubscription {
 }
 
 export interface TerminalManager {
-  create(options: { cwd: string; cols: number; rows: number }): Terminal;
+  create(options: { cwd: string; cols: number; rows: number; isDeferred?: boolean }): Terminal;
+  /** `isDeferred`로 만든 터미널에서 로그인 셸 `-lc <명령>`을 돌리고 종료 코드를 돌려준다. 출력은 같은 터미널에 이어 붙는다. */
+  runCommand(id: string, command: string): Promise<number>;
+  /** 명령을 마친 뒤 같은 터미널에 쓸 수 있는 로그인 셸을 붙인다. */
+  startShell(id: string): void;
   list(): Terminal[];
   get(id: string): Terminal | undefined;
   write(id: string, data: string): void;
@@ -36,13 +40,17 @@ export interface TerminalManager {
 }
 
 interface Entry {
-  readonly pty: IPty;
+  /** 지금 붙어 있는 PTY다. 초기 명령 터미널은 명령마다 바뀌고, 처음에는 없을 수 있다. */
+  pty: IPty | undefined;
   readonly info: Terminal;
   readonly chunks: Buffer[];
   bytes: number;
   exitCode: number | undefined;
+  /** `kill`이나 `closeAll`이 불렀다. 명령 PTY가 이 상태로 끝나면 터미널도 끝난 것으로 본다. */
+  isKilled: boolean;
   readonly listeners: Set<TerminalListener>;
   readonly exited: Promise<void>;
+  readonly resolveExited: (value: undefined) => void;
 }
 
 /** pnpm이 풀어 놓은 darwin 사전 빌드의 spawn-helper는 실행 권한이 없어 spawn이 `posix_spawnp failed`로 실패한다. */
@@ -61,6 +69,7 @@ function ensureHelperExecutable(): void {
 export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
   const entries = new Map<string, Entry>();
   let closing = false;
+  const shell = env.SHELL !== undefined && env.SHELL !== '' ? env.SHELL : FALLBACK_SHELL;
 
   const requireRunning = (id: string): Entry => {
     const entry = entries.get(id);
@@ -75,21 +84,53 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
     ...(entry.exitCode === undefined ? {} : { exitCode: entry.exitCode }),
   });
 
+  const emit = (entry: Entry, chunk: Buffer) => {
+    entry.chunks.push(chunk);
+    entry.bytes += chunk.length;
+    while (entry.bytes > BUFFER_BYTES && entry.chunks.length > 1) {
+      entry.bytes -= entry.chunks.shift()?.length ?? 0;
+    }
+    for (const listener of entry.listeners) listener.onOutput(chunk);
+  };
+
+  const finish = (entry: Entry, code: number) => {
+    entry.exitCode = code;
+    for (const listener of entry.listeners) listener.onExit(code);
+    entry.listeners.clear();
+    entry.resolveExited(undefined);
+  };
+
+  /** 같은 터미널 항목에 새 PTY를 붙인다. 출력은 같은 버퍼와 구독자에게 이어 붙는다. */
+  const attach = (entry: Entry, args: string[], onExit: (code: number) => void) => {
+    ensureHelperExecutable();
+    const pty = spawn(shell, args, {
+      cwd: entry.info.cwd,
+      cols: entry.info.cols,
+      rows: entry.info.rows,
+      env: { ...env, TERM: 'xterm-256color' },
+      encoding: null,
+    });
+    entry.pty = pty;
+    pty.onData((data: string | Buffer) => {
+      emit(entry, typeof data === 'string' ? Buffer.from(data) : data);
+    });
+    pty.onExit(({ exitCode, signal }) => {
+      onExit(signal !== undefined && signal > 0 ? 128 + signal : exitCode);
+    });
+  };
+
+  const startShell = (entry: Entry) => {
+    attach(entry, ['-l'], (code) => {
+      finish(entry, code);
+    });
+  };
+
   return {
-    create({ cwd, cols, rows }) {
+    create({ cwd, cols, rows, isDeferred = false }) {
       if (closing) throw new Error('서버를 닫는 중입니다.');
-      ensureHelperExecutable();
-      const shell = env.SHELL !== undefined && env.SHELL !== '' ? env.SHELL : FALLBACK_SHELL;
-      const pty = spawn(shell, ['-l'], {
-        cwd,
-        cols,
-        rows,
-        env: { ...env, TERM: 'xterm-256color' },
-        encoding: null,
-      });
       const resolvers = Promise.withResolvers<undefined>();
       const entry: Entry = {
-        pty,
+        pty: undefined,
         info: {
           id: `t-${Array.from(randomBytes(8), (byte) => ID_ALPHABET[byte % ID_ALPHABET.length]).join('')}`,
           cwd,
@@ -101,27 +142,27 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
         chunks: [],
         bytes: 0,
         exitCode: undefined,
+        isKilled: false,
         listeners: new Set(),
         exited: resolvers.promise,
+        resolveExited: resolvers.resolve,
       };
-      pty.onData((data: string | Buffer) => {
-        const chunk = typeof data === 'string' ? Buffer.from(data) : data;
-        entry.chunks.push(chunk);
-        entry.bytes += chunk.length;
-        while (entry.bytes > BUFFER_BYTES && entry.chunks.length > 1) {
-          entry.bytes -= entry.chunks.shift()?.length ?? 0;
-        }
-        for (const listener of entry.listeners) listener.onOutput(chunk);
-      });
-      pty.onExit(({ exitCode, signal }) => {
-        const code = signal !== undefined && signal > 0 ? 128 + signal : exitCode;
-        entry.exitCode = code;
-        for (const listener of entry.listeners) listener.onExit(code);
-        entry.listeners.clear();
-        resolvers.resolve(undefined);
-      });
       entries.set(entry.info.id, entry);
+      if (!isDeferred) startShell(entry);
       return view(entry);
+    },
+    runCommand(id, command) {
+      const entry = requireRunning(id);
+      emit(entry, Buffer.from(`$ ${command}\r\n`));
+      const { promise, resolve } = Promise.withResolvers<number>();
+      attach(entry, ['-lc', command], (code) => {
+        if (entry.isKilled) finish(entry, code);
+        resolve(code);
+      });
+      return promise;
+    },
+    startShell(id) {
+      startShell(requireRunning(id));
     },
     list: () => [...entries.values()].map(view),
     get: (id) => {
@@ -129,15 +170,17 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
       return entry === undefined ? undefined : view(entry);
     },
     write(id, data) {
-      requireRunning(id).pty.write(data);
+      requireRunning(id).pty?.write(data);
     },
     resize(id, cols, rows) {
       const entry = requireRunning(id);
-      entry.pty.resize(cols, rows);
+      entry.pty?.resize(cols, rows);
       Object.assign(entry.info, { cols, rows });
     },
     kill(id) {
-      requireRunning(id).pty.kill();
+      const entry = requireRunning(id);
+      entry.isKilled = true;
+      entry.pty?.kill();
     },
     subscribe(id, listener) {
       const entry = entries.get(id);
@@ -158,7 +201,10 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
     async closeAll() {
       closing = true;
       const running = [...entries.values()].filter((entry) => entry.exitCode === undefined);
-      for (const entry of running) entry.pty.kill();
+      for (const entry of running) {
+        entry.isKilled = true;
+        entry.pty?.kill();
+      }
       await Promise.all(running.map((entry) => entry.exited));
     },
   };
