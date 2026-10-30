@@ -2217,6 +2217,230 @@ ${v3Save(c, '')}`,
   });
 }
 
+// M3 3단계 시안이다. 2026-10-31 사용자 결정(SPEC v0.40): 머지는 사용자가 GitHub PR에서 하고, Ora는 PR 상태를 보이며 머지된 worktree를 한꺼번에 지운다.
+const M3_PR_GROUPS = ({ selected = 'ora/fix-negative-add' } = {}) => [
+  {
+    repo: 'math-demo',
+    merged: 2,
+    worktrees: [
+      { name: 'main', base: true, sync: { behind: 3 } },
+      { name: 'ora/fix-negative-add', pr: { num: 42, state: 'open', checks: 'pass' } },
+      { name: 'ora/fix-cache' },
+      { name: 'ora/readme-pnpm', pr: { num: 38, state: 'draft' } },
+      { name: 'ora/readme-examples', child: true, pr: { num: 39, state: 'open', checks: 'fail' } },
+      { name: 'ora/old-cleanup', pr: { num: 35, state: 'merged' } },
+      { name: 'ora/fix-typo', pr: { num: 40, state: 'merged' } },
+    ].map((w) => ({ ...w, selected: w.name === selected })),
+  },
+  {
+    repo: 'ora',
+    worktrees: [
+      { name: 'main', base: true },
+      { name: 'ora/engine-slice2', running: 1, pr: { num: 12, state: 'open', checks: 'running' } },
+    ],
+  },
+];
+const m3TitleChip = (c, icon, iconColor, body) =>
+  `<Frame w="hug" h={28} flex="row" items="center" gap={6} px={8} rounded={7}>${I(c, icon, iconColor, 14)}${body}${I(c, 'external-link', 'ink3', 12)}</Frame>`;
+
+/** worktree 화면 제목 줄의 PR 칩과 사이드바의 PR 상태. 디폴트 브랜치 줄은 원격 대비 뒤처진 커밋 수를 보인다. */
+function m3PrStatusScreen() {
+  const c = palette('Slate');
+  const pr = m3TitleChip(
+    c,
+    'git-pull-request',
+    'ok',
+    `${T(c, 13, 18, 500, 'ink', '#42', '', mono)}${T(c, 13, 18, 500, 'ink2', '열림')}${T(c, 13, 18, 400, 'ink3', '·')}${I(c, 'circle-check', 'ok', 13)}${T(c, 13, 18, 500, 'ink2', '검사 통과')}`,
+  );
+  return windowV3(c, '45 M3 PR Status · Slate', {
+    side: sidebarV3(c, { groups: M3_PR_GROUPS() }),
+    main:
+      titleTabsV3(c, {
+        tabs: [
+          { title: 'add 함수 버그 수정', state: 'done' },
+          { title: '터미널 1', state: 'terminal' },
+        ],
+        active: 0,
+        right: `${pr}${titleButtonV3(c, 'refresh-cw')}${v3Right(c)}`,
+      }) +
+      threadV2(
+        c,
+        [
+          userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.'),
+          toolRowV2(c, { icon: 'file-pen', verb: '편집', target: 'math.js', result: '+1 −1' }),
+          toolRowV2(c, {
+            icon: 'circle-check',
+            verb: '검증',
+            target: 'node check.js',
+            result: 'exit 0',
+            resultColor: 'ok',
+          }),
+          paraV2(
+            c,
+            `${icode(c, 'add')}가 뺄셈을 하던 줄을 고쳤고, ${icode(c, 'node check.js')}가 통과했습니다.`,
+          ),
+        ],
+        { composer: composerV2(c, {}) },
+      ),
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
+/** "머지된 worktree 삭제" 확인 창. 커밋하지 않은 변경이나 실행 중인 세션이 있는 worktree는 고를 수 없고 이유를 보인다. */
+function m3CleanupScreen() {
+  const c = palette('Slate');
+  const row = ({ name, num, when, checked = false, blocked = null }) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={12} py={10} rounded={8} ${checked ? `bg="${c.raised}"` : ''}>${I(c, checked ? 'square-check' : 'square', blocked ? 'ink3' : 'ink', 16)}${I(c, 'git-merge', blocked ? 'ink3' : 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, blocked ? 'ink3' : 'ink', name, '', mono)}${
+      blocked
+        ? `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, 'triangle-alert', 'warn', 12)}${T(c, 12, 16, 500, 'ink2', blocked)}</Frame>`
+        : T(c, 12, 16, 400, 'ink3', `#${num} · ${when} 머지`)
+    }</Frame>${blocked ? T(c, 12, 16, 400, 'ink3', `#${num}`, '', mono) : ''}</Frame>`;
+  const dialog = `<Frame name="CleanupMerged" w={540} h="hug" flex="col" gap={14} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'trash-2', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '머지된 worktree 삭제')}${SP}${T(c, 12, 16, 400, 'ink3', 'math-demo')}${I(c, 'x', 'ink3', 15)}</Frame>
+${T(c, 13, 20, 400, 'ink2', 'PR이 머지된 worktree입니다. 고른 항목의 폴더와 로컬 브랜치를 지웁니다. 원격 브랜치와 세션 기록은 남습니다.', 'w="fill" textAutoResize="height"')}
+<Frame w="fill" h="hug" flex="col" gap={2}>
+${row({ name: 'ora/old-cleanup', num: 35, when: '2일 전', checked: true })}
+${row({ name: 'ora/fix-typo', num: 40, when: '3시간 전', checked: true })}
+${row({ name: 'ora/hotfix-login', num: 41, blocked: '커밋하지 않은 변경 3개' })}
+${row({ name: 'ora/docs-tweak', num: 37, blocked: '실행 중인 세션 1개' })}
+</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '2개 고름', 'grow={1}')}${button(c, 'ghost', '취소')}<Frame w="hug" h={30} flex="row" items="center" gap={6} px={12} rounded={8} bg="${c.delBg}">${I(c, 'trash-2', 'del', 14)}${T(c, 13, 18, 600, 'del', '2개 삭제')}</Frame></Frame>
+</Frame>`;
+  const overlay = `<Frame position="absolute" x={0} y={0} w={1440} h={900} flex="col" items="center" justify="center" bg="${c.overlay}">${dialog}</Frame>`;
+  return windowV3(c, '46 M3 Cleanup Merged · Slate', {
+    side: sidebarV3(c, { groups: M3_PR_GROUPS() }),
+    main:
+      titleTabsV3(c, {
+        tabs: [{ title: 'add 함수 버그 수정', state: 'done' }],
+        active: 0,
+        right: v3Right(c),
+      }) +
+      threadV2(
+        c,
+        [userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.')],
+        {
+          composer: composerV2(c, {}),
+        },
+      ),
+    status: statusBarV3(c, V3_STATUS),
+    overlay,
+  });
+}
+
+const M3_RESTORE_POINTS = [
+  ['15:02', 't3 검증 뒤', 'e41c9a2'],
+  ['14:48', 't2 검증 뒤', 'a1b2c3d'],
+  ['14:31', '계획을 세운 뒤', '9f0d1e4'],
+];
+
+/**
+ * 세션의 복원 지점. 대화 안에 만든 자리를 표시하고, 입력창 아래 단추로 목록을 연다.
+ * 복원 지점은 브랜치를 바꾸지 않는 스냅샷이고, 되돌리기는 포크로만 한다. PR이 없는 worktree는 제목 줄에 "PR 만들기" 링크를 둔다.
+ */
+function m3RestorePointsScreen() {
+  const c = palette('Slate');
+  const marker = ([time, label, sha]) =>
+    `<Frame w="fill" h={28} flex="row" items="center" gap={8}><Frame w="fill" h={1} bg="${c.line}" />${I(c, 'bookmark', 'ink3', 13)}${T(c, 12, 16, 500, 'ink2', `복원 지점 · ${time} · ${label}`)}${T(c, 12, 16, 400, 'ink3', sha, '', mono)}<Frame w="fill" h={1} bg="${c.line}" /></Frame>`;
+  const point = ([time, label, sha], i) =>
+    `<Frame w="fill" h={40} flex="row" items="center" gap={10} px={12} rounded={8} ${i === 1 ? `bg="${c.hover}"` : ''}>${I(c, 'bookmark', 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={1}>${T(c, 13, 18, 500, 'ink', `${time} · ${label}`)}${T(c, 11, 14, 400, 'ink3', sha, '', mono)}</Frame>${button(c, i === 1 ? 'secondary' : 'ghost', '포크', { icon: 'git-fork' })}</Frame>`;
+  const popover = `<Frame name="RestorePoints" position="absolute" x={980} y={548} w={360} h="hug" flex="col" gap={4} p={8} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={32} flex="row" items="center" gap={8} px={8}>${T(c, 13, 18, 600, 'ink', '복원 지점', 'grow={1}')}${button(c, 'secondary', '지금 만들기', { icon: 'bookmark-plus' })}</Frame>
+${M3_RESTORE_POINTS.map(point).join('')}
+${T(c, 12, 18, 400, 'ink3', '포크하면 그 시점의 코드와 대화로 새 worktree에서 세션을 이어 갑니다. 이 세션과 브랜치는 그대로 남습니다.', 'w="fill" textAutoResize="height" px={8} py={6}')}
+</Frame>`;
+  const below = `<Frame w={720} h={24} flex="row" items="center" gap={8} px={12}>${T(c, 12, 16, 400, 'ink3', '단계 Verify · 스텝 14/50 · 격리 harness', 'grow={1}')}<Frame w="hug" h={24} flex="row" items="center" gap={5} px={6} rounded={6} bg="${c.hover}">${I(c, 'bookmark', 'ink2', 12)}${T(c, 12, 16, 500, 'ink2', '복원 지점 3')}</Frame></Frame>`;
+  const createPr = m3TitleChip(
+    c,
+    'git-pull-request-create',
+    'ink2',
+    T(c, 13, 18, 500, 'ink2', 'PR 만들기'),
+  );
+  return windowV3(c, '47 M3 Restore Points · Slate', {
+    side: sidebarV3(c, { groups: M3_PR_GROUPS({ selected: 'ora/fix-cache' }) }),
+    main:
+      titleTabsV3(c, {
+        tabs: [{ title: '캐시 만료 판정 고치기', state: 'running' }],
+        active: 0,
+        right: `${createPr}${v3Right(c)}`,
+      }) +
+      threadV2(
+        c,
+        [
+          userBoxV2(
+            c,
+            '달이 끝나는 순간을 현재 달로 보는 캐시 만료 판정을 고치고, 달이 바뀌는 시각을 확인하는 테스트를 더해 주세요.',
+          ),
+          marker(M3_RESTORE_POINTS[2]),
+          toolRowV2(c, { icon: 'file-pen', verb: '편집', target: 'cache.js', result: '+6 −2' }),
+          toolRowV2(c, {
+            icon: 'circle-check',
+            verb: '검증',
+            target: 'node check.js',
+            result: 'exit 0',
+            resultColor: 'ok',
+          }),
+          marker(M3_RESTORE_POINTS[1]),
+          toolRowV2(c, {
+            icon: 'file-pen',
+            verb: '편집',
+            target: 'cache.test.js',
+            result: '+18 −0',
+          }),
+          paraV2(c, '달 마지막 날 23:59:59와 다음 달 0시를 나눠 확인하는 테스트를 더했습니다.'),
+          marker(M3_RESTORE_POINTS[0]),
+        ],
+        {
+          composer: `<Frame w="hug" h="hug" flex="col" gap={6}>${composerV2(c, { running: true })}${below}</Frame>`,
+        },
+      ),
+    status: statusBarV3(c, V3_STATUS),
+    overlay: popover,
+  });
+}
+
+/** 복원 지점에서 포크. 만들기 창을 "기준: 복원 지점"으로 열고, 만든 뒤 새 worktree의 새 탭에서 세션을 이어 간다. */
+function m3ForkScreen() {
+  const c = palette('Slate');
+  const info = (label, value, isMono = true) =>
+    `<Frame w="fill" h="hug" flex="row" items="start" gap={8}>${T(c, 12, 16, 400, 'ink3', label, 'w={64}')}${T(c, 12, 16, 500, 'ink2', value, 'w="fill" textAutoResize="height"', isMono ? mono : undefined)}</Frame>`;
+  const dialog = `<Frame name="ForkWorktree" w={520} h="hug" flex="col" gap={16} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'git-fork', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '복원 지점에서 포크')}${SP}${T(c, 12, 16, 400, 'ink3', 'math-demo')}${I(c, 'x', 'ink3', 15)}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={6}>${m3Label(c, '이름')}${m3Input(c, 'fix-cache-fork', { mono: true })}${T(c, 12, 16, 400, 'ink3', '소문자, 숫자, 하이픈, /만 씁니다')}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={6}>${m3Label(c, '기준')}<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={10} py={8} rounded={8} bg="${c.sunken}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'bookmark', 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={1}>${T(c, 13, 18, 500, 'ink', '14:48 · t2 검증 뒤')}<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${T(c, 12, 16, 400, 'ink3', '캐시 만료 판정 고치기 ·')}${T(c, 12, 16, 400, 'ink3', 'ora/fix-cache · a1b2c3d', '', mono)}</Frame></Frame></Frame></Frame>
+<Frame w="fill" h="hug" flex="col" gap={6} px={12} py={10} rounded={8} bg="${c.raised}">
+${info('브랜치', 'ora/fix-cache-fork')}
+${info('폴더', '~/.ora/worktrees/math-demo/fix-cache-fork')}
+${info('세션', '이 시점까지의 대화와 할 일을 가져와 새 탭에서 이어 갑니다', false)}
+${info('초기 명령', M3_CMDS.join('  ·  '))}
+</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '포크', { keyHint: '↵' })}</Frame>
+</Frame>`;
+  const overlay = `<Frame position="absolute" x={0} y={0} w={1440} h={900} flex="col" items="center" justify="center" bg="${c.overlay}">${dialog}</Frame>`;
+  return windowV3(c, '48 M3 Fork · Slate', {
+    side: sidebarV3(c, { groups: M3_PR_GROUPS({ selected: 'ora/fix-cache' }) }),
+    main:
+      titleTabsV3(c, {
+        tabs: [{ title: '캐시 만료 판정 고치기', state: 'running' }],
+        active: 0,
+        right: v3Right(c),
+      }) +
+      threadV2(
+        c,
+        [
+          userBoxV2(
+            c,
+            '달이 끝나는 순간을 현재 달로 보는 캐시 만료 판정을 고치고, 달이 바뀌는 시각을 확인하는 테스트를 더해 주세요.',
+          ),
+        ],
+        {
+          composer: composerV2(c, { running: true }),
+        },
+      ),
+    status: statusBarV3(c, V3_STATUS),
+    overlay,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -2262,4 +2486,8 @@ export const SCREENS = [
   { file: 'm3-setup-failed-slate', jsx: () => m3SetupScreen(true) },
   { file: 'm3-conflict-notice-slate', jsx: m3ConflictScreen },
   { file: 'm3-settings-repos-slate', jsx: m3ReposScreen },
+  { file: 'm3-pr-status-slate', jsx: m3PrStatusScreen },
+  { file: 'm3-cleanup-merged-slate', jsx: m3CleanupScreen },
+  { file: 'm3-restore-points-slate', jsx: m3RestorePointsScreen },
+  { file: 'm3-fork-slate', jsx: m3ForkScreen },
 ];
