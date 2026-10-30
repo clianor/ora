@@ -1861,6 +1861,195 @@ function v3MemorySavedScreen() {
   });
 }
 
+// 설정의 남은 다섯 페이지(일반, 키보드 단축키, 모델, 권한, 격리) 시안이다. 2026-10-30 사용자 요청으로 그렸다.
+const v3Seg = (c, options, active) =>
+  `<Frame w="hug" h={30} flex="row" items="center" p={2} rounded={8} bg="${c.sunken}">${options
+    .map((label, i) =>
+      i === active
+        ? `<Frame w="hug" h={26} flex="row" items="center" px={10} rounded={6} bg="${c.hover}">${T(c, 12, 16, 600, 'ink', label)}</Frame>`
+        : `<Frame w="hug" h={26} flex="row" items="center" px={10}>${T(c, 12, 16, 500, 'ink2', label)}</Frame>`,
+    )
+    .join('')}</Frame>`;
+const v3Field = (c, value, unit = '', w = 84) =>
+  `<Frame w="hug" h="hug" flex="row" items="center" gap={6}><Frame w={${w}} h={30} flex="row" items="center" px={10} rounded={7} bg="${c.sunken}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${T(c, 13, 18, 500, 'ink', value, '', mono)}</Frame>${unit ? T(c, 12, 16, 400, 'ink3', unit) : ''}</Frame>`;
+const v3Row = (c, title, desc, control) =>
+  `<Frame w="fill" h="hug" flex="row" items="center" gap={16} px={16} py={10}><Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 14, 20, 500, 'ink', title)}${desc ? T(c, 12, 17, 400, 'ink3', desc, 'w="fill" textAutoResize="height"') : ''}</Frame>${control}</Frame>`;
+const v3Choice = (c, { title, desc, on, badge = '', h = '"hug"' }) =>
+  `<Frame w="fill" h=${h} flex="row" items="start" gap={12} px={14} py={12} rounded={10} bg="${on ? c.raised : c.window}" stroke="${on ? c.borderStrong : c.line}" strokeWidth={1} strokeAlign="inside"><Frame w={16} h={16} flex="row" items="center" justify="center" rounded={8} stroke="${on ? c.ink : c.ink3}" strokeWidth={1.5} strokeAlign="inside">${on ? `<Ellipse w={8} h={8} bg="${c.ink}" />` : ''}</Frame><Frame w="fill" h="hug" flex="col" gap={3}><Frame w="hug" h="hug" flex="row" items="center" gap={8}>${T(c, 14, 20, 600, 'ink', title)}${badge}</Frame>${T(c, 12, 17, 400, 'ink2', desc, 'w="fill" textAutoResize="height"')}</Frame></Frame>`;
+const v3Save = (c, note) =>
+  `<Frame w="fill" h="hug" flex="row" items="center" gap={10}>${T(c, 12, 16, 400, 'ink3', note, 'grow={1}')}${button(c, 'ghost', '되돌리기')}${button(c, 'primary', '저장')}</Frame>`;
+
+/** 설정 › 일반. 세션 한도, 다른 모델 검토, 대화 길이, 도구 한도. 바꾼 값은 다음 세션부터 쓴다. */
+function v3GeneralScreen() {
+  const c = palette('Slate');
+  return v3SettingsPage(c, '35 V3 Settings General · Slate', '일반', {
+    title: '일반',
+    desc: '세션이 얼마나 오래, 몇 개까지 돌지와 대화가 길어졌을 때의 처리를 정합니다. 바꾼 값은 다음 세션부터 씁니다.',
+    body: `${v3Group(c, '세션 한도', '', [
+      v3Row(
+        c,
+        '최대 스텝',
+        '이 횟수만큼 모델 요청을 하면 멈추고 보고합니다.',
+        v3Field(c, '50', '스텝'),
+      ),
+      v3Row(
+        c,
+        '할 일 하나를 고치는 최대 횟수',
+        '넘으면 그 할 일을 막힘으로 바꿉니다.',
+        v3Field(c, '3', '번'),
+      ),
+      v3Row(
+        c,
+        '진전 없이 멈추는 스텝',
+        '할 일이 나아지지 않은 채 이만큼 지나면 멈춥니다.',
+        v3Field(c, '5', '스텝'),
+      ),
+      v3Row(c, '동시에 돌리는 세션', '', v3Field(c, '4', '개')),
+    ])}
+${v3Group(c, '검증', '', [v3Row(c, '다른 모델의 검토', '검증을 통과한 할 일을 다른 모델이 한 번 더 검토합니다.', v3Toggle(c, false))])}
+${v3Group(c, '대화 길이', '', [
+  v3Row(
+    c,
+    '압축을 시작하는 지점',
+    '컨텍스트가 이 비율에 닿으면 앞부분을 요약합니다.',
+    v3Field(c, '80', '%'),
+  ),
+  v3Row(
+    c,
+    '캐시 만료 전 요약',
+    '오래 기다릴 때 캐시가 끝나기 전에 미리 요약해 둡니다. 컨텍스트가 20만 토큰 이상일 때만 합니다.',
+    v3Toggle(c, false),
+  ),
+])}
+${v3Save(c, '바꾼 값이 2개 있습니다')}`,
+  });
+}
+
+/** 설정 › 키보드 단축키. 지금 쓸 수 있는 단축키를 묶어 보인다. 바꾸는 기능은 없다. */
+function v3KeysScreen() {
+  const c = palette('Slate');
+  const key = (label, keys) =>
+    `<Frame w="fill" h={40} flex="row" items="center" px={16}>${T(c, 14, 20, 400, 'ink', label, 'grow={1}')}<Frame w="hug" h={22} flex="row" items="center" px={7} rounded={5} bg="${c.kbd}">${T(c, 12, 16, 500, 'ink2', keys)}</Frame></Frame>`;
+  return v3SettingsPage(c, '36 V3 Settings Keys · Slate', '키보드 단축키', {
+    title: '키보드 단축키',
+    desc: '마우스 없이 화면을 오갈 수 있습니다. 단축키는 아직 바꿀 수 없습니다.',
+    body: `${v3Group(c, '이동', '', [key('명령 팔레트', '⌘K'), key('기록', '⌘Y'), key('설정', '⌘,'), key('할 일 패널로 이동', '⌘1')])}
+${v3Group(c, '탭', '', [key('새 탭', '⌘T'), key('새 세션', '⌘N'), key('새 탭에서 세션 열기', '⇧⌘S'), key('터미널 열기', '⇧⌘T')])}
+${v3Group(c, '화면', '', [key('오른쪽 패널 열기·접기', '⌥⌘B')])}
+${v3Group(c, '명령 팔레트 안에서', '', [key('위아래로 고르기', '↑ ↓'), key('실행', '↵'), key('닫기', 'Esc')])}`,
+  });
+}
+
+/** 설정 › 모델. 역할별로 쓸 모델의 순서와 추론 강도, 다음 모델로 넘어가는 경우와 돌아오는 방식. */
+function v3ModelsScreen() {
+  const c = palette('Slate');
+  const chip = (model, effort) =>
+    `<Frame w="hug" h={26} flex="row" items="center" gap={6} px={8} rounded={6} bg="${c.hover}">${T(c, 12, 16, 500, 'ink', model, '', mono)}${T(c, 12, 16, 400, 'ink3', effort)}</Frame>`;
+  const arrow = I(c, 'arrow-right', 'ink3', 12);
+  const roleName = (title, en) =>
+    `<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${T(c, 14, 20, 500, 'ink', title)}${T(c, 12, 16, 400, 'ink3', `(${en})`, '', mono)}</Frame>`;
+  const role = (title, en, desc, chain) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={6}><Frame w={190} h="hug" flex="col" gap={2}>${roleName(title, en)}${T(c, 12, 16, 400, 'ink3', desc)}</Frame><Frame w="fill" h="hug" flex="row" items="center" gap={6}>${chain}</Frame>${button(c, 'ghost', '바꾸기')}</Frame>`;
+  const step = (n, model, effort) =>
+    `<Frame w="fill" h={36} flex="row" items="center" gap={10} px={10} rounded={8} bg="${c.sunken}">${I(c, 'grip-vertical', 'ink3', 14)}${T(c, 12, 16, 500, 'ink3', String(n), 'w={12}', mono)}${T(c, 13, 18, 500, 'ink', model, 'grow={1}', mono)}${v3Seg(c, ['low', 'medium', 'high'], effort)}${I(c, 'x', 'ink3', 14)}</Frame>`;
+  const editing = `<Frame w="fill" h="hug" flex="col" gap={8} px={16} py={12}>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${roleName('기본 작업', 'default')}${T(c, 12, 16, 400, 'ink3', '세션에서 쓰는 모델입니다. 위에서부터 쓰고, 쓸 수 없을 때만 다음 모델로 넘어갑니다.', 'grow={1}')}</Frame>
+${step(1, 'claude-haiku-5-5', 0)}${step(2, 'gpt-5.6-luna', 0)}
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${button(c, 'ghost', '모델 추가', { icon: 'plus' })}${SP}${button(c, 'ghost', '취소')}${button(c, 'secondary', '완료')}</Frame>
+</Frame>`;
+  return v3SettingsPage(c, '37 V3 Settings Models · Slate', '모델', {
+    title: '모델',
+    desc: '역할마다 쓸 모델을 순서대로 정합니다. 세션 화면에는 지금 쓰는 모델만 보입니다.',
+    body: `${v3Group(c, '역할별 모델', '', [
+      editing,
+      role(
+        '압축 요약',
+        'compaction',
+        '대화가 길 때',
+        `${T(c, 13, 18, 400, 'ink3', '기본 작업과 같음')}`,
+      ),
+      role('메모리', 'memory', '저장과 다듬기', `${T(c, 13, 18, 400, 'ink3', '기본 작업과 같음')}`),
+      role(
+        '검토',
+        'review',
+        '검토 에이전트',
+        `${chip('gpt-5.6-luna', 'low')}${arrow}${chip('claude-haiku-5-5', 'low')}`,
+      ),
+      role(
+        '빠른 조사',
+        'fast',
+        '조사 에이전트',
+        `${T(c, 13, 18, 400, 'ink3', '기본 작업과 같음')}`,
+      ),
+      `<Frame w="fill" h={36} flex="row" items="center" px={8}>${button(c, 'ghost', '역할 추가', { icon: 'plus' })}</Frame>`,
+    ])}
+${v3Group(c, '다음 모델로 넘어가는 경우', '', [
+  `<Frame w="fill" h="hug" flex="col" gap={6} px={16} py={12}>
+${[
+  ['gauge', '사용 한도(429)', '다음 계정으로 바꾸고, 모든 계정이 한도면 다음 모델로 넘어갑니다'],
+  [
+    'server-crash',
+    '서버 오류(5xx)·연결 오류',
+    '같은 계정으로 다시 시도하고, 그래도 안 되면 다음 모델로 넘어갑니다',
+  ],
+  ['circle-x', '그 밖의 오류', '넘어가지 않고 오류를 보입니다'],
+]
+  .map(
+    ([icon, title, desc]) =>
+      `<Frame w="fill" h={24} flex="row" items="center" gap={10}>${I(c, icon, 'ink2', 15)}${T(c, 13, 18, 500, 'ink', title, 'w={170}')}${T(c, 12, 18, 400, 'ink2', desc, 'grow={1}')}</Frame>`,
+  )
+  .join('')}
+</Frame>`,
+  v3Row(
+    c,
+    '첫 모델로 돌아가기',
+    '한도가 풀리는 시각을 알면 그때 돌아갑니다.',
+    v3Seg(c, ['한도가 풀리면', '돌아가지 않음'], 0),
+  ),
+])}
+${v3Save(c, '')}`,
+  });
+}
+
+/** 설정 › 권한. 권한 모드, 도구별 정책, 항상 묻는 폴더, 기억한 승인. 모델 도구 호출로는 바꿀 수 없다. */
+function v3PermissionsScreen() {
+  const c = palette('Slate');
+  const tool = (name, active) =>
+    `<Frame w="fill" h={44} flex="row" items="center" gap={12} px={16}>${T(c, 13, 18, 500, 'ink', name, 'grow={1}', mono)}${v3Seg(c, ['허용', '묻기', '막기'], active)}${I(c, 'x', 'ink3', 14)}</Frame>`;
+  const listRow = (main, sub) =>
+    `<Frame w="fill" h={44} flex="row" items="center" gap={12} px={16}><Frame w="fill" h="hug" flex="col" gap={1}>${T(c, 13, 18, 500, 'ink', main, '', mono)}${sub ? T(c, 12, 16, 400, 'ink3', sub, '', mono) : ''}</Frame>${button(c, 'ghost', '지우기', { icon: 'trash-2' })}</Frame>`;
+  return v3SettingsPage(c, '38 V3 Settings Permissions · Slate', '권한', {
+    title: '권한',
+    desc: '모델이 묻지 않고 할 수 있는 일을 정합니다. 비밀정보 가리기, rm 대신 휴지통, 금지 구역 차단은 어느 모드에서나 적용합니다.',
+    body: `<Frame w="fill" h="hug" flex="row" gap={10}>
+${v3Choice(c, { title: '항상 묻기', desc: '파일 쓰기와 명령 실행을 모두 묻습니다.', on: false, h: '{78}' })}
+${v3Choice(c, { title: '쓰기 허용', desc: '명령 실행만 묻습니다.', on: false, h: '{78}' })}
+${v3Choice(c, { title: '승인 생략', desc: '묻지 않고 실행합니다.', on: true, h: '{78}' })}
+</Frame>
+${v3Group(c, '도구별 정책', '모드보다 먼저 적용', [tool('shell', 1), tool('github:create_issue', 2), `<Frame w="fill" h={40} flex="row" items="center" px={8}>${button(c, 'ghost', '도구 추가', { icon: 'plus' })}</Frame>`])}
+${v3Group(c, '항상 묻는 폴더', '', [listRow('~/projects/math-demo/secrets', ''), `<Frame w="fill" h={40} flex="row" items="center" px={8}>${button(c, 'ghost', '폴더 추가', { icon: 'plus' })}</Frame>`])}
+${v3Group(c, '항상 승인한 명령', '2개', [listRow('node check.js', 'shell · ~/projects/math-demo'), listRow('pnpm test -- readme', 'verify.run · ~/projects/math-demo')])}`,
+  });
+}
+
+/** 설정 › 격리. 세션이 사용자 환경을 얼마나 물려받는지 정한다. 바꾸면 다음 세션부터 적용한다. */
+function v3IsolationScreen() {
+  const c = palette('Slate');
+  const path = (p) =>
+    `<Frame w="fill" h={34} flex="row" items="center" px={16}>${T(c, 13, 18, 400, 'ink2', p, '', mono)}</Frame>`;
+  return v3SettingsPage(c, '39 V3 Settings Isolation · Slate', '격리', {
+    title: '격리',
+    desc: '세션이 내 컴퓨터의 홈 폴더와 환경변수를 얼마나 물려받을지 정합니다. 바꾸면 다음 세션부터 적용하고, 실행 중인 세션 2개는 지금 값을 계속 씁니다.',
+    body: `<Frame w="fill" h="hug" flex="col" gap={8}>
+${v3Choice(c, { title: '없음', desc: '홈 폴더와 환경변수를 그대로 물려받습니다.', on: false })}
+${v3Choice(c, { title: '하네스', desc: 'Ora가 다른 에이전트 도구의 설정을 읽지 않고, 명령마다 필요한 설정만 덮어씁니다. 홈 폴더는 그대로입니다.', on: true, badge: v3Badge(c, '기본값') })}
+${v3Choice(c, { title: '깨끗한 홈', desc: '하네스에 더해 따로 만든 홈 폴더를 쓰고, 허용한 환경변수만 넘깁니다. 작업 폴더에 다른 에이전트의 설정이 있으면 그 도구의 CLI 실행을 막습니다.', on: false })}
+</Frame>
+${v3Group(c, '어느 옵션에서도 읽지 않는 경로', '', [path('~/.agents  ·  ~/.claude  ·  ~/.pi'), path('~/.omp  ·  ~/.codex  ·  ~/.gemini')])}
+${T(c, 12, 18, 400, 'ink3', '작업 폴더의 AGENTS.md, CLAUDE.md, AGENTS.local.md, CLAUDE.local.md는 모든 옵션에서 읽습니다.', 'w="fill" textAutoResize="height"')}`,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -1896,4 +2085,9 @@ export const SCREENS = [
   { file: 'v3-settings-notify-slate', jsx: v3NotifyScreen },
   { file: 'v3-settings-memory-slate', jsx: v3MemoryScreen },
   { file: 'v3-memory-saved-slate', jsx: v3MemorySavedScreen },
+  { file: 'v3-settings-general-slate', jsx: v3GeneralScreen },
+  { file: 'v3-settings-keys-slate', jsx: v3KeysScreen },
+  { file: 'v3-settings-models-slate', jsx: v3ModelsScreen },
+  { file: 'v3-settings-permissions-slate', jsx: v3PermissionsScreen },
+  { file: 'v3-settings-isolation-slate', jsx: v3IsolationScreen },
 ];
