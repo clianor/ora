@@ -13,7 +13,7 @@
     "check": "pnpm run check:format && pnpm run check:types && pnpm run check:lint && pnpm run check:test && pnpm run check:arch && pnpm run check:unused && pnpm run check:paths && pnpm run check:licenses && pnpm run check:secrets && pnpm run check:agents && pnpm run check:claude-md",
     "check:format": "prettier --check .",
     "check:types": "tsc --noEmit && pnpm -r run typecheck",
-    "check:lint": "eslint --max-warnings=0 .",
+    "check:lint": "NODE_OPTIONS=--max-old-space-size=4096 eslint --max-warnings=0 .",
     "check:test": "vitest run",
     "check:arch": "depcruise . --config .dependency-cruiser.mjs",
     "check:unused": "knip",
