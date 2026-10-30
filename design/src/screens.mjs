@@ -485,6 +485,7 @@ ${section('앱', [
   ['bell', '알림'],
 ])}
 ${section('엔진', [
+  ['folder-git-2', '저장소'],
   ['key-round', '계정'],
   ['cpu', '모델'],
   ['shield', '권한'],
@@ -2050,6 +2051,172 @@ ${T(c, 12, 18, 400, 'ink3', '작업 폴더의 AGENTS.md, CLAUDE.md, AGENTS.local
   });
 }
 
+// M3 첫 단계(worktree를 사용자가 골라 만든다, SPEC 2.7절 v0.38) 시안이다. 2026-10-30 사용자 결정으로 그렸다.
+const M3_CMDS = ['cp ../.env .env', 'pnpm install', 'pnpm build'];
+const M3_GROUPS = (newStatus = null) => [
+  {
+    repo: 'math-demo',
+    worktrees: [
+      {
+        name: 'main',
+        base: true,
+        selected: !newStatus,
+        sessions: newStatus ? [] : [{ state: 'running', title: 'add 함수 버그 수정', age: '2분' }],
+        running: newStatus ? 1 : 0,
+      },
+      ...(newStatus ? [{ name: 'ora/fix-negative-add', selected: true, status: newStatus }] : []),
+      { name: 'docs/readme-pnpm' },
+    ],
+  },
+  {
+    repo: 'ora',
+    worktrees: [
+      { name: 'main', base: true },
+      { name: 'feat/engine-slice2', running: 1 },
+    ],
+  },
+];
+const m3Label = (c, text) => T(c, 12, 16, 500, 'ink2', text);
+const m3Input = (c, value, { mono: isMono = false, muted = false, h = 34 } = {}) =>
+  `<Frame w="fill" h={${h}} flex="row" items="${h > 40 ? 'start' : 'center'}" px={10} py={${h > 40 ? 8 : 0}} rounded={8} bg="${c.sunken}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${T(c, 13, 19, 400, muted ? 'ink3' : 'ink', value, 'w="fill" textAutoResize="height"', isMono ? mono : undefined)}</Frame>`;
+
+/** 새 worktree 만들기 창. worktree만 만들고 세션은 시작하지 않는다. 사이드바 저장소 줄의 "+"나 덮어쓰기 경고의 "새 worktree에서 열기"로 연다. */
+function m3CreateScreen() {
+  const c = palette('Slate');
+  const cmd = (t, i) =>
+    `<Frame w="fill" h={20} flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', `${i + 1}`, 'w={12}', mono)}${T(c, 12, 16, 500, 'ink2', t, '', mono)}</Frame>`;
+  const dialog = `<Frame name="CreateWorktree" w={520} h="hug" flex="col" gap={16} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'git-branch-plus', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '새 worktree')}${SP}${T(c, 12, 16, 400, 'ink3', 'math-demo')}${I(c, 'x', 'ink3', 15)}</Frame>
+<Frame w="fill" h="hug" flex="row" gap={12}>
+<Frame w="fill" h="hug" flex="col" gap={6}>${m3Label(c, '이름')}${m3Input(c, 'fix-negative-add', { mono: true })}${T(c, 12, 16, 400, 'ink3', '소문자, 숫자, 하이픈, /만 씁니다')}</Frame>
+<Frame w={170} h="hug" flex="col" gap={6}>${m3Label(c, '부모 브랜치')}<Frame w="fill" h={34} flex="row" items="center" gap={6} px={10} rounded={8} bg="${c.sunken}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'git-branch', 'ink3', 13)}${T(c, 13, 18, 500, 'ink', 'main', 'grow={1}', mono)}${I(c, 'chevron-down', 'ink3', 13)}</Frame></Frame>
+</Frame>
+<Frame w="fill" h="hug" flex="col" gap={6} px={12} py={10} rounded={8} bg="${c.raised}">
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '브랜치', 'w={64}')}${T(c, 12, 16, 500, 'ink2', 'ora/fix-negative-add', '', mono)}</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '폴더', 'w={64}')}${T(c, 12, 16, 500, 'ink2', '~/.ora/worktrees/math-demo/fix-negative-add', '', mono)}</Frame>
+<Frame w="fill" h="hug" flex="row" items="start" gap={8}>${T(c, 12, 16, 400, 'ink3', '초기 명령', 'w={64}')}<Frame w="fill" h="hug" flex="col" gap={2}>${M3_CMDS.map(cmd).join('')}</Frame></Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}><Frame w={64} h={1} />${T(c, 12, 16, 400, 'ink3', '만든 뒤 "초기 명령" 탭에서 차례로 돌립니다 · 설정 › 저장소에서 바꿉니다')}</Frame>
+</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '만들기', { keyHint: '↵' })}</Frame>
+</Frame>`;
+  const overlay = `<Frame position="absolute" x={0} y={0} w={1440} h={900} flex="col" items="center" justify="center" bg="${c.overlay}">${dialog}</Frame>`;
+  return windowV3(c, '40 M3 Create Worktree · Slate', {
+    side: sidebarV3(c, { groups: M3_GROUPS() }),
+    main:
+      titleTabsV3(c, { tabs: V2_TABS, active: 0, right: v3Right(c) }) +
+      threadV2(
+        c,
+        [userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.')],
+        {
+          composer: composerV2(c, { running: true }),
+        },
+      ),
+    status: statusBarV3(c, V3_STATUS),
+    overlay,
+  });
+}
+
+/**
+ * 새 worktree의 "초기 명령" 터미널 탭. 생성 중에는 명령 단계와 출력을 보이고, 사이드바 줄에 "생성 중"을 붙인다.
+ * failed면 맨 위에 실패 띠를 두고, 실패한 명령과 건너뛴 명령을 표시한다. worktree는 남아 있어 새 탭에서 세션을 열 수 있다.
+ */
+function m3SetupScreen(failed = false) {
+  const c = palette('Slate');
+  const steps = failed ? ['done', 'failed', 'skipped'] : ['done', 'running', 'pending'];
+  const stepIcon = {
+    done: ['circle-check', 'ok', '끝남'],
+    running: ['loader', 'ink2', '실행 중'],
+    pending: ['circle-dashed', 'ink3', '대기'],
+    failed: ['circle-x', 'del', 'exit 1'],
+    skipped: ['circle-slash', 'ink3', '건너뜀'],
+  };
+  const step = (cmd, i) => {
+    const [icon, col, label] = stepIcon[steps[i]];
+    return `<Frame w="fill" h={28} flex="row" items="center" gap={10} px={14}>${I(c, icon, col, 14)}${T(c, 13, 18, 500, steps[i] === 'pending' || steps[i] === 'skipped' ? 'ink3' : 'ink', cmd, 'grow={1}', mono)}${T(c, 12, 16, 500, col, label)}</Frame>`;
+  };
+  const out = (
+    failed
+      ? [
+          '$ cp ../.env .env',
+          '$ pnpm install',
+          'Progress: resolved 212, reused 208, downloaded 0, added 0',
+          ' ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/@math-demo%2Futil: Not Found - 404',
+          'This error happened while installing a direct dependency of math-demo',
+          '',
+          '초기 명령이 exit 1로 끝났습니다. 남은 명령 1개는 돌리지 않았습니다.',
+        ]
+      : [
+          '$ cp ../.env .env',
+          '$ pnpm install',
+          'Lockfile is up to date, resolution step is skipped',
+          'Progress: resolved 212, reused 208, downloaded 4, added 61',
+        ]
+  )
+    .map((l) => {
+      let color = l.startsWith('$') ? 'ink' : 'ink2';
+      if (failed && (l.includes('ERR') || l.startsWith('초기'))) color = 'del';
+      return T(c, 13, 20, 400, color, l || ' ', 'w="fill" maxLines={1} truncate', mono);
+    })
+    .join('');
+  const banner = failed
+    ? `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={12} bg="${c.delBg}"><Frame w="fill" h="hug" flex="col" gap={3}><Frame w="hug" h="hug" flex="row" items="center" gap={8}>${I(c, 'circle-x', 'del', 16)}${T(c, 14, 20, 600, 'ink', '초기 명령이 실패했습니다')}${T(c, 12, 16, 500, 'del', 'pnpm install · exit 1', '', mono)}</Frame>${T(c, 12, 18, 400, 'ink2', 'worktree는 만들어졌습니다. 원인을 고친 뒤 다시 실행하거나, 그대로 새 탭에서 세션을 열 수 있습니다.')}</Frame>${button(c, 'ghost', '새 세션', { icon: 'message-square' })}${button(c, 'secondary', '실패한 명령부터 다시 실행', { icon: 'refresh-cw' })}</Frame>`
+    : `<Frame w="fill" h="hug" flex="row" items="center" gap={8} px={16} py={10} bg="${c.raised}">${I(c, 'loader', 'ink2', 15)}${T(c, 13, 18, 600, 'ink', 'worktree 생성 중')}${T(c, 12, 16, 400, 'ink3', '초기 명령 2/3 · 끝나면 새 탭에서 세션을 열 수 있습니다', 'grow={1}')}${T(c, 12, 16, 400, 'ink3', '38초', '', mono)}</Frame>`;
+  const steplist = `<Frame w={300} h="fill" flex="col" gap={2} py={10} bg="${c.sidebar}"><Frame w="fill" h={24} flex="row" items="center" px={14}>${T(c, 12, 16, 500, 'ink3', '초기 명령')}</Frame>${M3_CMDS.map(step).join('')}</Frame>`;
+  const term = `<Frame w="fill" h="fill" flex="col" gap={2} p={16} bg="${c.window}">${out}</Frame>`;
+  const tabs = [{ title: '초기 명령', state: failed ? 'failed' : 'terminal' }];
+  return windowV3(c, failed ? '42 M3 Setup Failed · Slate' : '41 M3 Setup Running · Slate', {
+    side: sidebarV3(c, {
+      groups: M3_GROUPS(
+        failed ? ['circle-x', '초기 명령 실패', 'del'] : ['loader', '생성 중', 'ink2'],
+      ),
+    }),
+    main:
+      titleTabsV3(c, { tabs, active: 0, right: panelOpenButtonV3(c) }) +
+      banner +
+      `<Frame w="fill" h={1} bg="${c.line}" />` +
+      `<Frame w="fill" h="fill" flex="row">${term}<Frame w={1} h="fill" bg="${c.line}" />${steplist}</Frame>`,
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
+/** 같은 worktree에서 다른 세션이 돌 때 입력창 위 경고에 "새 worktree에서 열기"를 둔다. */
+function m3ConflictScreen() {
+  const c = palette('Slate');
+  const notice = `<Frame w={720} h="hug" flex="row" items="center" gap={8} px={12} pb={8}>${I(c, 'triangle-alert', 'warn', 14)}${T(c, 13, 18, 500, 'ink2', '같은 폴더에서 세션 2개 실행 중 · 파일을 서로 덮어쓸 수 있습니다', 'grow={1}')}${button(c, 'secondary', '새 worktree에서 열기', { icon: 'git-branch-plus' })}</Frame>`;
+  const composer = `<Frame w="hug" h="hug" flex="col">${notice}${composerV2(c, { placeholder: 'add에 음수를 넣으면 결과가 틀려요. 고치고 check.js에 음수 경우를 더해 주세요.' })}</Frame>`;
+  return windowV3(c, '43 M3 Conflict Notice · Slate', {
+    side: sidebarV3(c, { groups: M3_GROUPS(false) }),
+    main:
+      titleTabsV3(c, {
+        tabs: [...V2_TABS, { title: '새 세션', state: 'new' }],
+        active: 3,
+        right: v3Right(c),
+      }) +
+      `<Frame w="fill" h="fill" flex="col" items="center" justify="end" pb={40}>${composer}</Frame>`,
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
+/** 설정 › 저장소. 저장소마다 새 worktree를 만든 뒤 돌릴 설치 명령과 worktree 폴더를 보인다. */
+function m3ReposScreen() {
+  const c = palette('Slate');
+  const repo = (name, path, setup, count) =>
+    `<Frame w="fill" h="hug" flex="col" gap={10} px={16} py={14}>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'folder-git-2', 'ink2', 15)}${T(c, 14, 20, 600, 'ink', name)}${T(c, 12, 16, 400, 'ink3', path, 'grow={1}', mono)}${T(c, 12, 16, 400, 'ink3', `worktree ${count}개`)}</Frame>
+<Frame w="fill" h="hug" flex="row" items="start" gap={12}>${T(c, 13, 34, 500, 'ink2', '초기 명령', 'w={90}')}<Frame w="fill" h="hug" flex="col" items="start" gap={6}>${setup.length ? setup.map((s) => m3Input(c, s, { mono: true })).join('') : m3Input(c, '비워 두면 아무것도 돌리지 않습니다', { muted: true })}${button(c, 'ghost', '명령 추가', { icon: 'plus' })}</Frame></Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={12}>${T(c, 13, 18, 500, 'ink2', 'worktree 폴더', 'w={90}')}${T(c, 12, 16, 400, 'ink3', `~/.ora/worktrees/${name}/`, 'grow={1}', mono)}</Frame>
+</Frame>`;
+  return v3SettingsPage(c, '44 M3 Settings Repos · Slate', '저장소', {
+    title: '저장소',
+    desc: '새 worktree를 만들 때 쓰는 설정입니다. 초기 명령은 만든 뒤 "초기 명령" 탭에서 위에서부터 차례로 돌고, 하나가 실패하면 멈춥니다.',
+    body: `${v3Group(c, '저장소', '2개', [
+      repo('math-demo', '~/projects/math-demo', M3_CMDS, 3),
+      repo('ora', '~/Desktop/ora', [], 2),
+    ])}
+${v3Save(c, '')}`,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -2090,4 +2257,9 @@ export const SCREENS = [
   { file: 'v3-settings-models-slate', jsx: v3ModelsScreen },
   { file: 'v3-settings-permissions-slate', jsx: v3PermissionsScreen },
   { file: 'v3-settings-isolation-slate', jsx: v3IsolationScreen },
+  { file: 'm3-create-worktree-slate', jsx: m3CreateScreen },
+  { file: 'm3-setup-running-slate', jsx: () => m3SetupScreen(false) },
+  { file: 'm3-setup-failed-slate', jsx: () => m3SetupScreen(true) },
+  { file: 'm3-conflict-notice-slate', jsx: m3ConflictScreen },
+  { file: 'm3-settings-repos-slate', jsx: m3ReposScreen },
 ];

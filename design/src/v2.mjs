@@ -205,6 +205,7 @@ const SESSION_ICON = {
   running: ['loader', 'ink2'],
   approval: ['shield-alert', 'warn'],
   question: ['message-circle-question', 'warn'],
+  failed: ['circle-x', 'del'],
 };
 
 /**
@@ -222,14 +223,14 @@ export function sidebarV3(c, { groups }) {
     const [icon, col] = SESSION_ICON[state];
     return `<Frame w="fill" h={30} flex="row" items="center" gap={8} pl={28} pr={10}>${I(c, icon, col, 13)}${T(c, 13, 18, 400, 'ink', title, 'grow={1} maxLines={1} truncate')}${T(c, 12, 16, 400, 'ink3', age)}</Frame>`;
   };
-  const wtRow = ({ name, base = false, selected = false, running = 0 }) =>
-    `<Frame w="fill" h={34} flex="row" items="center" gap={8} px={10}>${I(c, 'git-branch', selected ? 'ink' : 'ink3', 14)}${T(c, 14, 20, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'maxLines={1} truncate')}${base ? badge('기본') : ''}${SP}${!selected && running ? T(c, 12, 16, 500, 'ink2', `실행 ${running}`) : ''}</Frame>`;
+  const wtRow = ({ name, base = false, selected = false, running = 0, status = null }) =>
+    `<Frame w="fill" h={34} flex="row" items="center" gap={8} px={10}>${I(c, 'git-branch', selected ? 'ink' : 'ink3', 14)}${T(c, 14, 20, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'maxLines={1} truncate')}${base ? badge('기본') : ''}${SP}${status ? `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, status[0], status[2], 13)}${T(c, 12, 16, 500, status[2], status[1])}</Frame>` : ''}${!status && !selected && running ? T(c, 12, 16, 500, 'ink2', `실행 ${running}`) : ''}</Frame>`;
   const wt = (w) =>
     w.selected
       ? `<Frame w="fill" h="hug" flex="col" pb={4} rounded={10} bg="${c.raised}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${wtRow(w)}${(w.sessions ?? []).map(sessionRow).join('')}</Frame>`
       : wtRow(w);
   const group = ({ repo, worktrees }) =>
-    `<Frame w="fill" h="hug" flex="col" gap={2}><Frame w="fill" h={34} flex="row" items="center" gap={10} px={10}>${I(c, 'folder-git-2', 'ink2', 15)}${T(c, 14, 20, 600, 'ink', repo)}</Frame>${worktrees.map(wt).join('')}</Frame>`;
+    `<Frame w="fill" h="hug" flex="col" gap={2}><Frame w="fill" h={34} flex="row" items="center" gap={10} px={10}>${I(c, 'folder-git-2', 'ink2', 15)}${T(c, 14, 20, 600, 'ink', repo, 'grow={1}')}${I(c, 'plus', 'ink3', 15)}</Frame>${worktrees.map(wt).join('')}</Frame>`;
   return `<Frame name="SidebarV3" w={300} h="fill" flex="row" bg="${c.sidebar}"><Frame w="fill" h="fill" flex="col">
 <Frame w="fill" h={40} flex="row" items="center" gap={8} px={16}>${lights}<Frame w={10} h={1} />${I(c, 'panel-left', 'ink2', 16)}${SP}${I(c, 'arrow-left', 'ink3', 15)}${I(c, 'arrow-right', 'ink3', 15)}</Frame>
 <Frame w="fill" h="hug" flex="col" gap={4} px={10} pt={4}>
