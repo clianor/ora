@@ -1,5 +1,6 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, globSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { matchesGlob } from 'node:path';
 
 const manifest: unknown = JSON.parse(readFileSync('package.json', 'utf8'));
 if (
@@ -24,6 +25,13 @@ const instructionFiles = execFileSync(
   .split('\n')
   .filter(Boolean);
 
+// 로컬 디스크 대신 git 파일 목록으로 판정한다. 그래야 gitignore된 빌드 결과물이 있는 로컬과 새로 체크아웃한 CI가 같은 결과를 낸다.
+const repoFiles = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
+  encoding: 'utf8',
+})
+  .split('\n')
+  .filter(Boolean);
+
 function findProblem(span: string): string | undefined {
   const scriptName =
     /^pnpm (?:run )?([a-z][\w:-]*)/.exec(span)?.[1] ?? /^(check:[\w-]+)$/.exec(span)?.[1];
@@ -36,9 +44,15 @@ function findProblem(span: string): string | undefined {
   const path = span.replace(/^\.\//, '');
   const topDirectory = path.split('/')[0] ?? '';
   // 첫 구간이 저장소의 디렉터리일 때만 경로로 본다. 세션 디렉터리 안의 경로(`artifacts/…`)와 URL을 이 조건이 거른다.
-  if (!existsSync(topDirectory) || !statSync(topDirectory).isDirectory()) return undefined;
-  const exists = path.includes('*') ? globSync(path).length > 0 : existsSync(path);
-  return exists ? undefined : `없는 경로: ${span}`;
+  if (!repoFiles.some((file) => file.startsWith(`${topDirectory}/`))) return undefined;
+  // git 목록에는 파일만 있으므로, 디렉터리나 디렉터리 글롭(`apps/*`)은 그 아래 파일로 맞춘다.
+  const under = `${path.replace(/\/$/, '')}/**`;
+  if (repoFiles.some((file) => matchesGlob(file, path) || matchesGlob(file, under))) {
+    return undefined;
+  }
+  // gitignore된 경로(빌드 결과물 위치 안내 등)는 체크아웃에 없으므로 확인할 수 없어 건너뛴다.
+  if (spawnSync('git', ['check-ignore', '-q', path]).status === 0) return undefined;
+  return `없는 경로: ${span}`;
 }
 
 const problems = instructionFiles.flatMap((file) =>
