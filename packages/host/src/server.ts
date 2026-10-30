@@ -97,7 +97,8 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-export interface LocalServerOptions {
+/** 호스트가 요청을 처리하는 데 필요한 설정이다. HTTP 서버와 IPC가 같은 값을 쓴다. */
+export interface HostOptions {
   readonly env: NodeJS.ProcessEnv;
   readonly configPath?: string;
   /** 새 세션과 재개의 기본 작업 폴더다. */
@@ -106,14 +107,19 @@ export interface LocalServerOptions {
   readonly modelScriptPath?: string;
   /** `--isolation` 플래그 값이다. 새 세션은 설정 기본값보다 이 값을 앞세운다. */
   readonly isolation?: Isolation;
-  /** 정적 웹 결과물 디렉터리다. 없으면 API만 제공한다. */
-  readonly webDir?: string;
-  /** 생략하면 운영체제가 빈 포트를 고른다. */
-  readonly port?: number;
+  /** 세션 워커 진입 파일이다. 없으면 이 패키지의 `worker.ts`를 쓴다. 번들한 앱이 번들한 워커를 가리킬 때 쓴다. */
+  readonly workerPath?: string;
   /** 사용량 조회, 토큰 갱신, 로그인에 쓰는 fetch다. 테스트가 가짜 서버로 바꿔 끼운다. */
   readonly fetch?: typeof fetch;
   /** Claude와 Codex 로그인 콜백 서버의 포트다. 생략하면 각 프로바이더의 기본 포트다. */
   readonly loginPort?: number;
+}
+
+export interface LocalServerOptions extends HostOptions {
+  /** 정적 웹 결과물 디렉터리다. 없으면 API만 제공한다. */
+  readonly webDir?: string;
+  /** 생략하면 운영체제가 빈 포트를 고른다. */
+  readonly port?: number;
 }
 
 export interface LocalServer {
@@ -121,6 +127,33 @@ export interface LocalServer {
   readonly startUrl: string;
   readonly origin: string;
   readonly port: number;
+  close(): Promise<void>;
+}
+
+/** 라우터가 요청에서 읽는 값이다. HTTP 서버와 IPC가 각자 만든다. */
+export interface RouteRequest {
+  readonly method: string;
+  readonly url: URL;
+  /** SSE를 다시 연결할 때 이어 받을 이벤트 번호다. */
+  readonly lastEventId: string | undefined;
+  readJson(): Promise<unknown>;
+}
+
+/** 서버가 클라이언트로 흘려 보내는 이벤트 흐름이다. SSE 이벤트나 IPC 메시지 하나가 `send` 한 번이다. */
+export interface EventStream {
+  send(name: string | undefined, data: unknown, id?: number): void;
+  end(): void;
+  isClosed(): boolean;
+  onClose(listener: () => void): void;
+}
+
+export interface RouteResponse {
+  json(status: number, body: unknown): void;
+  openStream(): EventStream;
+}
+
+export interface Host {
+  route(req: RouteRequest, res: RouteResponse): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -233,7 +266,21 @@ function readCookie(header: string | undefined, name: string): string | undefine
   return undefined;
 }
 
-function reply(
+/** 라우터가 만든 오류를 상태 코드와 문구로 바꾼다. HTTP 서버와 IPC가 같은 규칙을 쓴다. */
+export function describeRouteError(error: unknown): { status: number; message: string } {
+  if (error instanceof HttpError) return { status: error.status, message: error.message };
+  if (error instanceof AccountApiError) return { status: error.status, message: error.message };
+  if (error instanceof UsageError) return { status: 409, message: error.message };
+  return { status: 500, message: error instanceof Error ? error.message : String(error) };
+}
+
+function reply(res: RouteResponse, status: number, body: unknown): void {
+  res.json(status, body);
+}
+
+const readJson = (req: RouteRequest): Promise<unknown> => req.readJson();
+
+function replyHttp(
   res: ServerResponse,
   status: number,
   body: unknown,
@@ -243,7 +290,7 @@ function reply(
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+async function readHttpJson(req: IncomingMessage): Promise<unknown> {
   if (!(req.headers['content-type'] ?? '').startsWith('application/json')) {
     throw new HttpError(415, 'Content-Type은 application/json이어야 합니다.');
   }
@@ -280,15 +327,16 @@ function parseBody<T extends z.ZodType>(schema: T, raw: unknown): z.infer<T> {
   return parsed.data;
 }
 
-/** 로컬 서버를 띄운다. 127.0.0.1에만 바인딩하고 토큰·Host·Origin을 검사한다 (SPEC 2.6.2절). */
-export async function startLocalServer(options: LocalServerOptions): Promise<LocalServer> {
+/**
+ * 요청 라우터와 세션·터미널 상태를 만든다. 소켓을 열지 않는다.
+ * HTTP 서버(`startLocalServer`)와 Electron IPC가 이 호스트의 `route`를 부른다.
+ */
+export async function createHost(options: HostOptions): Promise<Host> {
   const oraHome = resolveOraHome(options.env);
   const config = await loadConfig(options.configPath, oraHome);
   resolveChains(config, { scripted: options.modelScriptPath !== undefined });
   const sessionsDir = resolveSessionsDir(config, oraHome);
   const catalogOf = createCatalog(config.models);
-  const token = randomBytes(32).toString('hex');
-  const webRoot = options.webDir === undefined ? undefined : resolve(options.webDir);
   const modelArgs =
     options.modelScriptPath === undefined ? {} : { modelScriptPath: options.modelScriptPath };
   const configArgs = options.configPath === undefined ? {} : { configPath: options.configPath };
@@ -296,7 +344,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
 
   const live = new Map<string, LiveSession>();
   const subscribers = new Map<string, Set<Subscriber>>();
-  const openStreams = new Set<ServerResponse>();
+  const openStreams = new Set<EventStream>();
   // 실행 중인 세션에 보낸 조향 메시지다. 워커가 끝나면 모아서 한 번에 재개한다.
   const steers = new Map<string, string[]>();
   // 재개를 시작하는 중이라 아직 `live`에 들지 않은 세션이다.
@@ -364,6 +412,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     const handle = launchSession({
       request: { ...request, interactive: true },
       env: options.env,
+      ...(options.workerPath === undefined ? {} : { workerPath: options.workerPath }),
       onEvent: (event: OraEvent) => {
         publish(event.sessionId, undefined, event, event.seq);
       },
@@ -456,22 +505,15 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     return session;
   };
 
-  const streamEvents = async (id: string, req: IncomingMessage, res: ServerResponse) => {
+  const streamEvents = async (id: string, req: RouteRequest, res: RouteResponse) => {
     const sessionDir = sessionDirOf(id);
     const recorded = await stat(join(sessionDir, 'transcript.jsonl')).catch(() => undefined);
     if (recorded === undefined && !live.has(id)) throw new HttpError(404, `세션이 없습니다: ${id}`);
-    const isGone = () => req.destroyed;
-    if (isGone()) return;
 
-    res.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
-    });
-    res.on('error', () => undefined);
-    openStreams.add(res);
+    const stream = res.openStream();
+    openStreams.add(stream);
 
-    const resumeFrom = Number.parseInt(String(req.headers['last-event-id'] ?? ''), 10);
+    const resumeFrom = Number.parseInt(req.lastEventId ?? '', 10);
     let lastSeq = Number.isNaN(resumeFrom) ? 0 : Math.max(0, resumeFrom);
     let replaying = true;
     const buffered: Parameters<Subscriber['send']>[] = [];
@@ -485,9 +527,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         if (sentRequests.has(requestId)) return;
         sentRequests.add(requestId);
       }
-      res.write(
-        `${seq === undefined ? '' : `id: ${seq}\n`}${name === undefined ? '' : `event: ${name}\n`}data: ${JSON.stringify(data)}\n\n`,
-      );
+      stream.send(name, data, seq);
     };
     // 구독을 먼저 등록해야 transcript를 읽는 동안 도착한 실시간 이벤트가 버퍼에 남는다.
     const subscriber: Subscriber = {
@@ -499,21 +539,18 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     const set = subscribers.get(id) ?? new Set<Subscriber>();
     set.add(subscriber);
     subscribers.set(id, set);
-    const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
-    heartbeat.unref();
     const cleanup = () => {
-      clearInterval(heartbeat);
       set.delete(subscriber);
-      openStreams.delete(res);
+      openStreams.delete(stream);
     };
-    req.on('close', cleanup);
-    if (isGone()) {
+    stream.onClose(cleanup);
+    if (stream.isClosed()) {
       cleanup();
       return;
     }
 
     const transcript = await readTranscriptText(sessionDir);
-    if (isGone()) return;
+    if (stream.isClosed()) return;
     // 하드 킬로 잘린 마지막 줄은 읽지 않고 건너뛴다.
     for (const line of (transcript ?? '').split('\n')) {
       if (line === '') continue;
@@ -537,34 +574,9 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     }
   };
 
-  const serveStatic = async (pathname: string, res: ServerResponse) => {
-    if (webRoot === undefined)
-      throw new HttpError(404, '웹 결과물 디렉터리 없이 API만 제공합니다.');
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(pathname);
-    } catch {
-      throw new HttpError(400, '경로를 해석할 수 없습니다.');
-    }
-    let file = resolve(webRoot, `.${decoded}`);
-    if (file !== webRoot && !file.startsWith(webRoot + sep))
-      throw new HttpError(404, '찾을 수 없습니다.');
-    const found = await stat(file).catch(() => undefined);
-    if (found === undefined || found.isDirectory()) {
-      if (extname(decoded) !== '' && found === undefined)
-        throw new HttpError(404, '찾을 수 없습니다.');
-      file = join(webRoot, 'index.html');
-    }
-    const body = await readFile(file).catch(() => {
-      throw new HttpError(404, '찾을 수 없습니다.');
-    });
-    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-    res.end(body);
-  };
-
   const routeAccounts = async (
-    req: IncomingMessage,
-    res: ServerResponse,
+    req: RouteRequest,
+    res: RouteResponse,
     method: string,
     segments: string[],
   ) => {
@@ -694,50 +706,39 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     throw new HttpError(403, `알려진 worktree 밖의 폴더입니다: ${cwd}`);
   };
 
-  const streamTerminal = (id: string, req: IncomingMessage, res: ServerResponse) => {
+  const streamTerminal = (id: string, res: RouteResponse) => {
     if (terminals.get(id) === undefined) throw new HttpError(404, `터미널이 없습니다: ${id}`);
-    res.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache',
-      connection: 'keep-alive',
-    });
-    res.on('error', () => undefined);
-    openStreams.add(res);
-    const send = (name: string, data: unknown) => {
-      res.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);
-    };
+    const stream = res.openStream();
+    openStreams.add(stream);
     const subscription = terminals.subscribe(id, {
       onOutput: (chunk) => {
-        send(terminalSseEventNames.output, { data: chunk.toString('base64') });
+        stream.send(terminalSseEventNames.output, { data: chunk.toString('base64') });
       },
       onExit: (exitCode) => {
-        send(terminalSseEventNames.exit, { exitCode });
-        res.end();
+        stream.send(terminalSseEventNames.exit, { exitCode });
+        stream.end();
       },
     });
+    stream.onClose(() => {
+      subscription?.unsubscribe();
+      openStreams.delete(stream);
+    });
     if (subscription === undefined) {
-      res.end();
+      stream.end();
       return;
     }
-    const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
-    heartbeat.unref();
-    req.on('close', () => {
-      clearInterval(heartbeat);
-      subscription.unsubscribe();
-      openStreams.delete(res);
-    });
     if (subscription.snapshot.length > 0) {
-      send(terminalSseEventNames.output, { data: subscription.snapshot.toString('base64') });
+      stream.send(terminalSseEventNames.output, { data: subscription.snapshot.toString('base64') });
     }
     if (subscription.exitCode !== undefined) {
-      send(terminalSseEventNames.exit, { exitCode: subscription.exitCode });
-      res.end();
+      stream.send(terminalSseEventNames.exit, { exitCode: subscription.exitCode });
+      stream.end();
     }
   };
 
   const routeTerminals = async (
-    req: IncomingMessage,
-    res: ServerResponse,
+    req: RouteRequest,
+    res: RouteResponse,
     url: URL,
     method: string,
     segments: string[],
@@ -765,7 +766,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     const terminal = parsedId.success ? terminals.get(parsedId.data) : undefined;
     if (terminal === undefined) throw new HttpError(404, `터미널이 없습니다: ${rawId}`);
     if (action === 'output' && method === 'GET') {
-      streamTerminal(terminal.id, req, res);
+      streamTerminal(terminal.id, res);
       return;
     }
     if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
@@ -784,14 +785,10 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     reply(res, 200, { ok: true });
   };
 
-  const route = async (req: IncomingMessage, res: ServerResponse, url: URL) => {
-    const method = req.method ?? 'GET';
+  const route = async (req: RouteRequest, res: RouteResponse) => {
+    const { method, url } = req;
     const segments = url.pathname.split('/').filter((part) => part !== '');
-    if (segments[0] !== 'api') {
-      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
-      await serveStatic(url.pathname, res);
-      return;
-    }
+    if (segments[0] !== 'api') throw new HttpError(404, '알 수 없는 API입니다.');
     if (segments[1] === 'routing' && segments.length === 2) {
       if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
       const store = createAccountStore({ path: join(oraHome, 'auth.json'), env: options.env });
@@ -1253,10 +1250,85 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     }
   };
 
+  return {
+    route,
+    async close() {
+      clearInterval(memoryTimer);
+      await accountApi.close();
+      await mcpApi.close();
+      await worktreeApi.close();
+      await terminals.closeAll();
+      closing = true;
+      for (const session of live.values()) session.handle.cancel('soft');
+      await Promise.allSettled([...live.values()].map((session) => session.handle.result));
+      for (const stream of openStreams) stream.end();
+    },
+  };
+}
+
+/** 로컬 서버를 띄운다. 127.0.0.1에만 바인딩하고 토큰·Host·Origin을 검사한다 (SPEC 2.6.2절). */
+export async function startLocalServer(options: LocalServerOptions): Promise<LocalServer> {
+  const host = await createHost(options);
+  const token = randomBytes(32).toString('hex');
+  const webRoot = options.webDir === undefined ? undefined : resolve(options.webDir);
+
+  const serveStatic = async (pathname: string, res: ServerResponse) => {
+    if (webRoot === undefined)
+      throw new HttpError(404, '웹 결과물 디렉터리 없이 API만 제공합니다.');
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathname);
+    } catch {
+      throw new HttpError(400, '경로를 해석할 수 없습니다.');
+    }
+    let file = resolve(webRoot, `.${decoded}`);
+    if (file !== webRoot && !file.startsWith(webRoot + sep))
+      throw new HttpError(404, '찾을 수 없습니다.');
+    const found = await stat(file).catch(() => undefined);
+    if (found === undefined || found.isDirectory()) {
+      if (extname(decoded) !== '' && found === undefined)
+        throw new HttpError(404, '찾을 수 없습니다.');
+      file = join(webRoot, 'index.html');
+    }
+    const body = await readFile(file).catch(() => {
+      throw new HttpError(404, '찾을 수 없습니다.');
+    });
+    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+    res.end(body);
+  };
+
+  const openHttpStream = (req: IncomingMessage, res: ServerResponse): EventStream => {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+    res.on('error', () => undefined);
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
+    heartbeat.unref();
+    const closeListeners: (() => void)[] = [];
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      for (const listener of closeListeners) listener();
+    });
+    return {
+      send: (name, data, id) => {
+        res.write(
+          `${id === undefined ? '' : `id: ${id}\n`}${name === undefined ? '' : `event: ${name}\n`}data: ${JSON.stringify(data)}\n\n`,
+        );
+      },
+      end: () => res.end(),
+      isClosed: () => req.destroyed,
+      onClose: (listener) => closeListeners.push(listener),
+    };
+  };
+
+  const openStreams = new Set<ServerResponse>();
+
   const server: Server = createServer((req, res) => {
     const origin = `http://${BIND_HOST}:${(server.address() as AddressInfo).port}`;
     const fail = (status: number, message: string, headers?: Record<string, string>) => {
-      reply(res, status, { error: message }, headers);
+      replyHttp(res, status, { error: message }, headers);
     };
     // Host와 Origin은 DNS 리바인딩과 다른 웹 페이지의 요청을 막는다. 토큰보다 먼저 검사한다.
     if (req.headers.host !== new URL(origin).host) {
@@ -1286,21 +1358,48 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       fail(401, '인증이 필요합니다. 시작 URL로 접속합니다.');
       return;
     }
-    route(req, res, url).catch((error: unknown) => {
+    const method = req.method ?? 'GET';
+    const segments = url.pathname.split('/').filter((part) => part !== '');
+    const dispatch = async () => {
+      if (segments[0] !== 'api') {
+        if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        await serveStatic(url.pathname, res);
+        return;
+      }
+      const lastEventId = req.headers['last-event-id'];
+      await host.route(
+        {
+          method,
+          url,
+          lastEventId: typeof lastEventId === 'string' ? lastEventId : undefined,
+          readJson: () => readHttpJson(req),
+        },
+        {
+          json: (status, body) => {
+            replyHttp(res, status, body);
+          },
+          openStream: () => {
+            const stream = openHttpStream(req, res);
+            openStreams.add(res);
+            stream.onClose(() => openStreams.delete(res));
+            return stream;
+          },
+        },
+      );
+    };
+    dispatch().catch((error: unknown) => {
       if (res.headersSent) {
         res.end();
         return;
       }
-      if (error instanceof HttpError && error.status === 413) {
+      const { status, message } = describeRouteError(error);
+      if (status === 413) {
         // 본문을 더 읽지 않으므로 응답을 보낸 뒤 연결을 닫는다.
         res.once('finish', () => {
           req.destroy();
         });
-        fail(413, error.message, { connection: 'close' });
-      } else if (error instanceof HttpError) fail(error.status, error.message);
-      else if (error instanceof AccountApiError) fail(error.status, error.message);
-      else if (error instanceof UsageError) fail(409, error.message);
-      else fail(500, error instanceof Error ? error.message : String(error));
+        fail(413, message, { connection: 'close' });
+      } else fail(status, message);
     });
   });
 
@@ -1316,14 +1415,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
     origin,
     port,
     async close() {
-      clearInterval(memoryTimer);
-      await accountApi.close();
-      await mcpApi.close();
-      await worktreeApi.close();
-      await terminals.closeAll();
-      closing = true;
-      for (const session of live.values()) session.handle.cancel('soft');
-      await Promise.allSettled([...live.values()].map((session) => session.handle.result));
+      await host.close();
       for (const stream of openStreams) stream.end();
       server.closeAllConnections();
       const stopped = Promise.withResolvers<undefined>();

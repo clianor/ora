@@ -28,8 +28,9 @@ export default {
     {
       name: 'no-dev-deps-in-src',
       severity: 'error',
-      comment: '배포 코드가 devDependencies를 import합니다.',
-      from: { path: `${workspacePath}[^/]+/src/`, pathNot: '\\.test\\.ts$' },
+      comment:
+        '배포 코드가 devDependencies를 import합니다. 데스크톱 앱은 electron-builder가 Electron을 따로 싣고 나머지를 번들하므로 electron을 devDependencies에 둡니다.',
+      from: { path: `${workspacePath}[^/]+/src/`, pathNot: ['\\.test\\.ts$', '^apps/desktop/'] },
       to: { dependencyTypes: ['npm-dev'] },
     },
     {
@@ -113,7 +114,7 @@ export default {
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
-    exclude: { path: '^(tmp|coverage|eval/tasks|\\.claude)/|(^|/)dist/' },
+    exclude: { path: '^(tmp|coverage|eval/tasks|\\.claude)/|(^|/)(dist|release)/' },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: 'tsconfig.json' },
     enhancedResolveOptions: {

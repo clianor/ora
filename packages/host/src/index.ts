@@ -4,5 +4,13 @@ export { CancelledBeforeStartError, launchSession, listSessions } from './superv
 export { runEval } from './eval.ts';
 export type { EvalOptions } from './eval.ts';
 export type { LaunchOptions, LaunchRequest, SessionHandle, SessionResult } from './supervisor.ts';
-export { startLocalServer } from './server.ts';
-export type { LocalServer, LocalServerOptions } from './server.ts';
+export { createHost, describeRouteError, startLocalServer } from './server.ts';
+export type {
+  EventStream,
+  Host,
+  HostOptions,
+  LocalServer,
+  LocalServerOptions,
+  RouteRequest,
+  RouteResponse,
+} from './server.ts';

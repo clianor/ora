@@ -175,7 +175,7 @@ export function ThreadView({ children }: ThreadViewProps) {
   return (
     <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col items-center">
       <ThreadPrimitive.Viewport className="flex w-full flex-1 flex-col items-center overflow-y-auto pt-5">
-        <div className="flex w-[720px] max-w-full flex-col gap-4 pb-6">
+        <div className="flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] flex-col gap-4 pb-6">
           <ThreadPrimitive.Messages>
             {({ message }) => (message.role === 'user' ? <UserMessage /> : <AssistantMessage />)}
           </ThreadPrimitive.Messages>
@@ -382,7 +382,7 @@ export function Composer({
   const buttonClass =
     'flex size-[30px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors duration-(--duration-fast) ease-(--ease-out) hover:bg-foreground-muted';
   return (
-    <ComposerPrimitive.Root className="flex w-[720px] max-w-full flex-col gap-2.5 rounded-xl border border-border bg-surface px-3.5 pt-3 pb-2.5">
+    <ComposerPrimitive.Root className="flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] flex-col gap-2.5 rounded-xl border border-border bg-surface px-3.5 pt-3 pb-2.5">
       <ComposerPrimitive.Input
         rows={1}
         cancelOnEscape={false}
@@ -467,7 +467,7 @@ export function StatusLine({
     ...(cache ? [<CacheStat key="cache" cache={cache} />] : []),
   ];
   return (
-    <div className="flex min-h-5 w-[720px] max-w-full flex-wrap items-center gap-x-2 px-3.5 text-xs leading-4 text-foreground-subtle">
+    <div className="flex min-h-5 w-[720px] max-w-[calc(100%-var(--s-6)*2)] flex-wrap items-center gap-x-2 px-3.5 text-xs leading-4 text-foreground-subtle">
       {parts.flatMap((part, index) =>
         index === 0 ? [part] : [<span key={`dot-${index}`}>·</span>, part],
       )}

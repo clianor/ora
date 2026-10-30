@@ -203,9 +203,16 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
       const running = [...entries.values()].filter((entry) => entry.exitCode === undefined);
       for (const entry of running) {
         entry.isKilled = true;
-        entry.pty?.kill();
+        // 붙은 PTY가 없는 터미널은 끝낼 프로세스가 없으므로 바로 끝낸 것으로 표시한다.
+        if (entry.pty === undefined) finish(entry, 143);
+        else entry.pty.kill();
       }
+      // SIGHUP을 무시하는 셸은 잠시 뒤 SIGKILL로 끝낸다.
+      const escalation = setTimeout(() => {
+        for (const entry of running) if (entry.exitCode === undefined) entry.pty?.kill('SIGKILL');
+      }, 2000);
       await Promise.all(running.map((entry) => entry.exited));
+      clearTimeout(escalation);
     },
   };
 }

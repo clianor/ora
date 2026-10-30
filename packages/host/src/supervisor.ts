@@ -68,6 +68,8 @@ export type LaunchRequest = CreateRequest | Extract<WorkerCommand, { type: 'resu
 export interface LaunchOptions {
   readonly request: LaunchRequest;
   readonly env: NodeJS.ProcessEnv;
+  /** 세션 워커 진입 파일이다. 생략하면 이 패키지의 `worker.ts`다. 번들한 앱이 번들한 워커를 가리킨다. */
+  readonly workerPath?: string;
   readonly onEvent?: (event: OraEvent) => void;
   /** 워커가 승인을 요청하면 부른다. `request.interactive`가 true인 세션에서만 온다. */
   readonly onApprovalRequest?: (requestId: string, request: ApprovalRequest) => void;
@@ -295,9 +297,13 @@ export function launchSession(options: LaunchOptions): SessionHandle {
     const pidPath = join(sessionDir, PID_FILE);
     try {
       const command: LaunchCommand = { ...options.request, sessionId };
-      const worker = fork(WORKER_PATH, [], {
+      const worker = fork(options.workerPath ?? WORKER_PATH, [], {
         detached: true,
-        env: options.env,
+        // 패키징한 앱에는 시스템 node가 없어 Electron 실행 파일이 node처럼 돌아야 한다.
+        env:
+          process.versions.electron === undefined
+            ? options.env
+            : { ...options.env, ELECTRON_RUN_AS_NODE: '1' },
         stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
       });
       // 이미 끝난 워커에 명령을 쓰면 EPIPE가 나므로 오류로 호스트를 죽이지 않는다. 종료 상태는 exit 이벤트로 판정한다.

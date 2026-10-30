@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+# 번들러가 만든 결과물은 소스의 베타 헤더 문자열(oauth-2025-04-20)을 키로 오탐한다. 소스는 그대로 검사한다.
+[allowlist]
+paths = ['''apps/desktop/(dist|release)/''']

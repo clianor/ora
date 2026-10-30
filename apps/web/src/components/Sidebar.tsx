@@ -206,6 +206,7 @@ export function Sidebar({ data, selectedCwd, isHistorySelected = false }: Sideba
   const now = useNow();
   return (
     <aside className="flex w-[264px] shrink-0 flex-col gap-4 border-r border-border bg-sidebar px-2 pt-3 pb-3">
+      {window.ora !== undefined && <div data-titlebar aria-hidden className="-mb-1 h-6 shrink-0" />}
       <div className="flex flex-col gap-1">
         <button
           type="button"

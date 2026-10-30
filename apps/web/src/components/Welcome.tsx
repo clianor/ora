@@ -69,14 +69,14 @@ function Welcome({
     <ChatProvider messages={[]} onSend={create}>
       {draftKey !== undefined && <DraftSync draftKey={draftKey} />}
       <div className="flex flex-1 flex-col items-center justify-center gap-5 pb-20">
-        <div className="flex w-[720px] max-w-full flex-col gap-1.5">
+        <div className="flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] flex-col gap-1.5">
           <h2 className="text-2xl leading-8 font-semibold text-foreground">무엇을 할까요?</h2>
           <p className="text-sm leading-[22px] text-foreground-subtle">
             {subtitle && `${subtitle} `}Ora는 계획을 세우고, 검증 명령으로 결과를 확인한 뒤 완료를
             보고합니다.
           </p>
         </div>
-        <div className="flex w-[720px] max-w-full flex-col gap-2">
+        <div className="flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] flex-col gap-2">
           {context && <div className="flex items-center gap-1.5">{context}</div>}
           {notice && (
             <p role="status" className="px-3.5 text-xs leading-4 text-foreground-muted">
@@ -111,7 +111,7 @@ function Welcome({
           />
         </div>
         {context && (
-          <div className="flex w-[720px] max-w-full gap-5 px-3.5">
+          <div className="flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] gap-5 px-3.5">
             <Shortcut keys="⌘K" label="명령 팔레트" />
             <Shortcut keys="⌘N" label="새 세션" />
             <Shortcut keys="⌘," label="설정" />

@@ -28,19 +28,27 @@ interface TitleBarProps {
   context: TabContext;
   diff: { add: number; del: number } | null;
   onToggleSidebar: () => void;
+  /** 사이드바가 닫히면 신호등 단추가 제목 줄 위에 놓이므로 Electron 창은 왼쪽을 비웁니다. */
+  isSidebarOpen?: boolean;
 }
 
 /**
  * 창 맨 위 제목 줄입니다. 왼쪽에 탭, 오른쪽에 diff 칩과 패널이 접혔을 때의 열기 단추를 둡니다.
  * 고른 탭은 본문과 같은 바탕이라 아래 내용으로 이어져 보입니다.
  */
-export function TitleBar({ context, diff, onToggleSidebar }: TitleBarProps) {
+export function TitleBar({ context, diff, onToggleSidebar, isSidebarOpen = true }: TitleBarProps) {
   const store = useStore();
   const { isOpen } = usePanelState();
   const tabButtons = useRef<(HTMLButtonElement | null)[]>([]);
   const { tabs, activeTabId } = context;
   return (
-    <header className="flex h-10 shrink-0 items-stretch border-b border-border bg-titlebar">
+    <header
+      data-titlebar
+      className={cn(
+        'flex h-10 shrink-0 items-stretch border-b border-border bg-titlebar',
+        window.ora !== undefined && !isSidebarOpen && 'pl-[76px]',
+      )}
+    >
       <button
         type="button"
         aria-label="사이드바 열고 닫기"

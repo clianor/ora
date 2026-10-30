@@ -12,6 +12,11 @@
     "apps/*": {
       "project": ["src/**/*.{ts,tsx,css}", "*.ts", "*.js"]
     },
+    "apps/desktop": {
+      "entry": ["src/main/index.ts", "src/preload/index.ts", "scripts/*.ts"],
+      "project": ["src/**/*.ts", "scripts/*.ts"],
+      "ignoreDependencies": ["node-pty"]
+    },
     "packages/tools": {
       "entry": ["src/**/*.fixture.ts"],
       "project": ["src/**/*.ts"]

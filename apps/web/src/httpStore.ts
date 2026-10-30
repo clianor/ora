@@ -114,7 +114,7 @@ interface SessionState {
   /** SSE 연결이 한 번 끊겼다가 다시 열렸을 때 놓친 이벤트와 대기 요청을 서버에서 다시 맞추기 위한 표시입니다. */
   hadStreamError: boolean;
   watchers: number;
-  source: EventSource | null;
+  source: StreamHandle | null;
   refreshTimer: ReturnType<typeof setTimeout> | null;
   view: SessionView | null;
 }
@@ -132,30 +132,78 @@ interface SafeParser<T> {
   safeParse: (input: unknown) => { success: true; data: T } | { success: false };
 }
 
-async function requestJson<T>(
-  path: string,
-  schema: Parser<T>,
-  init?: { method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown },
-): Promise<T> {
-  const response = await fetch(path, {
-    method: init?.method ?? 'GET',
-    headers: init?.body === undefined ? undefined : { 'content-type': 'application/json' },
-    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
-    credentials: 'same-origin',
-  });
-  const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const failure = errorResponseSchema.safeParse(body);
-    const reason = failure.success
-      ? failure.data.error
-      : `요청이 실패했습니다(${response.status}).`;
-    throw new Error(
-      response.status === 401
-        ? '인증이 필요합니다. 터미널에 출력된 시작 주소를 다시 엽니다.'
-        : reason,
-    );
+interface StreamHandlers {
+  onOpen(): void;
+  /** 연결이 끊겼습니다. */
+  onError(): void;
+  /** `name`이 없으면 세션 기록 이벤트입니다. */
+  onMessage(name: string | undefined, data: unknown): void;
+}
+
+interface StreamHandle {
+  close(): void;
+  readonly isClosed: boolean;
+}
+
+export interface StoreTransport {
+  request(
+    path: string,
+    init?: { method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown },
+  ): Promise<{ status: number; body: unknown }>;
+  openStream(path: string, handlers: StreamHandlers): StreamHandle;
+}
+
+function parseJsonOrText(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
-  return schema.parse(body);
+}
+
+const streamEventNames: string[] = [
+  ...Object.values(sseEventNames),
+  ...Object.values(terminalSseEventNames),
+];
+
+/** `ora serve`가 제공한 페이지에서 쓰는 통로입니다. */
+function createFetchTransport(): StoreTransport {
+  return {
+    request: async (path, init) => {
+      const response = await fetch(path, {
+        method: init?.method ?? 'GET',
+        headers: init?.body === undefined ? undefined : { 'content-type': 'application/json' },
+        body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+        credentials: 'same-origin',
+      });
+      return { status: response.status, body: await response.json().catch(() => null) };
+    },
+    openStream: (path, handlers) => {
+      const source = new EventSource(path);
+      source.onopen = () => {
+        handlers.onOpen();
+      };
+      source.onerror = () => {
+        handlers.onError();
+      };
+      source.onmessage = (message: MessageEvent<string>) => {
+        handlers.onMessage(undefined, parseJsonOrText(message.data));
+      };
+      for (const name of streamEventNames) {
+        source.addEventListener(name, (message) => {
+          handlers.onMessage(name, parseJsonOrText((message as MessageEvent<string>).data));
+        });
+      }
+      return {
+        close: () => {
+          source.close();
+        },
+        get isClosed() {
+          return source.readyState === EventSource.CLOSED;
+        },
+      };
+    },
+  };
 }
 
 /**
@@ -234,8 +282,25 @@ function createSessionState(record: SessionRecord): SessionState {
   };
 }
 
-/** `ora serve`의 HTTP API와 SSE에 연결한 저장소입니다. */
-export function createHttpStore(): OraStoreSource {
+/** 저장소가 `/api/...` 요청과 이벤트 흐름을 주고받는 통로입니다. 브라우저는 fetch와 EventSource, Electron은 IPC를 씁니다. */
+export function createHttpStore(
+  transport: StoreTransport = createFetchTransport(),
+): OraStoreSource {
+  const requestJson = async <T>(
+    path: string,
+    schema: Parser<T>,
+    init?: { method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: unknown },
+  ): Promise<T> => {
+    const { status, body } = await transport.request(path, init);
+    if (status < 200 || status >= 300) {
+      const failure = errorResponseSchema.safeParse(body);
+      const reason = failure.success ? failure.data.error : `요청이 실패했습니다(${status}).`;
+      throw new Error(
+        status === 401 ? '인증이 필요합니다. 터미널에 출력된 시작 주소를 다시 엽니다.' : reason,
+      );
+    }
+    return schema.parse(body);
+  };
   const sessions = new Map<string, SessionState>();
   const listeners = new Set<() => void>();
   let listLoaded: 'loading' | 'ready' | 'error' = 'loading';
@@ -480,20 +545,16 @@ export function createHttpStore(): OraStoreSource {
     scheduleListRefresh();
   };
 
-  /** SSE 데이터를 JSON으로 읽고 스키마로 검증합니다. 실패하면 화면에 보이는 오류로 남기고 null을 돌려줍니다. */
-  const parseSse = <T>(state: SessionState, schema: SafeParser<T>, data: string): T | null => {
-    try {
-      const parsed = schema.safeParse(JSON.parse(data));
-      if (parsed.success) return parsed.data;
-    } catch {
-      // JSON이 아니어도 아래의 오류 알림으로 처리합니다.
-    }
+  /** 서버가 보낸 이벤트 데이터를 스키마로 검증합니다. 실패하면 화면에 보이는 오류로 남기고 null을 돌려줍니다. */
+  const parseSse = <T>(state: SessionState, schema: SafeParser<T>, data: unknown): T | null => {
+    const parsed = schema.safeParse(data);
+    if (parsed.success) return parsed.data;
     state.error = '서버가 보낸 이벤트의 모양이 맞지 않습니다.';
     touch(state);
     return null;
   };
 
-  const handleTranscript = (id: string, state: SessionState, data: string): void => {
+  const handleTranscript = (id: string, state: SessionState, data: unknown): void => {
     const event = parseSse(state, oraEventSchema, data);
     if (!event) return;
     if (event.seq <= (state.events.at(-1)?.seq ?? 0)) return;
@@ -511,53 +572,58 @@ export function createHttpStore(): OraStoreSource {
   };
 
   const openSource = (id: string, state: SessionState): void => {
-    const source = new EventSource(`/api/sessions/${id}/events`);
+    // 연결이 끊겼다가 다시 열리면 놓친 대기 요청과 해결을 서버에서 다시 읽어 맞춥니다.
+    const source: StreamHandle = transport.openStream(`/api/sessions/${id}/events`, {
+      onError: () => {
+        state.hadStreamError = true;
+        if (!source.isClosed || state.watchers === 0) return;
+        source.close();
+        openSource(id, state);
+      },
+      onOpen: () => {
+        if (!state.hadStreamError) return;
+        state.hadStreamError = false;
+        refreshDetail(id).catch(() => undefined);
+      },
+      onMessage: (name, data) => {
+        if (name === undefined) {
+          handleTranscript(id, state, data);
+        } else if (name === sseEventNames.approvalRequest) {
+          const parsed = parseSse(state, pendingApprovalSchema, data);
+          if (!parsed) return;
+          const { requestId } = parsed;
+          state.approvals = [
+            ...state.approvals.filter((item) => item.requestId !== requestId),
+            parsed,
+          ];
+          touch(state);
+        } else if (name === sseEventNames.questionRequest) {
+          const parsed = parseSse(state, pendingQuestionSchema, data);
+          if (!parsed) return;
+          const { requestId } = parsed;
+          state.questions = [
+            ...state.questions.filter((item) => item.requestId !== requestId),
+            parsed,
+          ];
+          touch(state);
+        } else if (name === sseEventNames.requestResolved) {
+          const parsed = parseSse(state, requestResolvedSchema, data);
+          if (!parsed) return;
+          const { requestId } = parsed;
+          state.approvals = state.approvals.filter((item) => item.requestId !== requestId);
+          state.questions = state.questions.filter((item) => item.requestId !== requestId);
+          touch(state);
+        } else if (name === sseEventNames.steerFailed) {
+          const parsed = parseSse(state, steerFailedSchema, data);
+          if (!parsed) return;
+          steerFailureCount += 1;
+          state.steerFailure = { id: steerFailureCount, ...parsed };
+          state.error = `조향 메시지를 전달하지 못했습니다. ${parsed.error}`;
+          touch(state);
+        }
+      },
+    });
     state.source = source;
-    // 브라우저가 자동으로 다시 연결할 때는 Last-Event-ID를 보냅니다. 끊겨 있던 동안 놓친 대기 요청과 해결은 다시 읽어 맞춥니다.
-    source.onerror = () => {
-      state.hadStreamError = true;
-      if (source.readyState !== EventSource.CLOSED || state.watchers === 0) return;
-      source.close();
-      openSource(id, state);
-    };
-    source.onopen = () => {
-      if (!state.hadStreamError) return;
-      state.hadStreamError = false;
-      refreshDetail(id).catch(() => undefined);
-    };
-    source.onmessage = (message: MessageEvent<string>) => {
-      handleTranscript(id, state, message.data);
-    };
-    source.addEventListener(sseEventNames.approvalRequest, (message: MessageEvent<string>) => {
-      const parsed = parseSse(state, pendingApprovalSchema, message.data);
-      if (!parsed) return;
-      const { requestId } = parsed;
-      state.approvals = [...state.approvals.filter((item) => item.requestId !== requestId), parsed];
-      touch(state);
-    });
-    source.addEventListener(sseEventNames.questionRequest, (message: MessageEvent<string>) => {
-      const parsed = parseSse(state, pendingQuestionSchema, message.data);
-      if (!parsed) return;
-      const { requestId } = parsed;
-      state.questions = [...state.questions.filter((item) => item.requestId !== requestId), parsed];
-      touch(state);
-    });
-    source.addEventListener(sseEventNames.requestResolved, (message: MessageEvent<string>) => {
-      const parsed = parseSse(state, requestResolvedSchema, message.data);
-      if (!parsed) return;
-      const { requestId } = parsed;
-      state.approvals = state.approvals.filter((item) => item.requestId !== requestId);
-      state.questions = state.questions.filter((item) => item.requestId !== requestId);
-      touch(state);
-    });
-    source.addEventListener(sseEventNames.steerFailed, (message: MessageEvent<string>) => {
-      const parsed = parseSse(state, steerFailedSchema, message.data);
-      if (!parsed) return;
-      steerFailureCount += 1;
-      state.steerFailure = { id: steerFailureCount, ...parsed };
-      state.error = `조향 메시지를 전달하지 못했습니다. ${parsed.error}`;
-      touch(state);
-    });
   };
 
   function watchSession(id: string): () => void {
@@ -1003,27 +1069,26 @@ export function createHttpStore(): OraStoreSource {
       });
     },
     watchTerminal: (id, handlers) => {
-      const source = new EventSource(`/api/terminals/${id}/output`);
       let hasOpened = false;
-      source.addEventListener('open', () => {
-        if (hasOpened) handlers.onReset();
-        hasOpened = true;
-      });
-      source.addEventListener(terminalSseEventNames.output, (event) => {
-        const body = terminalOutputEventSchema.parse(
-          JSON.parse((event as MessageEvent<string>).data),
-        );
-        handlers.onOutput(Uint8Array.from(atob(body.data), (char) => char.charCodeAt(0)));
-      });
-      source.addEventListener(terminalSseEventNames.exit, (event) => {
-        const body = terminalExitEventSchema.parse(
-          JSON.parse((event as MessageEvent<string>).data),
-        );
-        handlers.onExit(body.exitCode);
-        source.close();
+      const stream = transport.openStream(`/api/terminals/${id}/output`, {
+        onOpen: () => {
+          if (hasOpened) handlers.onReset();
+          hasOpened = true;
+        },
+        onError: () => undefined,
+        onMessage: (name, data) => {
+          if (name === terminalSseEventNames.output) {
+            const body = terminalOutputEventSchema.parse(data);
+            handlers.onOutput(Uint8Array.from(atob(body.data), (char) => char.charCodeAt(0)));
+          } else if (name === terminalSseEventNames.exit) {
+            const body = terminalExitEventSchema.parse(data);
+            handlers.onExit(body.exitCode);
+            stream.close();
+          }
+        },
       });
       return () => {
-        source.close();
+        stream.close();
       };
     },
   };

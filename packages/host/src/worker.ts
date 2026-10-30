@@ -7,6 +7,8 @@ import { createIpcPorts, executeSession } from './execute.ts';
 // 세션 워커 진입점이다. 호스트가 `fork`로 띄우고 IPC로 명령을 받는다 (SPEC 2.2.1절).
 const hard = new AbortController();
 const soft = new AbortController();
+// 워커의 도구와 셸이 ELECTRON_RUN_AS_NODE를 물려받지 않게 한다.
+delete process.env.ELECTRON_RUN_AS_NODE;
 // 호스트가 보낸 포기·포기 취소다. 엔진이 스텝이 끝날 때 꺼내 간다.
 const todoActions: UserTodoAction[] = [];
 

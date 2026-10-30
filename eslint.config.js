@@ -8,6 +8,7 @@ export default defineConfig(
   globalIgnores([
     '**/node_modules/',
     '**/dist/',
+    '**/release/',
     '**/coverage/',
     'tmp/',
     'eval/tasks/',

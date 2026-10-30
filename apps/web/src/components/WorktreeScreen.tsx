@@ -97,7 +97,7 @@ function NewTabChooser({
           id="new-tab-later"
           className="pt-0.5 text-center text-xs leading-4 text-foreground-subtle"
         >
-          브라우저와 에뮬레이터는 데스크톱 앱(M3)에서 지원합니다.
+          브라우저와 에뮬레이터는 곧 지원합니다.
         </p>
       </div>
     </main>
@@ -334,6 +334,7 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
             <TitleBar
               context={context}
               diff={diff}
+              isSidebarOpen={isSidebarOpen}
               onToggleSidebar={() => {
                 setIsSidebarOpen(!isSidebarOpen);
               }}

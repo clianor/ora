@@ -7,6 +7,10 @@ const devAllowed = [...prodAllowed, 'BlueOak-1.0.0', 'MPL-2.0', 'CC-BY-4.0'];
 // 글꼴 패키지 두 개에만 허용하는 예외다. OFL-1.1을 일반 허용 목록에 넣지 않는다.
 const fontPackages = new Set(['pretendard', '@fontsource/jetbrains-mono']);
 
+// electron-builder(개발 도구, 사용자 승인)의 의존 트리에만 있는 패키지다. 배포물에 들어가지 않는다.
+// ponytail: 이름으로만 거른다. 같은 이름의 다른 버전이 배포 의존성에 들어와도 걸리지 않으므로, 라이선스를 바꾸는 업데이트가 오면 이 목록을 다시 본다.
+const builderPackages = new Set(['argparse', 'isexe', 'truncate-utf8-bytes']);
+
 interface LicensedPackage {
   name: string;
   versions: string[];
@@ -38,6 +42,7 @@ const violations = Object.entries(readLicenses(['-r', 'licenses', 'list', '--jso
   ([license, packages]) =>
     packages
       .filter((pkg) => !(license === 'OFL-1.1' && fontPackages.has(pkg.name)))
+      .filter((pkg) => !builderPackages.has(pkg.name))
       .filter((pkg) => !isAllowed(license, prodPackages.has(pkg.name) ? prodAllowed : devAllowed))
       .map((pkg) => `${pkg.name}@${pkg.versions.join(',')} (${license})`),
 );

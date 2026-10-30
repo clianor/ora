@@ -17,6 +17,9 @@
 - 포맷 자동 수정: `pnpm format`
 - 테스트 파일 하나: `pnpm exec vitest run <경로>`
 - 패키지 하나의 타입 검사: `pnpm --filter @ora/core run typecheck`
+- 데스크톱 앱 개발 실행: `pnpm --filter @ora/web build && pnpm --filter @ora/desktop dev --cwd <작업 폴더> --model-script <경로>`. `--`를 붙이면 인자가 앱에 닿지 않는다. 인자는 `--cwd`, `--config`, `--model-script`, `--isolation`이다. Electron 45는 `pnpm install`이 아니라 처음 실행할 때 바이너리를 내려받는다.
+- 데스크톱 앱 패키징(서명 없는 macOS `.app`): `pnpm --filter @ora/desktop pack`. 결과는 `apps/desktop/release/mac-arm64/Ora.app`이다.
+- 성능 측정: 먼저 `node apps/desktop/scripts/make-perf-session.ts --home <ORA_HOME> --repo <폴더>`로 10만 줄 세션과 5,000줄 diff 세션을 만든다. 이어서 `ORA_HOME=<ORA_HOME> Ora --model-script <경로> --perf-report <파일> --perf-soak <분>`으로 앱을 띄운다. 앱이 JSON을 적고 끝난다.
 
 ## 계층 구조
 

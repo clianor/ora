@@ -62,8 +62,10 @@ export function useNotifyPrefs(): Prefs {
 export type PermissionState = NotificationPermission | 'unsupported';
 
 const permissionListeners = new Set<() => void>();
-const readPermission = (): PermissionState =>
-  typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+const readPermission = (): PermissionState => {
+  if (window.ora !== undefined) return 'granted';
+  return typeof Notification === 'undefined' ? 'unsupported' : Notification.permission;
+};
 let permission = readPermission();
 
 export function usePermissionState(): PermissionState {
@@ -77,7 +79,7 @@ export function usePermissionState(): PermissionState {
 }
 
 export async function requestPermission(): Promise<void> {
-  if (typeof Notification === 'undefined') return;
+  if (typeof Notification === 'undefined' || window.ora !== undefined) return;
   await Notification.requestPermission();
   permission = readPermission();
   permissionListeners.forEach((listener) => {
@@ -158,11 +160,17 @@ function isWindowUnseen(): boolean {
   return document.visibilityState !== 'visible' || !document.hasFocus();
 }
 
+/** Electron에서는 메인 프로세스의 `Notification`으로 보냅니다. 웹은 브라우저 Notification을 씁니다. */
 function sendNotification(message: NotifyMessage, view: SessionView, sessionId: string): void {
-  const notification = new Notification(formatNotifyTitle(view.repoLabel), {
-    body: `${message.headline}\n${message.detail}`,
-    tag: `${sessionId}:${message.kind}`,
-  });
+  const title = formatNotifyTitle(view.repoLabel);
+  const body = `${message.headline}\n${message.detail}`;
+  if (window.ora !== undefined) {
+    window.ora
+      .request('POST', '/desktop/notify', { title, body, sessionId, kind: message.kind })
+      .catch(() => undefined);
+    return;
+  }
+  const notification = new Notification(title, { body, tag: `${sessionId}:${message.kind}` });
   notification.onclick = () => {
     window.focus();
     if (message.kind === 'approval') requestApprovalScroll();
@@ -174,9 +182,14 @@ function sendNotification(message: NotifyMessage, view: SessionView, sessionId: 
 /** 설정 › 알림의 테스트 알림입니다. 창을 보고 있어도 보냅니다. */
 export function sendTestNotification(): void {
   if (readPermission() !== 'granted') return;
-  const notification = new Notification('Ora · 테스트', {
-    body: '알림이 켜져 있습니다\n알림을 누르면 해당 세션 탭으로 이동합니다',
-  });
+  const body = '알림이 켜져 있습니다\n알림을 누르면 해당 세션 탭으로 이동합니다';
+  if (window.ora !== undefined) {
+    window.ora
+      .request('POST', '/desktop/notify', { title: 'Ora · 테스트', body })
+      .catch(() => undefined);
+    return;
+  }
+  const notification = new Notification('Ora · 테스트', { body });
   notification.onclick = () => {
     window.focus();
     notification.close();
@@ -205,6 +218,20 @@ export function useDesktopNotifications(store: OraStore): void {
       });
     };
   }, [watchKey, watchSession]);
+
+  /** 메인 프로세스가 보낸 알림을 사용자가 누르면 그 세션으로 이동합니다. 메인 프로세스 이벤트는 React 밖의 시스템이라 효과로 받습니다. */
+  useEffect(
+    () =>
+      window.ora?.subscribe('/desktop/notification-click', (message) => {
+        if (message.kind !== 'items') return;
+        for (const { data } of message.items) {
+          const click = data as { sessionId?: string; kind?: NotifyKind };
+          if (click.kind === 'approval') requestApprovalScroll();
+          if (click.sessionId !== undefined) navigate('worktree', { sessionId: click.sessionId });
+        }
+      }),
+    [],
+  );
 
   /** 새 이벤트를 훑는 일은 저장소가 바뀔 때마다 한 번이면 충분해 렌더 뒤에 실행합니다. */
   useEffect(() => {

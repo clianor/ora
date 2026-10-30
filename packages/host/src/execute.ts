@@ -54,7 +54,9 @@ import { mergeSkills, readAllSkills } from './isolation/skill-files.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
 import { findBaseRef } from './worktrees.ts';
 
-const PROMPTS_DIR = fileURLToPath(new URL('../../../prompts/', import.meta.url));
+/** 번들한 앱은 소스 위치와 폴더 구조가 달라 `ORA_PROMPTS_DIR`로 프롬프트 폴더를 알려 준다. */
+const PROMPTS_DIR =
+  process.env.ORA_PROMPTS_DIR ?? fileURLToPath(new URL('../../../prompts/', import.meta.url));
 const INSTRUCTION_NAMES = ['AGENTS.md', 'CLAUDE.md', 'AGENTS.local.md', 'CLAUDE.local.md'];
 
 export function findGitRoot(start: string): string | undefined {

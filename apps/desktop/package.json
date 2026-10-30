@@ -1,0 +1,27 @@
+{
+  "name": "@ora/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Ora desktop",
+  "author": "Ora",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node build.ts",
+    "dev": "pnpm run build && electron .",
+    "pack": "pnpm --filter @ora/web build && pnpm run build && electron-builder --dir",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "node-pty": "catalog:"
+  },
+  "devDependencies": {
+    "@ora/host": "workspace:*",
+    "@ora/protocol": "workspace:*",
+    "@types/node": "catalog:",
+    "electron": "catalog:",
+    "electron-builder": "catalog:",
+    "vite": "catalog:"
+  }
+}

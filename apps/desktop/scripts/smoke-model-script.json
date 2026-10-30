@@ -1,0 +1,15 @@
+{
+  "responses": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "callId": "s1",
+          "tool": "file_read",
+          "input": { "intent": "예제 파일을 읽는다", "path": "calc.mjs" }
+        }
+      ]
+    },
+    { "content": [{ "type": "text", "text": "예제 파일을 읽었습니다. 스모크 확인을 마칩니다." }] }
+  ]
+}

@@ -79,3 +79,11 @@
     }
   }
 }
+
+/* Electron 창은 제목 줄을 끌어 옮깁니다. 단추, 링크, 탭, 입력 요소는 끌기 영역에서 빼서 눌리게 합니다. */
+[data-titlebar] {
+  -webkit-app-region: drag;
+}
+[data-titlebar] :is(button, a, input, textarea, select, [role='tab'], [role='button']) {
+  -webkit-app-region: no-drag;
+}

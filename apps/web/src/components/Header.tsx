@@ -19,7 +19,7 @@ export function Header({
   onToggleSidebar,
 }: HeaderProps) {
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 px-5">
+    <header data-titlebar className="flex h-12 shrink-0 items-center gap-3 px-5">
       <button
         type="button"
         aria-label="사이드바 열고 닫기"

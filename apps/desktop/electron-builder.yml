@@ -1,0 +1,18 @@
+appId: dev.ora.desktop
+productName: Ora
+asar: false
+npmRebuild: false
+directories:
+  output: release
+files:
+  - package.json
+  - dist/**
+extraResources:
+  - from: ../web/dist
+    to: web
+  # 메인 프로세스가 ORA_PROMPTS_DIR로 Resources/prompts 를 가리킨다.
+  - from: ../../prompts
+    to: prompts
+mac:
+  target: dir
+  identity: null

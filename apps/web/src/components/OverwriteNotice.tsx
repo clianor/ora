@@ -22,7 +22,7 @@ function OpenInNewWorktree({ repo }: { repo: string }) {
 /** 같은 폴더에서 세션이 돌고 있다는 경고 줄입니다. 채팅 입력창을 감싼 `ChatProvider` 안에서 씁니다. */
 export function OverwriteNotice({ count, repo }: { count: number; repo: string | undefined }) {
   return (
-    <div className="mb-2 flex w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
+    <div className="mb-2 flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
       <TriangleAlert aria-hidden className="size-3.5 shrink-0 text-warning" />
       <p className="flex-1">
         같은 폴더에서 세션 {count}개 실행 중 · 파일을 서로 덮어쓸 수 있습니다

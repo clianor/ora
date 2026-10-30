@@ -150,7 +150,7 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
             {errorText && (
               <div
                 role="alert"
-                className="mb-2 flex w-[720px] max-w-full items-start gap-2 rounded-md bg-danger-subtle px-3 py-2 text-xs leading-[18px] text-danger"
+                className="mb-2 flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] items-start gap-2 rounded-md bg-danger-subtle px-3 py-2 text-xs leading-[18px] text-danger"
               >
                 <p className="flex-1">{errorText}</p>
                 {view.error && (
@@ -170,7 +170,7 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
               <OverwriteNotice count={sameFolderRunningCount} repo={repoPath} />
             )}
             {cost.isWarned && !cost.stop && cost.ratioPct !== undefined && !isDone && (
-              <p className="mb-2 flex w-[720px] max-w-full items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
+              <p className="mb-2 flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
                 <Gauge aria-hidden className="size-3.5 text-warning" />
                 비용 상한의 {formatCostRatio(cost.ratioPct)}를 썼습니다 · 상한에 닿으면 다음 요청을
                 보내지 않고 멈춥니다
