@@ -30,6 +30,12 @@ import type {
   CreateWorktreeBody,
   WorktreeOptionsResponse,
   WorktreeRecord,
+  RewindPreview,
+  RewindResult,
+  PrStatusRefresh,
+  PrStatusResponse,
+  CleanupListResponse,
+  CleanupResult,
 } from '@ora/protocol';
 import type { ThreadData } from './events.ts';
 import type { CacheView } from './lib/cache.ts';
@@ -165,6 +171,14 @@ export interface OraActions {
   restoreTodo: (sessionId: string, todoId: string) => Promise<boolean>;
   /** 압축 요약 파일의 본문을 서버에서 읽습니다. `path`는 이벤트가 가리킨 세션 디렉터리 기준 경로입니다. */
   readCompaction: (sessionId: string, path: string) => Promise<string>;
+  /** 대상 사용자 메시지 전으로 되돌릴 때 바뀌는 파일과 대화를 서버에서 계산합니다. 되돌릴 수 없는 이유가 있으면 `blockedReason`에 있습니다. */
+  previewRewind: (sessionId: string, seq: number) => Promise<RewindPreview>;
+  /** 대상 메시지 전으로 되돌립니다. 되돌린 메시지 글은 결과의 `text`입니다. 서버가 거부하면 그 이유로 거부합니다. */
+  rewindSession: (sessionId: string, seq: number) => Promise<RewindResult>;
+  /** 되돌리기를 취소해 되돌리기 직전의 파일과 대화로 돌립니다. */
+  undoRewind: (sessionId: string) => Promise<void>;
+  /** 대상 메시지 전으로 되돌린 뒤 수정한 글로 세션을 이어 갑니다. 되돌린 뒤 보내기에 실패하면 되돌린 상태로 두고 거부합니다. */
+  editMessage: (sessionId: string, seq: number, text: string) => Promise<void>;
   /** 계정 목록과 진행 중인 로그인을 서버에서 다시 읽습니다. */
   refreshAccounts: () => Promise<void>;
   /** 로그인을 시작하고 서버가 돌려준 상태(로그인 주소나 디바이스 코드)를 줍니다. 실패하면 거부합니다. */
@@ -224,6 +238,12 @@ export interface OraActions {
   loadWorktreeOptions: (repo: string) => Promise<WorktreeOptionsResponse>;
   /** 실패한 초기 명령부터 다시 돌립니다. */
   rerunWorktreeSetup: (id: string) => Promise<void>;
+  /** 저장소의 PR 상태를 읽어 저장소에 채웁니다. `force`는 GitHub에서 새로 받고, `focus`는 바뀐 것이 있을 때만 받습니다. */
+  refreshPrStatus: (repo: string, mode: PrStatusRefresh) => Promise<void>;
+  /** 머지된 worktree 삭제 창의 목록입니다. 서버가 PR 상태와 막는 조건을 새로 판정합니다. */
+  loadCleanup: (repo: string) => Promise<CleanupListResponse>;
+  /** 고른 worktree를 지웁니다. 서버가 막는 조건을 다시 확인하고, 지우지 못한 항목은 이유와 함께 돌려줍니다. */
+  runCleanup: (repo: string, paths: string[]) => Promise<CleanupResult>;
   /** 설정 › 저장소를 저장합니다. 알 수 없는 저장소는 서버가 거부합니다. */
   saveReposSettings: (next: ReposSettings) => Promise<void>;
   /** 그 워크트리의 저장된 탭 맨 뒤에 새 탭을 더하고 고른 상태로 저장한 뒤 탭 ID를 돌려줍니다. */
@@ -308,6 +328,8 @@ export interface OraStore {
   getBranch: (cwd: string) => string | undefined;
   /** 이 폴더가 사용자가 만든 worktree이면 그 상태입니다. */
   getWorktreeSetup: (cwd: string) => WorktreeRecord | undefined;
+  /** 저장소의 PR 상태입니다. 아직 읽지 않았으면 undefined입니다. 키는 저장소 폴더입니다. */
+  getPrStatus: (repo: string) => PrStatusResponse | undefined;
   /** 서버가 알려 준 저장소의 기본 브랜치입니다. 찾지 못했으면 undefined입니다. */
   getDefaultBranch: (cwd: string) => string | undefined;
   /** `loadChanges`가 읽은 변경 목록입니다. 읽기 전에는 undefined입니다. */

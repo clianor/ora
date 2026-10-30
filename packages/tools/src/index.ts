@@ -25,6 +25,8 @@ export interface BuiltinToolOptions {
   readonly sessionDir: string;
   /** `file_write`·`file_edit`이 파일을 쓰기 직전에 부른다. 새 파일이면 `before`가 `undefined`다. */
   readonly onBeforeWrite?: (path: string, before: string | undefined) => Promise<void>;
+  /** `file_write`·`file_edit`이 파일을 쓴 직후에 부른다. `after`는 쓴 내용이다. */
+  readonly onAfterWrite?: (path: string, after: string) => Promise<void>;
 }
 
 const FORBIDDEN_SEGMENTS = ['.ssh', '.aws'];
@@ -216,6 +218,7 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
       const before = await readFile(path, 'utf8').catch(() => undefined);
       await options.onBeforeWrite?.(path, before);
       await writeAtomic(path, input.content);
+      await options.onAfterWrite?.(path, input.content);
       seenHashes.set(path, hashContent(input.content));
       const bytes = Buffer.byteLength(input.content, 'utf8');
       const diff = before === undefined ? '' : `\n${simpleDiff(input.path, before, input.content)}`;
@@ -256,6 +259,7 @@ export function createBuiltinTools(options: BuiltinToolOptions): Tool[] {
       await options.onBeforeWrite?.(path, before);
       const after = before.replace(input.oldText, () => input.newText);
       await writeAtomic(path, after);
+      await options.onAfterWrite?.(path, after);
       seenHashes.set(path, hashContent(after));
       return { status: 'ok', text: simpleDiff(input.path, before, after) };
     },

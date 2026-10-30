@@ -31,8 +31,12 @@ import {
   tabsFileSchema,
   tabsQuerySchema,
   todoActionBodySchema,
+  rewindBodySchema,
+  editMessageBodySchema,
   createWorktreeBodySchema,
   reposSettingsSchema,
+  cleanupBodySchema,
+  prStatusRefreshSchema,
 } from '@ora/protocol';
 import {
   accountProviderSchema,
@@ -75,7 +79,9 @@ import { createMcpApi } from './mcp-api.ts';
 import { createMemoryApi } from './memory-api.ts';
 import { createSkillsApi } from './skills-api.ts';
 import { createTerminalManager } from './terminal.ts';
+import { createPrStatusApi } from './pr-status.ts';
 import { createWorktreeApi } from './worktrees.ts';
+import { createRewindApi } from './rewind.ts';
 
 const COOKIE_NAME = 'ora_token';
 /** 호스트가 전체 패스 실행 조건을 확인하는 간격이다. 하루 한 번, 새 메모리 20개 조건은 이 간격마다 본다. */
@@ -403,6 +409,15 @@ export async function createHost(options: HostOptions): Promise<Host> {
     for (const subscriber of subscribers.get(sessionId) ?? []) subscriber.send(name, data, id);
   };
 
+  const rewindApi = createRewindApi({
+    env: options.env,
+    ...configArgs,
+    listLiveIds: () => [...live.keys(), ...resuming],
+    publish: (event) => {
+      publish(event.sessionId, undefined, event, event.seq);
+    },
+  });
+
   /** 세션 워커를 띄우고 세션 ID를 돌려준다. 시작 전에 실패하면 거부로 끝난다. */
   const startSession = async (request: LaunchRequest): Promise<string> => {
     if (closing) throw new HttpError(503, '서버를 닫는 중입니다.');
@@ -446,6 +461,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
     }
     entry.sessionId = sessionId;
     live.set(sessionId, { handle, approvals, questions });
+    if (request.type === 'resumeSession') rewindApi.discardUndo(sessionId).catch(() => undefined);
     handle.result
       .finally(() => {
         live.delete(sessionId);
@@ -670,6 +686,38 @@ export async function createHost(options: HostOptions): Promise<Host> {
         await writeFileAtomic(tabsPath, `${JSON.stringify(file, null, 2)}\n`);
       }),
   });
+  const prStatusApi = createPrStatusApi({
+    env: options.env,
+    forgetWorktrees: async (paths) => {
+      await worktreeApi.forget(paths);
+      const isUnder = (folder: string) =>
+        paths.some((path) => folder === path || folder.startsWith(path + sep));
+      for (const terminal of terminals.list()) {
+        if (terminal.status === 'running' && isUnder(terminal.cwd)) terminals.kill(terminal.id);
+      }
+      await withFileLock(`${tabsPath}.lock`, async () => {
+        const file = await readTabsFile();
+        file.worktrees = Object.fromEntries(
+          Object.entries(file.worktrees).filter(([folder]) => !isUnder(folder)),
+        );
+        await writeFileAtomic(tabsPath, `${JSON.stringify(file, null, 2)}\n`);
+      });
+    },
+    countBusy: async (path) => {
+      const isInside = (folder: string | undefined) =>
+        folder !== undefined && (folder === path || folder.startsWith(path + sep));
+      const records = await listSessions(options.env, options.configPath);
+      const sessions = await Promise.all(
+        records.filter((record) => live.has(record.id)).map(withCanonicalRepo),
+      );
+      const inside = terminals.list().filter((terminal) => isInside(terminal.cwd));
+      const busy = await Promise.all(inside.map((terminal) => terminals.isBusy(terminal.id)));
+      return {
+        sessions: sessions.filter((record) => isInside(record.repo)).length,
+        terminals: busy.filter(Boolean).length,
+      };
+    },
+  });
 
   /** 서버 시작 폴더, 세션 기록의 저장소, 그 저장소들의 git worktree와 그 하위 폴더만 터미널 작업 폴더로 허용한다. */
   const assertKnownWorktree = async (cwd: string) => {
@@ -816,6 +864,14 @@ export async function createHost(options: HostOptions): Promise<Host> {
       reply(res, 200, routing);
       return;
     }
+    if (segments[1] === 'pr-status' && segments.length === 2) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const { cwd } = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('repo') ?? '' });
+      const refresh = parseBody(prStatusRefreshSchema, url.searchParams.get('refresh') ?? 'read');
+      await assertKnownWorktree(cwd);
+      reply(res, 200, await prStatusApi.get(await canonicalPath(cwd), refresh));
+      return;
+    }
     if (segments[1] === 'worktrees') {
       const [, , rawId, action] = segments;
       if (rawId === undefined) {
@@ -827,6 +883,19 @@ export async function createHost(options: HostOptions): Promise<Host> {
         const body = parseBody(createWorktreeBodySchema, await readJson(req));
         await assertKnownWorktree(body.repo);
         reply(res, 201, { worktree: await worktreeApi.create(body) });
+        return;
+      }
+      if (rawId === 'cleanup') {
+        if (method === 'GET') {
+          const { cwd } = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('repo') ?? '' });
+          await assertKnownWorktree(cwd);
+          reply(res, 200, await prStatusApi.listCleanup(await canonicalPath(cwd)));
+          return;
+        }
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const body = parseBody(cleanupBodySchema, await readJson(req));
+        await assertKnownWorktree(body.repo);
+        reply(res, 200, await prStatusApi.cleanup(await canonicalPath(body.repo), body.paths));
         return;
       }
       if (rawId === 'options' && method === 'GET') {
@@ -1144,6 +1213,11 @@ export async function createHost(options: HostOptions): Promise<Host> {
       await streamEvents(id, req, res);
       return;
     }
+    if (action === 'rewind-preview' && method === 'GET') {
+      const { seq } = parseBody(rewindBodySchema, { seq: Number(url.searchParams.get('seq')) });
+      reply(res, 200, await rewindApi.preview(id, seq));
+      return;
+    }
     if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
 
     switch (action) {
@@ -1245,6 +1319,28 @@ export async function createHost(options: HostOptions): Promise<Host> {
         reply(res, 200, { sessionId: id });
         return;
       }
+      case 'rewind': {
+        const body = parseBody(rewindBodySchema, await readJson(req));
+        reply(res, 200, await rewindApi.rewind(id, body.seq));
+        return;
+      }
+      case 'rewind-undo': {
+        reply(res, 200, await rewindApi.undo(id));
+        return;
+      }
+      case 'edit': {
+        const body = parseBody(editMessageBodySchema, await readJson(req));
+        if (closing) throw new HttpError(503, '서버를 닫는 중입니다.');
+        const result = await rewindApi.rewind(id, body.seq);
+        try {
+          await resumeWith(id, body.text);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          throw new HttpError(409, `되돌렸지만 메시지를 보내지 못했습니다: ${reason}`);
+        }
+        reply(res, 200, result);
+        return;
+      }
       default:
         throw new HttpError(404, '알 수 없는 API입니다.');
     }
@@ -1256,6 +1352,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       clearInterval(memoryTimer);
       await accountApi.close();
       await mcpApi.close();
+      prStatusApi.close();
       await worktreeApi.close();
       await terminals.closeAll();
       closing = true;

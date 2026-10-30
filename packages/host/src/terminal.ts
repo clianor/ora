@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { chmodSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -34,6 +35,8 @@ export interface TerminalManager {
   write(id: string, data: string): void;
   resize(id: string, cols: number, rows: number): void;
   kill(id: string): void;
+  /** 셸이 명령을 돌리는 중이면 true다. 초기 명령이 도는 중이거나 셸의 자식 프로세스가 있으면 돌리는 중이고, 입력만 기다리는 셸은 false다. */
+  isBusy(id: string): Promise<boolean>;
   subscribe(id: string, listener: TerminalListener): TerminalSubscription | undefined;
   /** 열린 PTY를 모두 끝내고, 프로세스가 사라질 때까지 기다린다. */
   closeAll(): Promise<void>;
@@ -48,6 +51,8 @@ interface Entry {
   exitCode: number | undefined;
   /** `kill`이나 `closeAll`이 불렀다. 명령 PTY가 이 상태로 끝나면 터미널도 끝난 것으로 본다. */
   isKilled: boolean;
+  /** `runCommand`가 돌리는 명령이 아직 끝나지 않았다. */
+  isRunningCommand: boolean;
   readonly listeners: Set<TerminalListener>;
   readonly exited: Promise<void>;
   readonly resolveExited: (value: undefined) => void;
@@ -143,6 +148,7 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
         bytes: 0,
         exitCode: undefined,
         isKilled: false,
+        isRunningCommand: false,
         listeners: new Set(),
         exited: resolvers.promise,
         resolveExited: resolvers.resolve,
@@ -155,7 +161,9 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
       const entry = requireRunning(id);
       emit(entry, Buffer.from(`$ ${command}\r\n`));
       const { promise, resolve } = Promise.withResolvers<number>();
+      entry.isRunningCommand = true;
       attach(entry, ['-lc', command], (code) => {
+        entry.isRunningCommand = false;
         if (entry.isKilled) finish(entry, code);
         resolve(code);
       });
@@ -181,6 +189,17 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
       const entry = requireRunning(id);
       entry.isKilled = true;
       entry.pty?.kill();
+    },
+    async isBusy(id) {
+      const entry = entries.get(id);
+      if (entry === undefined || entry.exitCode !== undefined) return false;
+      if (entry.isRunningCommand) return true;
+      if (entry.pty === undefined) return false;
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      execFile('pgrep', ['-P', String(entry.pty.pid)], (error, stdout) => {
+        resolve(error === null && stdout.trim() !== '');
+      });
+      return promise;
     },
     subscribe(id, listener) {
       const entry = entries.get(id);

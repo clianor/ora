@@ -2,7 +2,7 @@ import { existsSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { app, BrowserWindow, ipcMain, net, Notification, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, net, Notification, protocol, shell } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { createHost, describeRouteError } from '@ora/host';
 import type { EventStream, Host } from '@ora/host';
@@ -232,7 +232,10 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://')) shell.openExternal(url).catch(() => undefined);
+    return { action: 'deny' };
+  });
   win.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith(`${APP_ORIGIN}/`)) event.preventDefault();
   });

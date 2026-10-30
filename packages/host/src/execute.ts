@@ -53,6 +53,7 @@ import { resolveOraHome } from './isolation/ora-home.ts';
 import { mergeSkills, readAllSkills } from './isolation/skill-files.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
 import { findBaseRef } from './worktrees.ts';
+import { createFileTracker } from './file-history.ts';
 
 /** 번들한 앱은 소스 위치와 폴더 구조가 달라 `ORA_PROMPTS_DIR`로 프롬프트 폴더를 알려 준다. */
 const PROMPTS_DIR =
@@ -440,6 +441,17 @@ export async function executeSession(
       writeShellPids();
     },
   });
+  let lastSeq = resume?.plan.lastSeq ?? 0;
+  const tracker =
+    gitRoot === undefined
+      ? undefined
+      : createFileTracker({
+          sessionDir,
+          gitRoot,
+          currentSeq: () => lastSeq,
+          now: () => formatKst(new Date()),
+        });
+  const trackedRunner = tracker === undefined ? runner : tracker.wrapRunner(runner);
   const mcp = createMcpManager({
     env: hooks.env,
     connectTimeoutMs: config.mcp.connectTimeoutMs,
@@ -454,13 +466,19 @@ export async function executeSession(
       mcpNotices: mcp,
       tools: [
         ...createBuiltinTools({
-          runner,
+          runner: trackedRunner,
           shellTimeoutMs: config.tools.shellTimeoutMs,
           maxOutputBytes: config.tools.maxOutputBytes,
           maxFileBytes: config.tools.maxFileBytes,
           secretPaths: [join(oraHome, AUTH_FILE)],
           sessionDir,
-          onBeforeWrite: (path, before) => storage.recordBaseline(path, before),
+          onBeforeWrite: async (path, before) => {
+            await storage.recordBaseline(path, before);
+            await tracker?.beforeWrite(path, before);
+          },
+          onAfterWrite: async (path, after) => {
+            await tracker?.afterWrite(path, after);
+          },
           protectedPaths: [
             join(oraHome, PERMISSIONS_FILE),
             join(oraHome, 'engine.config.json'),
@@ -472,10 +490,11 @@ export async function executeSession(
         }),
         ...mcp.tools(),
       ],
-      runner,
+      runner: trackedRunner,
       sink: {
         async append(event) {
           await storage.transcript.append(event);
+          lastSeq = event.seq;
           hooks.onEvent(event);
         },
       },

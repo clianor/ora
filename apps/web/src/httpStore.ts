@@ -38,11 +38,18 @@ import {
   terminalSseEventNames,
   steerFailedSchema,
   todoActionResponseSchema,
+  rewindPreviewSchema,
+  rewindResultSchema,
+  rewindUndoResponseSchema,
   worktreeListResponseSchema,
   worktreeResponseSchema,
   worktreeOptionsResponseSchema,
+  prStatusResponseSchema,
+  cleanupListResponseSchema,
+  cleanupResultSchema,
   reposSettingsResponseSchema,
   type WorktreeRecord,
+  type PrStatusResponse,
   type ApprovalDecision,
   type CostSettings,
   type McpServerStatus,
@@ -91,6 +98,8 @@ const refreshEventTypes = new Set<OraEvent['type']>([
   'question',
   'permission',
   'answer',
+  'rewind',
+  'rewind_undo',
 ]);
 
 const createListRetries = 20;
@@ -308,6 +317,7 @@ export function createHttpStore(
   let info: InfoResponse | null = null;
   let worktrees: WorktreeRecord[] = [];
   let worktreePollTimer: ReturnType<typeof setTimeout> | null = null;
+  const prStatuses = new Map<string, PrStatusResponse>();
   let routing: RoutingData | null = null;
   let infoError: string | undefined;
   let snapshot: OraStore;
@@ -426,6 +436,7 @@ export function createHttpStore(
         .map((record) => ({ record, todoTitles: [] })),
       getBranch: (cwd) => branches.get(cwd),
       getWorktreeSetup: (cwd) => worktrees.find((item) => item.path === cwd),
+      getPrStatus: (repo) => prStatuses.get(repo),
       getDefaultBranch: (cwd) => defaultBranches.get(cwd),
       getChanges: (cwd) => changes.get(cwd),
       getNewSessionContext: getNewSessionContext,
@@ -851,6 +862,30 @@ export function createHttpStore(
       );
       return file.text;
     },
+    previewRewind: (id, seq) =>
+      requestJson(`/api/sessions/${id}/rewind-preview?seq=${seq}`, rewindPreviewSchema),
+    rewindSession: async (id, seq) => {
+      const result = await requestJson(`/api/sessions/${id}/rewind`, rewindResultSchema, {
+        method: 'POST',
+        body: { seq },
+      });
+      after(id);
+      return result;
+    },
+    undoRewind: async (id) => {
+      await requestJson(`/api/sessions/${id}/rewind-undo`, rewindUndoResponseSchema, {
+        method: 'POST',
+        body: {},
+      });
+      after(id);
+    },
+    editMessage: async (id, seq, text) => {
+      await requestJson(`/api/sessions/${id}/edit`, rewindResultSchema, {
+        method: 'POST',
+        body: { seq, text },
+      });
+      after(id);
+    },
     resumeSession: async (id) => {
       await post(id, 'resume', {}, sessionIdResponseSchema);
     },
@@ -963,6 +998,28 @@ export function createHttpStore(
         `/api/worktrees/options?repo=${encodeURIComponent(repo)}`,
         worktreeOptionsResponseSchema,
       ),
+    refreshPrStatus: async (repo, mode) => {
+      const status = await requestJson(
+        `/api/pr-status?repo=${encodeURIComponent(repo)}&refresh=${mode}`,
+        prStatusResponseSchema,
+      );
+      prStatuses.set(repo, status);
+      notifySoon();
+    },
+    loadCleanup: (repo) =>
+      requestJson(
+        `/api/worktrees/cleanup?repo=${encodeURIComponent(repo)}`,
+        cleanupListResponseSchema,
+      ),
+    runCleanup: async (repo, paths) => {
+      const result = await requestJson('/api/worktrees/cleanup', cleanupResultSchema, {
+        method: 'POST',
+        body: { repo, paths },
+      });
+      await refreshWorktrees();
+      await actions.refreshPrStatus(repo, 'force').catch(() => undefined);
+      return result;
+    },
     rerunWorktreeSetup: async (id) => {
       await requestJson(`/api/worktrees/${id}/rerun`, worktreeResponseSchema, {
         method: 'POST',
@@ -1100,6 +1157,7 @@ export function createHttpStore(
     sessionsWithoutFolder: [],
     getBranch: () => undefined,
     getWorktreeSetup: () => undefined,
+    getPrStatus: () => undefined,
     getDefaultBranch: () => undefined,
     getChanges: () => undefined,
     getNewSessionContext: getNewSessionContext,

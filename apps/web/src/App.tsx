@@ -10,6 +10,7 @@ import { MemoryPage } from './components/MemoryPage.tsx';
 import { GeneralPage, IsolationPage, KeysPage } from './components/EngineSettings.tsx';
 import { ReposPage } from './components/ReposPage.tsx';
 import { CreateWorktreeDialog } from './components/CreateWorktreeDialog.tsx';
+import { CleanupWorktreesDialog } from './components/CleanupWorktreesDialog.tsx';
 import { ModelsPage } from './components/ModelsPage.tsx';
 import { PermissionsPage } from './components/PermissionsPage.tsx';
 import { CostPage, NotificationsPage } from './components/SettingsPages.tsx';
@@ -126,6 +127,7 @@ export function App() {
       {state.createWorktreeRepo !== undefined && (
         <CreateWorktreeDialog repo={state.createWorktreeRepo} />
       )}
+      {state.cleanupRepo !== undefined && <CleanupWorktreesDialog repo={state.cleanupRepo} />}
     </div>
   );
 }

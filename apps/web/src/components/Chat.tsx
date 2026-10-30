@@ -16,10 +16,12 @@ import {
   ChevronDown,
   CircleAlert,
   Cpu,
+  Pencil,
   Plus,
   Shield,
   Square,
   TriangleAlert,
+  Undo2,
 } from 'lucide-react';
 import { Popover } from 'radix-ui';
 import { useEffect, useRef, type ReactNode, type UIEventHandler } from 'react';
@@ -35,6 +37,8 @@ import { ReviewNote } from './ReviewCard.tsx';
 import { MemorySavedNote } from './MemorySavedNote.tsx';
 import { ContextStat } from './ContextStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
+import { EditBox, runningReason, useRewind } from './Rewind.tsx';
+import { Button } from '../ui/button.tsx';
 
 interface ChatProviderProps {
   messages: readonly ThreadMessageLike[];
@@ -100,8 +104,50 @@ function UserText({ text }: TextMessagePartProps) {
 }
 
 function UserMessage() {
+  const rewind = useRewind();
+  const rewindSeq: unknown = useAuiState((state) => state.message.metadata.custom.rewindSeq);
+  const text = useAuiState((state) =>
+    state.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
+  );
+  const seq = typeof rewindSeq === 'number' ? rewindSeq : undefined;
+  if (rewind && seq !== undefined && rewind.editingSeq === seq) {
+    return (
+      <MessagePrimitive.Root>
+        <EditBox />
+      </MessagePrimitive.Root>
+    );
+  }
   return (
-    <MessagePrimitive.Root>
+    <MessagePrimitive.Root className="group relative">
+      {rewind && seq !== undefined && (
+        <div className="absolute -top-[22px] right-0 flex h-[22px] items-center gap-1 opacity-0 transition-opacity duration-(--duration-fast) group-focus-within:opacity-100 group-hover:opacity-100">
+          {rewind.isRunning && (
+            <span className="text-xs leading-4 text-foreground-subtle">{runningReason}</span>
+          )}
+          <Button
+            variant="ghost"
+            className="h-[22px] px-1.5 text-xs"
+            disabled={rewind.isRunning}
+            onClick={() => {
+              rewind.askRewind(seq);
+            }}
+          >
+            <Undo2 aria-hidden className="size-3" />
+            되돌리기
+          </Button>
+          <Button
+            variant="ghost"
+            className="h-[22px] px-1.5 text-xs"
+            disabled={rewind.isRunning}
+            onClick={() => {
+              rewind.startEdit(seq, text);
+            }}
+          >
+            <Pencil aria-hidden className="size-3" />
+            수정하기
+          </Button>
+        </div>
+      )}
       <div className="w-full rounded-lg border border-border bg-surface px-3.5 py-2.5 text-sm leading-[22px]">
         <MessagePrimitive.Parts components={{ Text: UserText }} />
       </div>
@@ -183,6 +229,7 @@ export function ThreadView({
   topSpacerPx = 0,
   bottomSpacerPx = 0,
 }: ThreadViewProps) {
+  const editingSeq = useRewind()?.editingSeq ?? null;
   return (
     <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col items-center">
       <ThreadPrimitive.Viewport
@@ -193,7 +240,13 @@ export function ThreadView({
           <ThreadPrimitive.Messages>
             {({ message }) => (
               <>
-                {message.role === 'user' ? <UserMessage /> : <AssistantMessage />}
+                <div
+                  className={cn(
+                    editingSeq !== null && Number(message.id.slice(1)) > editingSeq && 'opacity-40',
+                  )}
+                >
+                  {message.role === 'user' ? <UserMessage /> : <AssistantMessage />}
+                </div>
                 {message.index === 0 && topSpacerPx > 0 && (
                   <div aria-hidden data-window-spacer="top" style={{ height: topSpacerPx }} />
                 )}
@@ -466,10 +519,12 @@ export function StatusLine({
   items,
   context,
   cache,
+  trailing,
 }: {
   items: readonly StatusItem[];
   context?: ContextView | null;
   cache?: CacheView | null;
+  trailing?: ReactNode;
 }) {
   const parts: ReactNode[] = [
     ...items.map((item, index) =>
@@ -495,6 +550,7 @@ export function StatusLine({
       {parts.flatMap((part, index) =>
         index === 0 ? [part] : [<span key={`dot-${index}`}>·</span>, part],
       )}
+      {trailing}
     </div>
   );
 }

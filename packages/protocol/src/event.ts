@@ -383,6 +383,28 @@ export const oraEventSchema = z.discriminatedUnion('type', [
         .optional(),
     }),
   ),
+  // 사용자가 과거 사용자 메시지 전으로 되돌렸다는 기록이다 (SPEC 4.4절). `fromSeq`~`toSeq`의 대화·도구·할 일 이벤트는 화면과 이후 모델 컨텍스트에서 뺀다. 원본 줄은 고치지 않는다.
+  defineEvent(
+    'rewind',
+    z.strictObject({
+      /** 되돌아간 사용자 메시지의 seq다. */
+      targetSeq: z.number().int().positive(),
+      fromSeq: z.number().int().positive(),
+      toSeq: z.number().int().positive(),
+      /** 되돌린 메시지 글이다. 화면이 입력창에 다시 채운다. */
+      text: z.string(),
+      removedMessages: z.number().int().nonnegative(),
+      /** 되돌린 파일과 지운 파일이다. 워크트리 기준 상대 경로이고, 밖의 파일은 절대 경로다. */
+      restoredFiles: z.array(z.string()),
+      deletedFiles: z.array(z.string()),
+      isGitRepo: z.boolean(),
+      /** 되돌리기를 취소할 때 세션 상태를 되돌리는 값이다. */
+      previousStatus: sessionStatusSchema,
+      previousEndReason: endReasonSchema.optional(),
+    }),
+  ),
+  // 되돌리기를 취소한 기록이다. `rewindSeq`가 가리키는 되돌리기는 더 이상 대화를 가리지 않는다.
+  defineEvent('rewind_undo', z.strictObject({ rewindSeq: z.number().int().positive() })),
   defineEvent(
     'session_end',
     z.strictObject({

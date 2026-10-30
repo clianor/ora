@@ -46,6 +46,8 @@ export interface WorktreeApi {
   rerun(id: string): Promise<WorktreeRecord>;
   getRepos(): Promise<ReposSettingsResponse>;
   setRepos(next: ReposSettings): Promise<ReposSettingsResponse>;
+  /** 삭제한 worktree 폴더의 기록을 `worktrees.json`에서 지운다. */
+  forget(paths: string[]): Promise<void>;
   /** 서버를 닫기 전에 도는 초기 명령의 기록을 멈춘 상태로 남긴다. */
   close(): Promise<void>;
 }
@@ -338,6 +340,11 @@ export async function createWorktreeApi(options: WorktreeApiOptions): Promise<Wo
       }
       await updateConfigFile(configFile, (file) => ({ ...file, repos }));
       return getRepos();
+    },
+    async forget(paths) {
+      await mutate((file) => {
+        file.worktrees = file.worktrees.filter((item) => !paths.includes(item.path));
+      });
     },
     async close() {
       isClosing = true;

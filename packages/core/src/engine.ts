@@ -2205,13 +2205,16 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         if (STAGES.indexOf(stage) < STAGES.indexOf('learn')) await enterStage('learn');
       }
       await saveTodos();
-      const notice = plan.hardKilled
-        ? `이전 실행이 강제로 끝났습니다. ${
-            plan.resumePointTodoId === undefined
-              ? '검증 증거가 남은 todo가 없습니다.'
-              : `마지막으로 검증된 todo는 ${plan.resumePointTodoId}입니다.`
-          } 그 뒤의 작업은 파일 상태를 확인한 뒤 이어 갑니다.`
+      let notice = plan.afterRewind
+        ? '사용자가 이전 메시지로 되돌렸습니다. 되돌린 지점의 상태에서 이어 갑니다.'
         : '사용자가 작업을 중단했습니다. 중단한 지점부터 이어 갑니다.';
+      if (plan.hardKilled) {
+        notice = `이전 실행이 강제로 끝났습니다. ${
+          plan.resumePointTodoId === undefined
+            ? '검증 증거가 남은 todo가 없습니다.'
+            : `마지막으로 검증된 todo는 ${plan.resumePointTodoId}입니다.`
+        } 그 뒤의 작업은 파일 상태를 확인한 뒤 이어 갑니다.`;
+      }
       await pushUser(
         resume.steer === undefined ? 'engine' : 'user',
         [

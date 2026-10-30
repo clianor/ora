@@ -15,7 +15,7 @@ import {
   scrubValue,
 } from '@ora/core';
 import type { UserTodoAction } from '@ora/core';
-import { workerMessageSchema } from '@ora/protocol';
+import { dropRewoundEvents, workerMessageSchema } from '@ora/protocol';
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -44,7 +44,7 @@ import { killOrphanShells, recoverSession } from './recovery.ts';
 
 const WORKER_PATH = fileURLToPath(new URL('./worker.ts', import.meta.url));
 const PID_FILE = 'worker.pid';
-const SESSION_LOCK_FILE = 'session.lock';
+export const SESSION_LOCK_FILE = 'session.lock';
 const SLOT_POLL_MS = 200;
 // 워커가 IPC 명령에 응답하지 못할 때 호스트가 프로세스 그룹을 직접 종료하기까지 기다리는 시간이다.
 const HARD_KILL_GRACE_MS = 2000;
@@ -121,7 +121,7 @@ async function readPid(path: string): Promise<number> {
  * 그래서 두 호스트가 같은 죽은 락을 동시에 지워도, 다른 호스트가 새로 만든 락을 지우지 않는다.
  * ponytail: 주인 PID가 다른 프로세스에 재사용되면 락이 풀리지 않고, `.reclaim` 주인이 지우는 도중에 죽으면 다음 호스트가 회수한다.
  */
-async function tryLock(path: string): Promise<(() => Promise<void>) | undefined> {
+export async function tryLock(path: string): Promise<(() => Promise<void>) | undefined> {
   const guard = `${path}.reclaim`;
   for (;;) {
     try {
@@ -447,7 +447,9 @@ export async function applyTodoActionToStoppedSession(
       },
       { hardKill: false, reason: '이전 실행이 기록을 닫지 못하고 끝났습니다.' },
     );
-    const { events } = parseTranscript((await readTranscriptText(sessionDir)) ?? '');
+    const events = dropRewoundEvents(
+      parseTranscript((await readTranscriptText(sessionDir)) ?? '').events,
+    );
     const state = reduceTodoState(events);
     const outcome = applyUserTodoAction(state.todos, action, formatKst(new Date()));
     if (outcome === undefined) throw new UsageError(`todo ${action.todoId}가 없습니다.`);

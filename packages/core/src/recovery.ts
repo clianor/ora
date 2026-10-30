@@ -1,4 +1,4 @@
-import { oraEventSchema } from '@ora/protocol';
+import { dropRewoundEvents, oraEventSchema } from '@ora/protocol';
 import type {
   Actor,
   ContentBlock,
@@ -211,6 +211,8 @@ export interface ResumePlan {
   /** 마지막으로 검증 증거가 남은 todo다. */
   readonly resumePointTodoId?: string;
   readonly lastSeq: number;
+  /** 마지막 실행이 끝난 뒤 사용자가 되돌렸다. 엔진이 재개 안내문을 되돌리기에 맞춰 쓴다. */
+  readonly afterRewind: boolean;
   /** `history` 메시지마다 마지막으로 합쳐진 이벤트의 seq다. 요약이 대신하는 첫 메시지는 압축 범위의 시작 seq다. */
   readonly historySeqs: readonly number[];
   /** 사용자가 쓴 지시 원문이다(최초 요청과 조향). 압축으로 transcript가 컨텍스트에서 빠져도 전부 남는다. */
@@ -251,15 +253,20 @@ const BATCH_EVENT_TYPES: readonly OraEvent['type'][] = [
  * 마지막 배치가 전부 실패·중단이면 그 꼬리를 모델 컨텍스트에서 뺀다. 일부라도 성공했으면 결과를 그대로 둔다.
  */
 export function planResume(
-  events: readonly OraEvent[],
+  allEvents: readonly OraEvent[],
   readSummary: (path: string) => string | undefined = () => undefined,
 ): ResumePlan {
+  const events = dropRewoundEvents(allEvents);
   const lastEnd = events.findLast(
     (event): event is EventOf<'session_end'> => event.type === 'session_end',
   );
   if (lastEnd === undefined)
     throw new Error('끝나지 않은 실행은 먼저 봉인해야 재개할 수 있습니다.');
-
+  const afterRewind =
+    allEvents.findLast(
+      (event) =>
+        event.type === 'session_end' || event.type === 'rewind' || event.type === 'rewind_undo',
+    )?.type === 'rewind';
   const trimmedRanges = events.flatMap((event) =>
     event.type === 'context_trim' ? [[event.payload.fromSeq, event.payload.toSeq] as const] : [],
   );
@@ -423,7 +430,8 @@ export function planResume(
     ...(trim === undefined ? {} : { trim }),
     repair,
     ...(resumePoint === undefined ? {} : { resumePointTodoId: resumePoint.payload.todoId }),
-    lastSeq: events.at(-1)?.seq ?? 0,
+    lastSeq: allEvents.at(-1)?.seq ?? 0,
+    afterRewind,
     historySeqs,
     instructions,
     openErrors,

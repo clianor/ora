@@ -22,6 +22,7 @@ import { scrollIfRequested } from '../lib/notify.ts';
 import { ModelSwitchToast } from './ModelSwitchToast.tsx';
 import { findWorktreeOfSession } from '../lib/worktrees.ts';
 import { OverwriteNotice } from './OverwriteNotice.tsx';
+import { LastRewindButton, RewindProvider, UndoNotice } from './Rewind.tsx';
 
 const timeFormat = new Intl.DateTimeFormat('ko-KR', {
   hour: '2-digit',
@@ -137,112 +138,120 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
           messages={shownMessages}
           onSend={(text) => actions.sendMessage(sessionId, text)}
         >
-          <SteerRestore failure={view.steerFailure} />
-          <DraftSync draftKey={draftKey} />
-          <ThreadView
-            topSpacerPx={effectiveStart * estimatedMessagePx}
-            bottomSpacerPx={(total - effectiveEnd) * estimatedMessagePx}
-            onScroll={(event) => {
-              const viewport = event.currentTarget;
-              const next = getNextRange(viewport, {
-                start: effectiveStart,
-                end: effectiveEnd,
-                total,
-              });
-              if (next === undefined || isRangePending.current) return;
-              // 스크롤 이벤트 안에서 바로 그리면 읽던 위치가 어긋났습니다(위로 400번 이어 그릴 때 최대 약 5만 px 실측). 그래서 다음 프레임에 그립니다.
-              isRangePending.current = true;
-              requestAnimationFrame(() => {
-                flushSync(() => {
-                  setRange(next);
+          <RewindProvider sessionId={sessionId} isRunning={isRunning}>
+            <SteerRestore failure={view.steerFailure} />
+            <DraftSync draftKey={draftKey} />
+            <ThreadView
+              topSpacerPx={effectiveStart * estimatedMessagePx}
+              bottomSpacerPx={(total - effectiveEnd) * estimatedMessagePx}
+              onScroll={(event) => {
+                const viewport = event.currentTarget;
+                const next = getNextRange(viewport, {
+                  start: effectiveStart,
+                  end: effectiveEnd,
+                  total,
                 });
+                if (next === undefined || isRangePending.current) return;
+                // 스크롤 이벤트 안에서 바로 그리면 읽던 위치가 어긋났습니다(위로 400번 이어 그릴 때 최대 약 5만 px 실측). 그래서 다음 프레임에 그립니다.
+                isRangePending.current = true;
                 requestAnimationFrame(() => {
-                  isRangePending.current = false;
+                  flushSync(() => {
+                    setRange(next);
+                  });
+                  requestAnimationFrame(() => {
+                    isRangePending.current = false;
+                  });
                 });
-              });
-            }}
-          >
-            {approval && (
-              <div key={approval.requestId} ref={scrollIfRequested}>
-                <ApprovalCard
-                  request={approval.request}
-                  onDecide={(decision) => {
-                    runAction(actions.decideApproval(sessionId, approval.requestId, decision));
+              }}
+            >
+              {approval && (
+                <div key={approval.requestId} ref={scrollIfRequested}>
+                  <ApprovalCard
+                    request={approval.request}
+                    onDecide={(decision) => {
+                      runAction(actions.decideApproval(sessionId, approval.requestId, decision));
+                    }}
+                  />
+                </div>
+              )}
+              {question && (
+                <QuestionCard
+                  key={question.requestId}
+                  request={question.request}
+                  draft={view.questionDraft}
+                  onAnswer={(answers) => {
+                    runAction(actions.answerQuestions(sessionId, question.requestId, answers));
                   }}
                 />
-              </div>
-            )}
-            {question && (
-              <QuestionCard
-                key={question.requestId}
-                request={question.request}
-                draft={view.questionDraft}
-                onAnswer={(answers) => {
-                  runAction(actions.answerQuestions(sessionId, question.requestId, answers));
+              )}
+              {isCrashed && thread.lastEventAt && (
+                <CrashedNotice
+                  sessionId={sessionId}
+                  stoppedAt={timeFormat.format(new Date(thread.lastEventAt))}
+                  abortedCalls={thread.abortedCalls}
+                  resumeTodo={resumeTodo ? { id: resumeTodo.id, title: resumeTodo.content } : null}
+                  lastVerifiedId={lastVerified?.id ?? null}
+                />
+              )}
+              {cost.stop && (
+                <CostStopCard
+                  stop={cost.stop}
+                  {...(cost.ratioPct === undefined ? {} : { ratioPct: cost.ratioPct })}
+                  remainingTodos={remainingTodos}
+                />
+              )}
+            </ThreadView>
+            <div className="flex flex-col items-center pb-3">
+              {errorText && (
+                <div
+                  role="alert"
+                  className="mb-2 flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] items-start gap-2 rounded-md bg-danger-subtle px-3 py-2 text-xs leading-[18px] text-danger"
+                >
+                  <p className="flex-1">{errorText}</p>
+                  {view.error && (
+                    <button
+                      type="button"
+                      aria-label="오류 닫기"
+                      onClick={() => {
+                        actions.dismissError(sessionId);
+                      }}
+                    >
+                      <X aria-hidden className="size-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+              {isRunning && sameFolderRunningCount >= 2 && (
+                <OverwriteNotice count={sameFolderRunningCount} repo={repoPath} />
+              )}
+              {cost.isWarned && !cost.stop && cost.ratioPct !== undefined && !isDone && (
+                <p className="mb-2 flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
+                  <Gauge aria-hidden className="size-3.5 text-warning" />
+                  비용 상한의 {formatCostRatio(cost.ratioPct)}를 썼습니다 · 상한에 닿으면 다음
+                  요청을 보내지 않고 멈춥니다
+                </p>
+              )}
+              {!isRunning && <UndoNotice sessionId={sessionId} events={view.events} />}
+              <Composer
+                isRunning={isRunning}
+                isStopping={view.isStopping}
+                placeholder={
+                  view.placeholder ??
+                  (cost.stop ? '지시를 바꿔 보내면 멈춘 곳에서 이어 갑니다' : undefined)
+                }
+                chips={view.chips}
+                onStop={() => {
+                  runAction(actions.cancelRun(sessionId, view.isStopping ? 'hard' : 'soft'));
                 }}
               />
-            )}
-            {isCrashed && thread.lastEventAt && (
-              <CrashedNotice
-                sessionId={sessionId}
-                stoppedAt={timeFormat.format(new Date(thread.lastEventAt))}
-                abortedCalls={thread.abortedCalls}
-                resumeTodo={resumeTodo ? { id: resumeTodo.id, title: resumeTodo.content } : null}
-                lastVerifiedId={lastVerified?.id ?? null}
+              <StatusLine
+                items={statusItems}
+                context={view.context}
+                cache={view.cache}
+                trailing={<LastRewindButton lastSeq={thread.lastUserSeq} />}
               />
-            )}
-            {cost.stop && (
-              <CostStopCard
-                stop={cost.stop}
-                {...(cost.ratioPct === undefined ? {} : { ratioPct: cost.ratioPct })}
-                remainingTodos={remainingTodos}
-              />
-            )}
-          </ThreadView>
-          <div className="flex flex-col items-center pb-3">
-            {errorText && (
-              <div
-                role="alert"
-                className="mb-2 flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] items-start gap-2 rounded-md bg-danger-subtle px-3 py-2 text-xs leading-[18px] text-danger"
-              >
-                <p className="flex-1">{errorText}</p>
-                {view.error && (
-                  <button
-                    type="button"
-                    aria-label="오류 닫기"
-                    onClick={() => {
-                      actions.dismissError(sessionId);
-                    }}
-                  >
-                    <X aria-hidden className="size-3.5" />
-                  </button>
-                )}
-              </div>
-            )}
-            {isRunning && sameFolderRunningCount >= 2 && (
-              <OverwriteNotice count={sameFolderRunningCount} repo={repoPath} />
-            )}
-            {cost.isWarned && !cost.stop && cost.ratioPct !== undefined && !isDone && (
-              <p className="mb-2 flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] items-center gap-2 px-3.5 text-xs leading-4 text-foreground-muted">
-                <Gauge aria-hidden className="size-3.5 text-warning" />
-                비용 상한의 {formatCostRatio(cost.ratioPct)}를 썼습니다 · 상한에 닿으면 다음 요청을
-                보내지 않고 멈춥니다
-              </p>
-            )}
-            <Composer
-              isRunning={isRunning}
-              isStopping={view.isStopping}
-              placeholder={
-                view.placeholder ??
-                (cost.stop ? '지시를 바꿔 보내면 멈춘 곳에서 이어 갑니다' : undefined)
-              }
-              chips={view.chips}
-              onStop={() => {
-                runAction(actions.cancelRun(sessionId, view.isStopping ? 'hard' : 'soft'));
-              }}
-            />
-            <StatusLine items={statusItems} context={view.context} cache={view.cache} />
-          </div>
+            </div>
+          </RewindProvider>
         </ChatProvider>
       </main>
     </>

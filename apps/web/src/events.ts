@@ -1,4 +1,4 @@
-import { stageSchema, type OraEvent, type Stage } from '@ora/protocol';
+import { dropRewoundEvents, stageSchema, type OraEvent, type Stage } from '@ora/protocol';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { getStepRange, type StepRange } from './lib/context.ts';
 
@@ -110,11 +110,13 @@ export interface ThreadData {
   messages: ThreadMessageLike[];
   abortedCalls: number;
   lastEventAt: string | null;
+  /** 되돌릴 수 있는 마지막 사용자 메시지의 이벤트 번호입니다. 없으면 null입니다. */
+  lastUserSeq: number | null;
 }
 
 /** 마지막 `stage` 진입 이벤트가 가리키는 단계 번호를 돌려줍니다. 진입한 단계가 없으면 null입니다. */
 export function getStageIndex(events: readonly OraEvent[]): number | null {
-  const entered = events.findLast((event) => event.type === 'stage');
+  const entered = dropRewoundEvents(events).findLast((event) => event.type === 'stage');
   return entered ? stages.indexOf(entered.payload.stage) : null;
 }
 
@@ -156,9 +158,11 @@ export function listModelSwitches(events: readonly OraEvent[]): ModelSwitchData[
  * 그 밖에 결과가 없는 도구 호출은 실행 중인 호출로 메시지에 넣습니다.
  */
 export function buildThread(
-  events: readonly OraEvent[],
+  rawEvents: readonly OraEvent[],
   waitingCallIds: ReadonlySet<string>,
 ): ThreadData {
+  const events = dropRewoundEvents(rawEvents);
+  let lastUserSeq: number | null = null;
   const results = new Map<string, ToolResultView>();
   let abortedCalls = 0;
   for (const event of events) {
@@ -235,7 +239,9 @@ export function buildThread(
           id: `u${String(event.seq)}`,
           role: 'user',
           content: [{ type: 'text', text }],
+          metadata: { custom: { rewindSeq: event.seq } },
         });
+        lastUserSeq = event.seq;
       }
     } else if (event.type === 'answer') {
       const questions = questionsByCall.get(event.payload.callId) ?? [];
@@ -316,7 +322,7 @@ export function buildThread(
   }
   flushAssistant();
 
-  return { messages, abortedCalls, lastEventAt: events.at(-1)?.ts ?? null };
+  return { messages, abortedCalls, lastEventAt: rawEvents.at(-1)?.ts ?? null, lastUserSeq };
 }
 
 /**

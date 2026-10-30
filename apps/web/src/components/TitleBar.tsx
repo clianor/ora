@@ -1,6 +1,9 @@
 import type { SessionStatus, WorktreeTab } from '@ora/protocol';
 import {
   GitCompare,
+  ExternalLink,
+  GitPullRequestCreate,
+  RefreshCw,
   PanelLeft,
   PanelRightOpen,
   Plus,
@@ -11,10 +14,12 @@ import {
 import { useRef, type ReactNode } from 'react';
 import { cn } from '../lib/cn.ts';
 import { pickPanelTab, setPanelOpen, usePanelState } from '../lib/panel.ts';
+import { listWorktrees } from '../lib/worktrees.ts';
 import { closeTab, openNewTab, selectTab, type TabContext } from '../lib/tabs.ts';
-import { useStore } from '../store.tsx';
+import { runAction, useStore } from '../store.tsx';
 import { DiffStat } from '../ui/stat.tsx';
 import { StatusIcon } from './StatusIcon.tsx';
+import { PrChecksIcon, PrStateIcon, prChecksLabel, prStateLabel } from './PrParts.tsx';
 
 function tabIcon(tab: WorktreeTab, status: SessionStatus | undefined): ReactNode {
   if (tab.kind === 'terminal') {
@@ -41,6 +46,10 @@ export function TitleBar({ context, diff, onToggleSidebar, isSidebarOpen = true 
   const { isOpen } = usePanelState();
   const tabButtons = useRef<(HTMLButtonElement | null)[]>([]);
   const { tabs, activeTabId } = context;
+  const repoPath = listWorktrees(store.sidebar.repos).find((item) => item.cwd === context.cwd)?.repo
+    .path;
+  const prStatus = repoPath === undefined ? undefined : store.getPrStatus(repoPath);
+  const prEntry = prStatus?.worktrees.find((item) => item.path === context.cwd);
   return (
     <header
       data-titlebar
@@ -158,6 +167,62 @@ export function TitleBar({ context, diff, onToggleSidebar, isSidebarOpen = true 
         <Plus aria-hidden className="size-4" />
       </button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5 px-2.5">
+        {prStatus?.unavailable !== undefined && (
+          <span
+            title={prStatus.unavailable}
+            className="max-w-[360px] truncate text-xs leading-4 text-foreground-subtle"
+          >
+            {prStatus.unavailable}
+          </span>
+        )}
+        {prEntry?.pr !== undefined && (
+          <a
+            href={prEntry.pr.url}
+            target="_blank"
+            rel="noreferrer"
+            className="flex h-7 items-center gap-1.5 rounded-sm px-2 text-[13px] leading-[18px] font-medium text-foreground-muted hover:bg-surface-hover"
+          >
+            <PrStateIcon state={prEntry.pr.state} />
+            <span className="font-mono text-foreground">#{prEntry.pr.number}</span>
+            <span>{prStateLabel[prEntry.pr.state]}</span>
+            {prEntry.pr.checks !== 'none' && (
+              <>
+                <span aria-hidden className="text-foreground-subtle">
+                  ·
+                </span>
+                <PrChecksIcon checks={prEntry.pr.checks} />
+                <span>{prChecksLabel[prEntry.pr.checks]}</span>
+              </>
+            )}
+            <ExternalLink aria-hidden className="size-3 text-foreground-subtle" />
+            <span className="sr-only">GitHub에서 PR 열기</span>
+          </a>
+        )}
+        {prEntry?.pr === undefined && prEntry?.createUrl !== undefined && (
+          <a
+            href={prEntry.createUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex h-7 items-center gap-1.5 rounded-sm px-2 text-[13px] leading-[18px] font-medium text-foreground-muted hover:bg-surface-hover"
+          >
+            <GitPullRequestCreate aria-hidden className="size-3.5" />
+            PR 만들기
+            <span className="sr-only">(GitHub 비교 화면 열기)</span>
+          </a>
+        )}
+        {repoPath !== undefined && prStatus !== undefined && (
+          <button
+            type="button"
+            title="PR 상태 새로고침"
+            onClick={() => {
+              runAction(store.actions.refreshPrStatus(repoPath, 'force'));
+            }}
+            className="flex size-7 items-center justify-center rounded-sm text-foreground-muted hover:bg-surface-hover"
+          >
+            <RefreshCw aria-hidden className="size-3.5" />
+            <span className="sr-only">PR 상태 새로고침</span>
+          </button>
+        )}
         {diff && (diff.add > 0 || diff.del > 0) && (
           <button
             type="button"

@@ -68,5 +68,15 @@ export const sessionRecordSchema = z.strictObject({
       lastUsedAt: timestampSchema,
     })
     .optional(),
+  /** 되돌리기 기록이다. 되돌린 시각과 되돌아간 사용자 메시지의 이벤트 번호다. 취소했으면 취소 시각이 있다 (SPEC 4.1.1절, 4.4절). */
+  rewinds: z
+    .array(
+      z.strictObject({
+        at: timestampSchema,
+        targetSeq: z.number().int().positive(),
+        undoneAt: timestampSchema.optional(),
+      }),
+    )
+    .optional(),
 });
 export type SessionRecord = z.infer<typeof sessionRecordSchema>;

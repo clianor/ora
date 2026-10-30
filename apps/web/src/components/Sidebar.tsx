@@ -1,4 +1,4 @@
-import type { SessionStatus } from '@ora/protocol';
+import type { DefaultBranchSync, PrState, PrStatusResponse, SessionStatus } from '@ora/protocol';
 import {
   CircleX,
   CornerDownRight,
@@ -8,6 +8,7 @@ import {
   Loader,
   MessageCircleQuestion,
   Plus,
+  Trash2,
   Search,
   Settings,
   ShieldAlert,
@@ -15,9 +16,11 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 import { formatShortElapsed, useNow } from '../lib/now.ts';
-import { hashFor, setCreateWorktree, setPaletteOpen } from '../lib/route.ts';
+import { hashFor, setCleanupWorktrees, setCreateWorktree, setPaletteOpen } from '../lib/route.ts';
 import { runningStatuses, statusLabel } from '../lib/status.ts';
 import type { RepoNode, SidebarData, WorktreeNode } from '../model.ts';
+import { PrChecksIcon, PrStateIcon, describePr, prStateLabel } from './PrParts.tsx';
+import { PrStatusSync } from './PrStatusSync.tsx';
 import { useStore } from '../store.tsx';
 
 const stackIndent = 14;
@@ -33,16 +36,27 @@ const sessionIcons: Partial<Record<SessionStatus, { Icon: LucideIcon; color: str
   awaiting_user: { Icon: MessageCircleQuestion, color: 'text-warning' },
 };
 
+function describeSync(sync: DefaultBranchSync): string {
+  const parts: string[] = [];
+  if (sync.behind > 0) parts.push(`원격보다 ${String(sync.behind)}개 뒤처짐`);
+  if (sync.ahead > 0) parts.push(`원격보다 ${String(sync.ahead)}개 앞섬`);
+  return parts.join(', ');
+}
+
+const isFinished = (state: PrState): boolean => state === 'MERGED' || state === 'CLOSED';
+
 function WorktreeRow({
   node,
   depth,
   selectedCwd,
   now,
+  status,
 }: {
   node: WorktreeNode;
   depth: number;
   selectedCwd: string | undefined;
   now: number;
+  status: PrStatusResponse | undefined;
 }) {
   const { getBranch, getDefaultBranch } = useStore();
   const cwd = node.cwd ?? node.name;
@@ -50,6 +64,12 @@ function WorktreeRow({
   const branch = getBranch(cwd);
   const isDefault = branch !== undefined && branch === getDefaultBranch(cwd);
   const active = node.sessions.filter((session) => runningStatuses.has(session.record.status));
+  const entry = status?.worktrees.find((item) => item.path === cwd);
+  const hasBadge =
+    node.setup?.status === 'creating' ||
+    node.setup?.status === 'setup' ||
+    node.setup?.status === 'setup-failed' ||
+    (!isSelected && active.length > 0);
   const Icon = depth > 0 ? CornerDownRight : GitBranch;
   const row = (
     <a
@@ -98,6 +118,42 @@ function WorktreeRow({
       {!isSelected && active.length > 0 && node.setup?.status !== 'setup-failed' && (
         <span className="ml-auto text-xs leading-4 font-medium text-foreground-muted">
           실행 {active.length}
+        </span>
+      )}
+      {entry?.sync !== undefined && (entry.sync.behind > 0 || entry.sync.ahead > 0) && (
+        <span
+          title={describeSync(entry.sync)}
+          className={cn(
+            'flex items-center gap-1.5 text-xs leading-4 font-medium text-foreground-muted',
+            !hasBadge && 'ml-auto',
+          )}
+        >
+          <span aria-hidden className="flex gap-1.5">
+            {entry.sync.behind > 0 && <span>↓{entry.sync.behind}</span>}
+            {entry.sync.ahead > 0 && <span>↑{entry.sync.ahead}</span>}
+          </span>
+          <span className="sr-only">{describeSync(entry.sync)}</span>
+        </span>
+      )}
+      {entry?.pr !== undefined && (
+        <span
+          title={describePr(entry.pr)}
+          className={cn(
+            'flex items-center gap-1 text-xs leading-4 font-medium text-foreground-muted',
+            hasBadge ? 'ml-2' : 'ml-auto',
+          )}
+        >
+          <PrStateIcon state={entry.pr.state} />
+          <span
+            aria-hidden
+            className={cn(isFinished(entry.pr.state) || 'font-mono text-foreground')}
+          >
+            {isFinished(entry.pr.state)
+              ? prStateLabel[entry.pr.state]
+              : `#${String(entry.pr.number)}`}
+          </span>
+          {!isFinished(entry.pr.state) && <PrChecksIcon checks={entry.pr.checks} />}
+          <span className="sr-only">PR {describePr(entry.pr)}</span>
         </span>
       )}
     </a>
@@ -152,6 +208,7 @@ function WorktreeRow({
           depth={depth + 1}
           selectedCwd={selectedCwd}
           now={now}
+          status={status}
         />
       ))}
     </>
@@ -167,6 +224,15 @@ function RepoGroup({
   selectedCwd: string | undefined;
   now: number;
 }) {
+  const { getPrStatus } = useStore();
+  const repoPath = repo.path;
+  const status = repoPath === undefined ? undefined : getPrStatus(repoPath);
+  const mergedCount =
+    status === undefined || status.unavailable !== undefined
+      ? 0
+      : status.worktrees.filter(
+          (item) => !item.isMain && !item.isDefault && item.pr?.state === 'MERGED',
+        ).length;
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex h-8 items-center gap-2 px-2.5">
@@ -188,8 +254,27 @@ function RepoGroup({
         )}
       </div>
       {repo.worktrees.map((node) => (
-        <WorktreeRow key={node.name} node={node} depth={0} selectedCwd={selectedCwd} now={now} />
+        <WorktreeRow
+          key={node.name}
+          node={node}
+          depth={0}
+          selectedCwd={selectedCwd}
+          now={now}
+          status={status}
+        />
       ))}
+      {mergedCount > 0 && repoPath !== undefined && (
+        <button
+          type="button"
+          onClick={() => {
+            setCleanupWorktrees(repoPath);
+          }}
+          className="flex h-8 items-center gap-2 rounded-sm px-2.5 text-[13px] leading-[18px] text-foreground-muted hover:bg-surface-hover hover:text-foreground"
+        >
+          <Trash2 aria-hidden className="size-3.5 shrink-0 text-foreground-subtle" />
+          머지된 워크트리 {mergedCount}개 삭제…
+        </button>
+      )}
     </div>
   );
 }
@@ -206,6 +291,7 @@ export function Sidebar({ data, selectedCwd, isHistorySelected = false }: Sideba
   const now = useNow();
   return (
     <aside className="flex w-[264px] shrink-0 flex-col gap-4 border-r border-border bg-sidebar px-2 pt-3 pb-3">
+      <PrStatusSync />
       {window.ora !== undefined && <div data-titlebar aria-hidden className="-mb-1 h-6 shrink-0" />}
       <div className="flex flex-col gap-1">
         <button

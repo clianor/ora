@@ -9,6 +9,11 @@ import type {
   McpServerStatus,
   ProviderAccounts,
   WorktreeRecord,
+  PrInfo,
+  PrStatusResponse,
+  WorktreePrEntry,
+  CleanupCandidate,
+  CleanupListResponse,
 } from '@ora/protocol';
 import type {
   Actor,
@@ -1452,6 +1457,92 @@ const setupTerminals: Terminal[] = fixtureWorktrees.map((setup) => ({
   rows: 30,
   createdAt: `${day}T09:40:00+09:00`,
 }));
+const prAt = (hours: number): string => new Date(Date.now() - hours * 3_600_000).toISOString();
+const fixturePr = (
+  number: number,
+  state: PrInfo['state'],
+  checks: PrInfo['checks'] = 'none',
+): PrInfo => ({
+  number,
+  url: `https://github.com/oraclian/math-demo/pull/${String(number)}`,
+  state,
+  checks,
+  headRefOid: '3f9c2a1',
+  createdAt: prAt(100),
+});
+const mathDemoEntry = (path: string, pr?: PrInfo): WorktreePrEntry => ({
+  path,
+  branch: `ora/${path.split('/').at(-1) ?? ''}`,
+  isMain: false,
+  isDefault: false,
+  ...(pr ? { pr } : {}),
+});
+const fixturePrStatus: Record<string, PrStatusResponse> = {
+  '~/projects/math-demo': {
+    repo: '~/projects/math-demo',
+    version: 1,
+    worktrees: [
+      {
+        path: '~/projects/math-demo',
+        branch: 'main',
+        isMain: true,
+        isDefault: true,
+        sync: { behind: 3, ahead: 0 },
+      },
+      mathDemoEntry('~/.ora/worktrees/math-demo/fix-negative-add', fixturePr(42, 'OPEN', 'pass')),
+      mathDemoEntry('~/projects/math-demo/docs/readme-pnpm', fixturePr(38, 'DRAFT')),
+      mathDemoEntry('~/projects/math-demo/docs/readme-examples', fixturePr(39, 'OPEN', 'fail')),
+      mathDemoEntry('~/.ora/worktrees/math-demo/old-cleanup', fixturePr(35, 'MERGED')),
+      mathDemoEntry('~/.ora/worktrees/math-demo/fix-typo', fixturePr(40, 'MERGED')),
+    ],
+  },
+  '~/projects/ora': {
+    repo: '~/projects/ora',
+    version: 1,
+    worktrees: [
+      {
+        path: '~/projects/ora',
+        branch: 'main',
+        isMain: true,
+        isDefault: true,
+      },
+      mathDemoEntry('~/projects/ora/feat/engine-slice2', fixturePr(12, 'OPEN', 'running')),
+    ],
+  },
+};
+const fixtureCandidate = (
+  name: string,
+  number: number,
+  group: CleanupCandidate['group'],
+  rest: Partial<CleanupCandidate> = {},
+): CleanupCandidate => ({
+  path: `~/.ora/worktrees/math-demo/${name}`,
+  branch: `ora/${name}`,
+  group,
+  number,
+  url: `https://github.com/oraclian/math-demo/pull/${String(number)}`,
+  isOnRemote: true,
+  ...rest,
+});
+const fixtureCleanup: CleanupListResponse = {
+  repo: '~/projects/math-demo',
+  candidates: [
+    fixtureCandidate('old-cleanup', 35, 'merged', { at: prAt(48) }),
+    fixtureCandidate('fix-typo', 40, 'merged', { at: prAt(3) }),
+    fixtureCandidate('hotfix-login', 41, 'merged', {
+      at: prAt(30),
+      blocked: '커밋하지 않은 변경 3개',
+    }),
+    fixtureCandidate('api-retry', 44, 'merged', { at: prAt(30), blocked: '머지 뒤 새 커밋 2개' }),
+    fixtureCandidate('docs-tweak', 37, 'merged', { at: prAt(30), blocked: '실행 중인 세션 1개' }),
+    fixtureCandidate('try-sqlite', 31, 'closed', { at: prAt(120) }),
+    fixtureCandidate('spike-cache', 29, 'closed', {
+      at: prAt(120),
+      isOnRemote: false,
+      blocked: '원격에 없는 커밋 3개 · 지우면 사라집니다',
+    }),
+  ],
+};
 const setupScripts: Record<string, string> = {
   't-setup01':
     '$ cp ../.env .env\r\n$ pnpm install\r\nLockfile is up to date, resolution step is skipped\r\nProgress: resolved 212, reused 208, downloaded 4, added 61\r\n',
@@ -1981,6 +2072,9 @@ type StatefulActionName =
   | 'createWorktree'
   | 'loadWorktreeOptions'
   | 'rerunWorktreeSetup'
+  | 'refreshPrStatus'
+  | 'loadCleanup'
+  | 'runCleanup'
   | 'saveReposSettings'
   | 'openNewTab';
 
@@ -1991,6 +2085,23 @@ const fixtureActions: Omit<OraActions, StatefulActionName> = {
   decideApproval: () => Promise.resolve(),
   answerQuestions: () => Promise.resolve(),
   resumeSession: () => Promise.resolve(),
+  previewRewind: (_id, seq) =>
+    Promise.resolve({
+      targetSeq: seq,
+      text: '',
+      isGitRepo: true,
+      restoreFiles: ['config.js'],
+      deleteFiles: ['cache.test.js'],
+      overwrittenFiles: [],
+      skippedFiles: [],
+      removedMessages: 5,
+      commitCount: 0,
+      otherSessionFiles: [],
+    }),
+  rewindSession: (_id, seq) =>
+    Promise.resolve({ eventSeq: seq + 1, text: '', restoredFiles: [], deletedFiles: [] }),
+  undoRewind: () => Promise.resolve(),
+  editMessage: () => Promise.resolve(),
   abandonTodo: () => Promise.resolve(true),
   restoreTodo: () => Promise.resolve(true),
   readCompaction: () => Promise.resolve(compactionDocument),
@@ -2316,6 +2427,9 @@ export function createFixtureStore(): OraStoreSource {
         setupCommands: setupCommandTexts,
       }),
     rerunWorktreeSetup: () => Promise.resolve(),
+    refreshPrStatus: () => Promise.resolve(),
+    loadCleanup: () => Promise.resolve(fixtureCleanup),
+    runCleanup: (_repo, paths) => Promise.resolve({ removed: paths, failed: [] }),
     saveReposSettings: (next) => {
       const known = engineSettings.repos.value?.repos ?? [];
       return changeEngineSettings({
@@ -2487,6 +2601,7 @@ export function createFixtureStore(): OraStoreSource {
     getBranch: (cwd) => worktreeNames.get(cwd),
     getWorktreeSetup: (cwd) => fixtureWorktrees.find((item) => item.path === cwd),
     getDefaultBranch: (cwd) => (worktreeNames.has(cwd) ? 'main' : undefined),
+    getPrStatus: (repo) => fixturePrStatus[repo],
     getChanges: (cwd) => fixtureChanges[cwd] ?? (worktreeNames.has(cwd) ? noChanges : undefined),
     getNewSessionContext: (cwd = '~/Desktop/ora') => ({
       path: cwd,

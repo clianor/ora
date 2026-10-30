@@ -1,7 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignore": [".claude/skills/impeccable/**", "eval/tasks/**"],
-  "ignoreBinaries": ["agnix", "gitleaks", "lefthook"],
+  "ignoreBinaries": ["agnix", "gitleaks", "lefthook", "pgrep"],
   "workspaces": {
     ".": {
       "entry": ["scripts/*.ts", "design/src/screens.mjs"]
