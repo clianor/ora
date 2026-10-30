@@ -58,6 +58,11 @@
 - 화면을 승인받기 전에 `design/references/ui-ux-pro-max/quick-reference.md`의 UX 규칙(접근성, 상호작용, 폼, 내비게이션)으로 확인한다. 이 문서는 nextlevelbuilder/ui-ux-pro-max-skill `28b3b8d`의 규칙 문서만 들여온 것이다(MIT). 터치 영역 44px, 모바일 우선 같은 모바일 규칙은 데스크톱 앱인 Ora에 적용하지 않는다.
 - 시각 방향은 D(다크 우선 중립 회색, 글 중심, 테두리 대신 배경 밝기)로 정했다. 토큰의 정본은 `design/tokens/Ora/Dark.tokens.json`과 `Light.tokens.json`이다. OpenPencil에는 `import_design_tokens`로 가져간다. OpenPencil 0.16의 JSX는 변수를 만들지 못하고 `designVar`로 참조만 한다.
 - OpenPencil 0.16은 그렸다 지웠다를 반복하면 렌더러의 메모리를 망가뜨리고(#976), 저장한 파일을 다시 열면 글자를 다른 글리프로 그린다(#1543). 화면은 한 번에 그리고 바로 저장한다. 검토는 그린 직후 내보낸 PNG로 한다.
+- OpenPencil 장애로 작업을 멈추지 않고, 아래 순서로 복구하며 진행한다. 되돌릴 지점이 있도록 `design/ora.fig`의 프레임을 바꿀 때마다 바로 커밋한다.
+  1. `list_documents`까지 RPC timeout이 나면, 앱을 강제로 끄고 다시 띄운 뒤 같은 요청을 다시 보낸다.
+  2. "Out of bounds memory access"가 나거나 문서가 빈 문서로 바뀌면, `git restore design/ora.fig`로 마지막 커밋을 되살리고 앱을 다시 띄운다.
+  3. 같은 단계가 두 번 연속 실패하면, 되풀이하지 않고 증상과 오류 원문을 사용자에게 보고한다.
+  4. 컴퓨터는 재부팅하지 않는다. 떠 있는 Ora 서버와 작업자 세션이 함께 끊긴다.
 
 ## 테스트
 
