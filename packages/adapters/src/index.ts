@@ -1,6 +1,6 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { ModelLimitError } from '@ora/core';
-import type { ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
+import type { ModelCompactResult, ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import { contentBlockSchema } from '@ora/protocol';
 import { z } from 'zod';
 
@@ -29,7 +29,16 @@ const scriptSchema = z.object({
   maxOutputTokens: z.number().int().positive().optional(),
   acceptsOutputCap: z.boolean().optional(),
   /** 있으면 모델이 서버 압축(`compact`)을 지원하는 것처럼 이 요약을 돌려준다. 없으면 지원하지 않는다. */
-  remote: z.object({ text: z.string(), usage: usageSchema.optional() }).optional(),
+  remote: z
+    .object({
+      text: z.string(),
+      usage: usageSchema.optional(),
+      /** 서버가 되돌려 보낼 값으로 돌려주는 압축 결과다. `supplement`는 엔진이 채운다. */
+      replay: z.custom<NonNullable<ModelCompactResult['replay']>>().optional(),
+    })
+    .optional(),
+  /** 이 모델의 프로바이더 ID다. 서버 압축 결과를 같은 프로바이더만 읽는지 확인하는 테스트가 쓴다. */
+  provider: z.string().optional(),
 });
 
 /**
@@ -46,6 +55,7 @@ export async function loadScriptedModel(
     ...(script.contextWindow === undefined ? {} : { contextWindow: script.contextWindow }),
     ...(script.maxOutputTokens === undefined ? {} : { maxOutputTokens: script.maxOutputTokens }),
     ...(script.acceptsOutputCap === undefined ? {} : { acceptsOutputCap: script.acceptsOutputCap }),
+    ...(script.provider === undefined ? {} : { provider: script.provider }),
     ...(script.remote === undefined
       ? {}
       : {
@@ -68,6 +78,7 @@ export async function loadScriptedModel(
                 cacheCreationInputTokens: 0,
                 outputTokens: 0,
               },
+              ...(script.remote?.replay === undefined ? {} : { replay: script.remote.replay }),
             };
           },
         }),

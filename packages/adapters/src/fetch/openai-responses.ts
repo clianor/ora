@@ -3,8 +3,8 @@
  * `openai-codex-responses`는 ChatGPT 구독의 `chatgpt.com/backend-api/codex/responses`가 쓴다.
  * 요청 모양은 pi-mono와 omp의 공개 소스에서 확인한 값이다.
  */
-import { scrubText } from '@ora/core';
-import type { ModelRequest, ModelUsage, StopReason } from '@ora/core';
+import { estimateTokens, scrubText } from '@ora/core';
+import type { ModelCompactResult, ModelRequest, ModelUsage, StopReason } from '@ora/core';
 import type { ContentBlock } from '@ora/protocol';
 import { z } from 'zod';
 import { toApiName } from '../anthropic-frames.ts';
@@ -14,9 +14,10 @@ import {
   RETRY_MAX_ATTEMPTS,
   RETRY_MAX_DELAY_MS,
 } from '../anthropic-profile.ts';
+import type { CatalogModel } from './catalog.ts';
 import { defaultSleep, readSse } from './http.ts';
 import { UsageLimitError, WireAuthError } from './wire.ts';
-import type { WireStream } from './wire.ts';
+import type { WireCredential, WireOptions, WireStream } from './wire.ts';
 
 const ERROR_BODY_MAX_CHARS = 500;
 const OPENAI_API_BASE_URL = 'https://api.openai.com/v1';
@@ -55,9 +56,20 @@ function toInput(
   request: ModelRequest,
   apiToolName: (name: string) => string,
   source: string,
+  provider: string,
 ): ApiItem[] {
   const input: ApiItem[] = [];
   for (const message of request.messages) {
+    const replay =
+      message.replay?.kind === 'openai' && message.replay.provider === provider
+        ? message.replay
+        : undefined;
+    if (replay !== undefined) {
+      input.push(...replay.items, {
+        role: 'user',
+        content: [{ type: 'input_text', text: replay.supplement }],
+      });
+    }
     const parts: string[] = [];
     const flush = () => {
       if (parts.length === 0) return;
@@ -68,7 +80,7 @@ function toInput(
           : { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] },
       );
     };
-    for (const block of message.content) {
+    for (const block of replay === undefined ? message.content : message.content.slice(1)) {
       switch (block.type) {
         case 'text':
           parts.push(block.text);
@@ -244,6 +256,142 @@ function retryAfterMs(headers: Headers, now: number): number | undefined {
 
 const stopFor = (hasToolCall: boolean): StopReason => (hasToolCall ? 'tool_use' : 'end_turn');
 
+interface PostContext {
+  readonly signal: AbortSignal;
+  readonly fetch: typeof fetch;
+  readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  readonly now: () => number;
+  readonly label: string;
+  readonly redact: (text: string) => string;
+  readonly maxAttempts: number;
+}
+
+/** JSON 본문을 POST한다. 일시 오류는 대기 뒤 다시 보내고, 401과 사용량 한도는 전용 오류로 던진다. */
+async function postJson(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  context: PostContext,
+): Promise<Response> {
+  const { signal, sleep, now, label, redact, maxAttempts } = context;
+  for (let attempt = 0; ; attempt += 1) {
+    let response: Response;
+    try {
+      response = await context.fetch(url, { method: 'POST', signal, headers, body });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      if (attempt + 1 >= maxAttempts) {
+        throw new Error(redact(`${label} 요청이 네트워크 오류로 실패했습니다: ${String(error)}`), {
+          cause: error,
+        });
+      }
+      await sleep(Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS), signal);
+      continue;
+    }
+    if (response.ok) return response;
+
+    const text = await response.text().catch(() => '');
+    const info = readErrorInfo(text, now());
+    const summary = `${label} 응답 ${response.status}: ${redact(info.message.slice(0, ERROR_BODY_MAX_CHARS))}`;
+    if (response.status === 401) throw new WireAuthError(summary);
+    const hint = retryAfterMs(response.headers, now());
+    const resetAt = info.resetAtMs ?? (hint === undefined ? undefined : now() + hint);
+    if (
+      (info.code !== undefined && USAGE_LIMIT_CODES.has(info.code)) ||
+      (response.status === 429 && USAGE_LIMIT_TEXT.test(text))
+    ) {
+      throw new UsageLimitError(summary, resetAt);
+    }
+    const retryable =
+      response.status >= 500 || (RETRYABLE_STATUSES as readonly number[]).includes(response.status);
+    if (!retryable || attempt + 1 >= maxAttempts) throw new Error(summary);
+    if (hint !== undefined && hint > RETRY_MAX_DELAY_MS) {
+      const message = `${summary} (재시도 대기 ${Math.ceil(hint / 1000)}초가 상한을 넘어 중단합니다)`;
+      throw response.status === 429 ? new UsageLimitError(message, resetAt) : new Error(message);
+    }
+    await sleep(hint ?? Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS), signal);
+  }
+}
+
+function responsesHeaders(
+  flavor: 'generic' | 'codex',
+  credential: WireCredential,
+  sessionId: string,
+  accept: string,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${credential.token}`,
+    'content-type': 'application/json',
+    accept,
+  };
+  if (flavor === 'codex') {
+    if (credential.accountId === undefined || credential.accountId === '') {
+      throw new Error('Codex 계정 id가 없습니다. ora login codex로 다시 로그인합니다.');
+    }
+    headers['chatgpt-account-id'] = credential.accountId;
+    headers['openai-beta'] = 'responses=experimental';
+    headers.originator = ORIGINATOR;
+    headers['session-id'] = sessionId;
+    headers['x-client-request-id'] = sessionId;
+  }
+  return headers;
+}
+
+function buildResponsesBody(input: {
+  flavor: 'generic' | 'codex';
+  model: CatalogModel;
+  request: ModelRequest;
+  sessionId: string;
+  source: string;
+  effort?: WireOptions['effort'];
+  maxTokens?: number;
+  /** 변환한 입력 뒤에 덧붙이는 항목이다. */
+  trailing?: ApiItem[];
+}): string {
+  const { flavor, model, request } = input;
+  const reasoningEffort =
+    input.effort !== undefined && !(flavor === 'generic' && OMIT_EFFORT_MODEL.test(model.id))
+      ? input.effort
+      : undefined;
+  return JSON.stringify({
+    model: model.id,
+    instructions: request.system === '' ? 'You are a helpful assistant.' : request.system,
+    input: [
+      ...toInput(request, toApiName, input.source, model.provider),
+      ...(input.trailing ?? []),
+    ],
+    stream: true,
+    store: false,
+    include: ['reasoning.encrypted_content'],
+    prompt_cache_key: input.sessionId,
+    tool_choice: 'auto',
+    parallel_tool_calls: true,
+    ...(request.tools.length === 0
+      ? {}
+      : {
+          tools: request.tools.map((tool) => ({
+            type: 'function',
+            name: toApiName(tool.name),
+            description: tool.description,
+            parameters: tool.inputSchema,
+            strict: false,
+          })),
+        }),
+    ...(flavor === 'codex'
+      ? {
+          text: { verbosity: 'low' },
+          reasoning: {
+            summary: 'auto',
+            ...(reasoningEffort === undefined ? {} : { effort: reasoningEffort }),
+          },
+        }
+      : {
+          max_output_tokens: input.maxTokens ?? model.maxOutputTokens,
+          ...(reasoningEffort === undefined ? {} : { reasoning: { effort: reasoningEffort } }),
+        }),
+  });
+}
+
 function streamResponses(flavor: 'generic' | 'codex'): WireStream {
   return async function* ({ model, credential, request, signal, options }) {
     const doFetch = options.fetch ?? fetch;
@@ -259,109 +407,21 @@ function streamResponses(flavor: 'generic' | 'codex'): WireStream {
 
     const url =
       flavor === 'codex' ? `${model.baseUrl}/codex/responses` : `${model.baseUrl}/responses`;
-    const reasoningEffort =
-      options.effort !== undefined && !(flavor === 'generic' && OMIT_EFFORT_MODEL.test(model.id))
-        ? options.effort
-        : undefined;
-    const body = JSON.stringify({
-      model: model.id,
-      instructions: request.system === '' ? 'You are a helpful assistant.' : request.system,
-      input: toInput(request, toApiName, source),
-      stream: true,
-      store: false,
-      include: ['reasoning.encrypted_content'],
-      prompt_cache_key: sessionId,
-      tool_choice: 'auto',
-      parallel_tool_calls: true,
-      ...(request.tools.length === 0
-        ? {}
-        : {
-            tools: request.tools.map((tool) => ({
-              type: 'function',
-              name: toApiName(tool.name),
-              description: tool.description,
-              parameters: tool.inputSchema,
-              strict: false,
-            })),
-          }),
-      ...(flavor === 'codex'
-        ? {
-            text: { verbosity: 'low' },
-            reasoning: {
-              summary: 'auto',
-              ...(reasoningEffort === undefined ? {} : { effort: reasoningEffort }),
-            },
-          }
-        : {
-            max_output_tokens: options.maxTokens ?? model.maxOutputTokens,
-            ...(reasoningEffort === undefined ? {} : { reasoning: { effort: reasoningEffort } }),
-          }),
+    const body = buildResponsesBody({
+      flavor,
+      model,
+      request,
+      sessionId,
+      source,
+      ...(options.effort === undefined ? {} : { effort: options.effort }),
+      ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
     });
-
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${credential.token}`,
-      'content-type': 'application/json',
-      accept: 'text/event-stream',
-    };
-    if (flavor === 'codex') {
-      if (credential.accountId === undefined || credential.accountId === '') {
-        throw new Error('Codex 계정 id가 없습니다. ora login codex로 다시 로그인합니다.');
-      }
-      headers['chatgpt-account-id'] = credential.accountId;
-      headers['openai-beta'] = 'responses=experimental';
-      headers.originator = ORIGINATOR;
-      headers['session-id'] = sessionId;
-      headers['x-client-request-id'] = sessionId;
-    }
-
-    const post = async (): Promise<Response> => {
-      for (let attempt = 0; ; attempt += 1) {
-        let response: Response;
-        try {
-          response = await doFetch(url, { method: 'POST', signal, headers, body });
-        } catch (error) {
-          if (signal.aborted) throw error;
-          if (attempt + 1 >= RETRY_MAX_ATTEMPTS) {
-            throw new Error(
-              redact(`${label} 요청이 네트워크 오류로 실패했습니다: ${String(error)}`),
-              { cause: error },
-            );
-          }
-          await sleep(Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS), signal);
-          continue;
-        }
-        if (response.ok) return response;
-
-        const text = await response.text().catch(() => '');
-        const info = readErrorInfo(text, now());
-        const summary = `${label} 응답 ${response.status}: ${redact(info.message.slice(0, ERROR_BODY_MAX_CHARS))}`;
-        if (response.status === 401) throw new WireAuthError(summary);
-        const hint = retryAfterMs(response.headers, now());
-        const resetAt = info.resetAtMs ?? (hint === undefined ? undefined : now() + hint);
-        if (
-          (info.code !== undefined && USAGE_LIMIT_CODES.has(info.code)) ||
-          (response.status === 429 && USAGE_LIMIT_TEXT.test(text))
-        ) {
-          throw new UsageLimitError(summary, resetAt);
-        }
-        const retryable =
-          response.status >= 500 ||
-          (RETRYABLE_STATUSES as readonly number[]).includes(response.status);
-        if (!retryable || attempt + 1 >= RETRY_MAX_ATTEMPTS) throw new Error(summary);
-        if (hint !== undefined && hint > RETRY_MAX_DELAY_MS) {
-          const message = `${summary} (재시도 대기 ${Math.ceil(hint / 1000)}초가 상한을 넘어 중단합니다)`;
-          throw response.status === 429
-            ? new UsageLimitError(message, resetAt)
-            : new Error(message);
-        }
-        await sleep(
-          hint ?? Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, RETRY_MAX_DELAY_MS),
-          signal,
-        );
-      }
-    };
-
-    const response = await post();
+    const response = await postJson(
+      url,
+      responsesHeaders(flavor, credential, sessionId, 'text/event-stream'),
+      body,
+      { signal, fetch: doFetch, sleep, now, label, redact, maxAttempts: RETRY_MAX_ATTEMPTS },
+    );
     if (response.body === null) throw new Error(`${label} 응답에 본문이 없습니다.`);
     const byApiName = new Map(request.tools.map((tool) => [toApiName(tool.name), tool.name]));
     const resolveTool = (apiName: string) =>
@@ -461,11 +521,239 @@ const streamCodex = streamResponses('codex');
 export const streamOpenAIResponses: WireStream = streamGeneric;
 
 /** API 키 계정은 ChatGPT 백엔드가 아니라 공개 OpenAI Responses API로 보낸다. 설정이 준 다른 주소는 그대로 쓴다. */
+function resolveCodexTarget(input: { model: CatalogModel; credential: WireCredential }): {
+  flavor: 'generic' | 'codex';
+  model: CatalogModel;
+} {
+  if (input.credential.kind !== 'apiKey') return { flavor: 'codex', model: input.model };
+  return {
+    flavor: 'generic',
+    model:
+      input.model.baseUrl === CHATGPT_BASE_URL
+        ? { ...input.model, baseUrl: OPENAI_API_BASE_URL }
+        : input.model,
+  };
+}
+
 export const streamOpenAICodexResponses: WireStream = (input) => {
-  if (input.credential.kind !== 'apiKey') return streamCodex(input);
-  const model =
-    input.model.baseUrl === CHATGPT_BASE_URL
-      ? { ...input.model, baseUrl: OPENAI_API_BASE_URL }
-      : input.model;
-  return streamGeneric({ ...input, model });
+  const target = resolveCodexTarget(input);
+  return (target.flavor === 'codex' ? streamCodex : streamGeneric)({
+    ...input,
+    model: target.model,
+  });
 };
+
+const COMPACTION_ATTEMPTS = 3;
+/** omp의 `compaction.v2RetainedMessageBudget` 기본값이자 상한이다. */
+const RETAINED_MESSAGE_BUDGET_TOKENS = 64_000;
+const RESIDENCY_CLAIMS = ['chatgpt_data_residency', 'chatgpt_compute_residency'];
+
+/** 서명을 검증하지 않고 액세스 토큰 payload에서 워크스페이스 데이터 거주 지역을 읽는다. JWT가 아니거나 claim이 없으면 `undefined`다. */
+function readResidency(accessToken: string): string | undefined {
+  const payload = accessToken.split('.')[1];
+  if (payload === undefined) return undefined;
+  try {
+    const claims = z
+      .looseObject({})
+      .parse(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')));
+    const scopes = [
+      claims,
+      z.looseObject({}).safeParse(claims['https://api.openai.com/auth']).data,
+    ];
+    for (const claim of RESIDENCY_CLAIMS) {
+      for (const scope of scopes) {
+        const value = scope?.[claim];
+        if (typeof value === 'string' && value !== '') return value;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** 요약이 덮는 사용자 메시지 중 예산 안에서 최근 것부터 고른 입력 항목이다. 도구 결과만 든 메시지는 제외한다. */
+function retainedUserItems(request: ModelRequest): ApiItem[] {
+  const items: ApiItem[] = [];
+  let used = 0;
+  for (const message of request.messages.toReversed()) {
+    if (message.role !== 'user' || message.replay !== undefined) continue;
+    const text = message.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n');
+    if (text === '') continue;
+    used += estimateTokens(text);
+    if (used > RETAINED_MESSAGE_BUDGET_TOKENS) break;
+    items.unshift({ role: 'user', content: [{ type: 'input_text', text }] });
+  }
+  return items;
+}
+
+const usageOf = (usage: z.infer<typeof usageSchema> | null | undefined): ModelUsage => {
+  const cached = usage?.input_tokens_details?.cached_tokens ?? 0;
+  return {
+    uncachedInputTokens: Math.max(0, (usage?.input_tokens ?? 0) - cached),
+    cacheReadInputTokens: cached,
+    cacheCreationInputTokens: 0,
+    outputTokens: usage?.output_tokens ?? 0,
+  };
+};
+
+/**
+ * Codex와 OpenAI의 서버 압축이다. V2(일반 Responses 스트림 끝에 입력 항목 `compaction_trigger`를 붙이고 출력 항목 `compaction`이 정확히 하나 오는 방식)를 먼저 보내고,
+ * 실패하면 V1(`/responses/compact`)을 보낸다. ChatGPT 백엔드는 V2만 보낸다. 둘 다 `compaction` 항목을 주지 않으면 `undefined`이고, 마지막 오류가 있으면 던진다.
+ * 결과 `replay`는 유지하는 사용자 메시지 뒤에 불투명한 `compaction` 항목이 오는 입력 항목이다.
+ */
+export async function compactOpenAIResponses(input: {
+  model: CatalogModel;
+  credential: WireCredential;
+  request: ModelRequest & { instructions: string };
+  signal: AbortSignal;
+  options: WireOptions;
+}): Promise<ModelCompactResult | undefined> {
+  if (input.model.wire !== 'openai-codex-responses') return undefined;
+  const { flavor, model } = resolveCodexTarget(input);
+  const { credential, request, signal, options } = input;
+  const sessionId = options.sessionId ?? crypto.randomUUID();
+  const source = new URL(model.baseUrl).origin;
+  const label = flavor === 'codex' ? 'Codex' : 'Responses';
+  const redact = (text: string): string =>
+    scrubText(
+      credential.token === '' ? text : text.split(credential.token).join('[REDACTED:token]'),
+    ).text;
+  const headers = responsesHeaders(flavor, credential, sessionId, 'application/json');
+  const residency = flavor === 'codex' ? readResidency(credential.token) : undefined;
+  if (residency !== undefined) headers['x-openai-internal-codex-residency'] = residency;
+  const post = (url: string, body: string, accept: string) =>
+    postJson(url, { ...headers, accept }, body, {
+      signal,
+      fetch: options.fetch ?? fetch,
+      sleep: options.sleep ?? defaultSleep,
+      now: options.now ?? (() => Date.now()),
+      label: `${label} 압축`,
+      redact,
+      maxAttempts: COMPACTION_ATTEMPTS,
+    });
+  const resultOf = (
+    variant: 'v1' | 'v2',
+    items: ApiItem[],
+    usage: ModelUsage,
+  ): ModelCompactResult | undefined =>
+    items.filter((item) => item.type === 'compaction').length === 1
+      ? {
+          text: '',
+          usage,
+          replay: { kind: 'openai', provider: model.provider, variant, items },
+        }
+      : undefined;
+
+  const v2 = async (): Promise<ModelCompactResult | undefined> => {
+    const body = buildResponsesBody({
+      flavor,
+      model,
+      request,
+      sessionId,
+      source,
+      ...(options.effort === undefined ? {} : { effort: options.effort }),
+      ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
+      trailing: [{ type: 'compaction_trigger' }],
+    });
+    const base =
+      flavor === 'codex' ? `${model.baseUrl}/codex/responses` : `${model.baseUrl}/responses`;
+    const response = await post(base, body, 'text/event-stream');
+    if (response.body === null) throw new Error(`${label} 압축 응답에 본문이 없습니다.`);
+    const doneItems = new Map<number, ApiItem>();
+    for await (const data of readSse(response.body)) {
+      if (data === '[DONE]') continue;
+      const frame = z.looseObject({ type: z.string() }).safeParse(safeJson(data));
+      if (!frame.success) continue;
+      const event = frame.data;
+      if (event.type === 'response.output_item.done') {
+        const item = outputItemSchema.safeParse(event.item);
+        if (item.success) {
+          doneItems.set(
+            typeof event.output_index === 'number' ? event.output_index : doneItems.size,
+            item.data,
+          );
+        }
+      } else if (event.type === 'response.failed' || event.type === 'error') {
+        const failed = z.looseObject({ error: z.unknown().optional() }).safeParse(event.response);
+        const info = readErrorInfo(
+          JSON.stringify({ error: event.type === 'error' ? event : failed.data?.error }),
+          Date.now(),
+        );
+        throw new Error(
+          redact(`${label} 압축 스트림 오류 ${info.code ?? event.type}: ${info.message}`),
+        );
+      } else if (event.type === 'response.completed' || event.type === 'response.done') {
+        const completed = z
+          .looseObject({
+            output: z.array(outputItemSchema).optional(),
+            usage: usageSchema.nullish(),
+          })
+          .parse(event.response ?? {});
+        const items =
+          doneItems.size > 0
+            ? [...doneItems.entries()].sort(([a], [b]) => a - b).map(([, item]) => item)
+            : (completed.output ?? []);
+        const compaction = items.filter((item) => item.type === 'compaction');
+        return compaction.length === 1
+          ? resultOf('v2', [...retainedUserItems(request), ...compaction], usageOf(completed.usage))
+          : undefined;
+      }
+    }
+    throw new Error(`${label} 압축 스트림이 완료 이벤트 없이 끝났습니다.`);
+  };
+
+  const v1 = async (): Promise<ModelCompactResult | undefined> => {
+    const body = JSON.stringify({
+      model: model.id,
+      instructions: request.system === '' ? 'You are a helpful assistant.' : request.system,
+      input: toInput(request, toApiName, source, model.provider),
+      ...(request.tools.length === 0
+        ? {}
+        : {
+            tools: request.tools.map((tool) => ({
+              type: 'function',
+              name: toApiName(tool.name),
+              description: tool.description,
+              parameters: tool.inputSchema,
+              strict: false,
+            })),
+          }),
+      parallel_tool_calls: true,
+    });
+    const path = flavor === 'codex' ? '/codex/responses/compact' : '/responses/compact';
+    const response = await post(`${model.baseUrl}${path}`, body, 'application/json');
+    const parsed = z
+      .looseObject({ output: z.array(z.looseObject({})).optional(), usage: usageSchema.nullish() })
+      .safeParse(await response.json());
+    return parsed.success
+      ? resultOf('v1', parsed.data.output ?? [], usageOf(parsed.data.usage))
+      : undefined;
+  };
+
+  let lastError: Error | undefined;
+  // 구독 계정이 쓰는 ChatGPT 백엔드의 `/codex/responses/compact`는 실측에서 404였다. 그래서 V1은 공개 API 경로에만 보낸다.
+  for (const attempt of flavor === 'codex' ? [v2] : [v2, v1]) {
+    try {
+      const result = await attempt();
+      if (result !== undefined) return result;
+    } catch (error) {
+      if (signal.aborted || error instanceof UsageLimitError || error instanceof WireAuthError) {
+        throw error;
+      }
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  if (lastError !== undefined) throw lastError;
+  return undefined;
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}

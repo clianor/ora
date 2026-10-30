@@ -1,4 +1,4 @@
-import type { ContentBlock, Todo } from '@ora/protocol';
+import type { CompactionReplay, ContentBlock, Todo } from '@ora/protocol';
 import { phaseOf } from './todos.ts';
 import type { ModelMessage } from './ports/model.ts';
 
@@ -377,7 +377,11 @@ export function buildSummaryDocument(parts: SummaryParts): string {
   ].join('\n\n');
 }
 
-/** 요약 문서를 첫 사용자 메시지 자리에 넣는 메시지다. */
-export function summaryMessage(document: string): ModelMessage {
-  return { role: 'user', content: [{ type: 'text', text: document }] };
+/** 요약 문서를 첫 사용자 메시지 자리에 넣는 메시지다. `replay`가 있으면 같은 프로바이더의 어댑터가 문서 대신 서버 결과를 보낸다. */
+export function summaryMessage(document: string, replay?: CompactionReplay): ModelMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: document }],
+    ...(replay === undefined ? {} : { replay }),
+  };
 }

@@ -51,6 +51,31 @@ export const contentBlockSchema = z.discriminatedUnion('type', [
 ]);
 export type ContentBlock = z.infer<typeof contentBlockSchema>;
 
+/** 프로바이더 서버가 만든 압축 결과다. 같은 프로바이더의 모델에 받은 그대로 되돌려 보낸다. `supplement`는 모델이 쓴 서술을 뺀 요약 문서다. */
+export const compactionReplaySchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    kind: z.literal('anthropic'),
+    provider: z.string().min(1),
+    /** 서명이 있는 `compaction` 블록이다. 받은 그대로 보낸다. */
+    block: z.looseObject({
+      type: z.literal('compaction'),
+      content: z.string(),
+      signature: z.string(),
+    }),
+    supplement: z.string(),
+  }),
+  z.strictObject({
+    kind: z.literal('openai'),
+    provider: z.string().min(1),
+    /** `v2`는 스트리밍 Responses 요청 끝에 `compaction_trigger`를 붙인 방식이고, `v1`은 `/responses/compact` 방식이다. */
+    variant: z.enum(['v1', 'v2']),
+    /** 요약이 덮은 메시지를 대신하는 입력 항목이다. 유지하는 사용자 메시지 뒤에 불투명한 `compaction` 항목이 온다. */
+    items: z.array(jsonObjectSchema).min(1),
+    supplement: z.string(),
+  }),
+]);
+export type CompactionReplay = z.infer<typeof compactionReplaySchema>;
+
 function defineEvent<TType extends string, TPayload extends z.ZodType>(
   type: TType,
   payload: TPayload,
@@ -316,6 +341,8 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       savedTokens: z.number().int().nonnegative().optional(),
       /** 압축 시점 전에 미리 만들어 둔 요약을 쓴 압축이다. `ahead`는 기준선 바로 아래에서, `idle`은 사용자 입력을 기다리는 동안 만든 요약이다. 이전 기록에는 없다. */
       prepared: z.enum(['ahead', 'idle']).optional(),
+      /** `remote` 압축이 서버에서 받아 되돌려 보낼 값이다. 같은 프로바이더의 모델이 이어 받을 때 요약 문서 대신 보낸다. 이전 기록에는 없다. */
+      replay: compactionReplaySchema.optional(),
     }),
   ),
   // 재개할 때 모델 컨텍스트에서 뺀 seq 범위다. transcript 파일에는 그대로 남는다.

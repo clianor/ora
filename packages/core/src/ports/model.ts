@@ -1,4 +1,4 @@
-import type { ContentBlock, EventOf, SessionRecord } from '@ora/protocol';
+import type { CompactionReplay, ContentBlock, EventOf, SessionRecord } from '@ora/protocol';
 
 export interface ToolSpec {
   readonly name: string;
@@ -9,6 +9,11 @@ export interface ToolSpec {
 export interface ModelMessage {
   readonly role: 'user' | 'assistant';
   readonly content: readonly ContentBlock[];
+  /**
+   * 요약 문서 메시지에만 붙는다. 첫 내용 블록이 요약 문서이고, 같은 프로바이더의 어댑터는 그 블록 대신 서버가 만든 압축 결과를 보낸다.
+   * 다른 프로바이더의 어댑터는 이 필드를 무시하고 요약 문서를 그대로 보낸다.
+   */
+  readonly replay?: CompactionReplay;
 }
 
 export interface ModelRequest {
@@ -39,6 +44,8 @@ export type ModelStreamEvent =
 export interface ModelPort {
   readonly model: string;
   readonly adapter: string;
+  /** 모델을 제공하는 프로바이더 ID다. 서버가 만든 압축 결과를 같은 프로바이더의 모델만 읽을 수 있는지 판정하는 데 쓴다. */
+  readonly provider?: string;
   /** 모델 컨텍스트 창(토큰)이다. 모르면 비우고, 호스트가 카탈로그 값을 채운다. */
   readonly contextWindow?: number;
   /** 모델의 최대 출력 토큰이다(카탈로그 값). 모르면 비운다. */
@@ -47,17 +54,27 @@ export interface ModelPort {
   readonly acceptsOutputCap?: boolean;
   /**
    * 프로바이더 서버가 요약을 쓰는 압축 요청이다. `undefined`를 돌려주면 이 모델과 자격으로는 쓸 수 없다는 뜻이며 엔진이 `remote` 방식을 건너뛴다.
-   * 서버가 요약을 쓰지 못했을 때도 `undefined`다. 요청 자체가 실패하면 예외를 던진다.
+   * 서버가 요약을 쓰지 못했을 때도 `undefined`다. 요청 자체가 실패하면 예외를 던진다. `instructions`는 서버가 쓰는 요약 지시다.
    */
-  compact?(request: ModelRequest, signal: AbortSignal): Promise<ModelCompactResult | undefined>;
+  compact?(
+    request: ModelRequest & { readonly instructions: string },
+    signal: AbortSignal,
+  ): Promise<ModelCompactResult | undefined>;
   stream(request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelStreamEvent>;
+  /** 프롬프트 캐시가 유지되는 시간이다. 모르면 비운다. 엔진이 입력을 기다리는 동안 요약을 만들 시점을 정하는 데 쓴다. */
+  readonly cacheTtl?: '5m' | '1h';
   /** 마지막 요청을 보낸 계정이다. 엔진이 `session.json`에 적어 재개한 세션이 같은 계정을 이어 쓰게 한다. */
   accountPin?(): SessionRecord['accountPin'];
 }
 
+type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : never;
+
 export interface ModelCompactResult {
+  /** 사람이 읽을 수 있는 요약이다. 서버가 요약을 불투명한 항목으로만 돌려주면 빈 문자열이다. */
   readonly text: string;
   readonly usage: ModelUsage;
+  /** 같은 프로바이더의 모델에 되돌려 보낼 서버 결과다. */
+  readonly replay?: DistributiveOmit<CompactionReplay, 'supplement'>;
 }
 
 /** 사용량 한도 때문에 요청을 보낼 수 없다는 오류다. 어댑터의 한도 오류가 이 클래스를 상속한다. */

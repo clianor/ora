@@ -457,6 +457,14 @@ const contextEvents: OraEvent[] = tagSteps([
     prunedCallIds: [],
     prepared: 'ahead',
   }),
+  makeContext('compaction', '18:44', 'engine', {
+    method: 'summary',
+    fromSeq: 25,
+    toSeq: 40,
+    path: 'compactions/2.md',
+    prunedCallIds: [],
+    prepared: 'idle',
+  }),
   makeContext('compaction', '18:45', 'engine', {
     method: 'remote',
     fromSeq: 41,

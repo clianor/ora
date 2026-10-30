@@ -23,9 +23,9 @@ function getLabel(mark: CompactionMarkData): string {
       return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 인계 문서로 바꿨습니다`;
     case 'summary':
       if (mark.prepared === 'ahead')
-        return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 미리 만들어 둔 요약으로 바꿨습니다`;
+        return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 기준선에 닿기 전에 미리 요약해 두었습니다`;
       if (mark.prepared === 'idle')
-        return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 쉬는 동안 만든 요약으로 바꿨습니다`;
+        return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 캐시가 끝나기 전에 미리 요약했습니다`;
       return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 요약했습니다`;
     case 'remote':
       return `${formatRange(mark.range)}${mark.range ? '를' : '을'} 서버가 쓴 요약으로 바꿨습니다`;

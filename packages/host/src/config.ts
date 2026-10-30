@@ -209,8 +209,17 @@ const configSchema = z.object({
         .array(z.enum(['remote', 'shake', 'handoff', 'summary']))
         .min(1)
         .default(['remote', 'handoff', 'shake', 'summary']),
-      /** 사용자 입력을 기다린 지 이 시간(ms)이 지나면 다음 압축에 쓸 요약을 미리 만든다. 0이면 만들지 않는다. 기본 50분은 1시간 캐시가 끝나기 전이다. */
-      idleSummaryMs: z.number().int().nonnegative().default(3_000_000),
+      /** 캐시 만료 전 요약을 켠다. 입력을 기다리는 동안 컨텍스트가 `idleThresholdTokens` 이상이면 다음 압축에 쓸 요약을 미리 만든다. */
+      idleEnabled: z.boolean().default(false),
+      idleThresholdTokens: z.number().int().positive().default(200000),
+      /** 1시간 캐시가 없을 때 입력을 기다린 지 이만큼(초) 지나면 요약을 미리 만든다. 1시간 캐시가 있으면 캐시를 갱신할 시점의 5초 전에 시작한다. */
+      idleTimeoutSeconds: z.number().positive().default(300),
+      idleSummaryMs: z
+        .never({
+          error:
+            'context.idleSummaryMs는 없어졌습니다. context.idleEnabled, idleThresholdTokens, idleTimeoutSeconds로 바꿉니다.',
+        })
+        .optional(),
       keepRecentSteps: z
         .never({
           error:
@@ -224,7 +233,9 @@ const configSchema = z.object({
       protectToolTokens: 40000,
       minPruneSavings: 20000,
       methodOrder: ['remote', 'handoff', 'shake', 'summary'],
-      idleSummaryMs: 3_000_000,
+      idleEnabled: false,
+      idleThresholdTokens: 200000,
+      idleTimeoutSeconds: 300,
     }),
   /** 외부 MCP 서버 목록이다 (SPEC 2.10절). 설정 › MCP 화면이 이 키를 고친다. */
   mcpServers: z

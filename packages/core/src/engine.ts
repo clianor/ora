@@ -4,6 +4,7 @@ import type {
   ApprovalScope,
   ContentBlock,
   EndReason,
+  CompactionReplay,
   Evidence,
   Isolation,
   PermissionMode,
@@ -40,6 +41,7 @@ import { scoreBm25 } from './relevance.ts';
 import { CostStopError, ModelLimitError } from './ports/model.ts';
 import type {
   ModelChainEntry,
+  ModelCompactResult,
   ModelMessage,
   ModelPort,
   ModelPricing,
@@ -115,8 +117,12 @@ export interface EngineSettings {
   readonly protectToolTokens: number;
   readonly minPruneSavings: number;
   readonly methodOrder: readonly ('remote' | 'shake' | 'handoff' | 'summary')[];
-  /** 사용자 입력을 기다리기 시작한 뒤 이 시간(ms)이 지나도 기다리는 중이면 다음 압축에 쓸 요약을 미리 만든다. 비우거나 0이면 만들지 않는다. */
-  readonly idleSummaryMs?: number;
+  /** 캐시 만료 전 요약을 켠다. 입력을 기다리는 동안 컨텍스트가 `idleThresholdTokens` 이상이면 다음 압축에 쓸 요약을 미리 만든다. 기본은 끈다. */
+  readonly idleEnabled?: boolean;
+  /** 캐시 만료 전 요약을 만드는 컨텍스트 토큰 수다. 기본 200000이다. */
+  readonly idleThresholdTokens?: number;
+  /** 1시간 캐시가 없을 때 입력을 기다린 지 이만큼(초) 지나면 캐시 만료 전 요약을 만든다. 기본 300이다. */
+  readonly idleTimeoutSeconds?: number;
   /** 비용 상한이다 (SPEC 5.4절). 비우면 상한이 없다. 단위는 `pricing`과 같다. */
   readonly maxCost?: number;
   readonly warnCost?: number;
@@ -197,10 +203,19 @@ interface ControlOutput extends ToolOutput {
 
 /** 압축한 뒤 어림값이 기준선의 이 비율 이하여야 여유를 만들었다고 본다 (SPEC 4.3절 진행 보증). */
 const PROGRESS_RATIO = 0.8;
-/** 어림값이 기준선의 이 비율에 닿으면 다음 압축에 쓸 요약을 미리 만든다. */
-const AHEAD_RATIO = 0.9;
-/** 쉴 때 요약은 어림값이 기준선의 이 비율 이상일 때만 만든다. 비율은 SPEC에 없어 보수적으로 정한 값이다. */
-const IDLE_RATIO = 0.5;
+/** 미리 요약을 시작하는 구간 `[기준선 − lead, 기준선)`의 lead는 기준선에 이 비율을 곱하고 아래 두 값 사이로 맞춘다. */
+const AHEAD_LEAD_RATIO = 0.125;
+const AHEAD_LEAD_MIN_TOKENS = 8192;
+const AHEAD_LEAD_MAX_TOKENS = 32_000;
+/** 캐시 만료 전 요약의 기본값이다. 컨텍스트가 이 토큰 수 이상이어야 하고, 캐시가 끝나는 때를 모르면 입력을 기다린 지 이 초가 지나야 만든다. */
+const IDLE_THRESHOLD_TOKENS = 200_000;
+const IDLE_TIMEOUT_SECONDS = 300;
+/** 1시간 캐시를 갱신할 시점보다 이만큼 일찍 캐시 만료 전 요약을 만들어, 요약 요청이 캐시된 앞부분을 읽게 한다. */
+const IDLE_EARLY_MS = 5000;
+const CACHE_TTL_1H_MS = 3_600_000;
+/** 서버가 요약을 읽을 수 없는 항목으로만 돌려준 압축에서, 요약 문서의 모델 서술 자리에 쓰는 문장이다. */
+const OPAQUE_NARRATIVE =
+  '(서버가 요약을 암호화된 항목으로 보관합니다. 읽을 수 있는 서술은 없습니다.)';
 /** 압축 요청의 출력 상한 기본값이다 (SPEC 4.3절 출력 상한). */
 const COMPACTION_OUTPUT_CAP = 8000;
 /** 남은 자리가 이보다 작으면 그 방식을 건너뛴다. 제목 몇 개와 목록 몇 줄(한글 300~500토큰)은 있어야 쓸 만한 문서라는 판단이고 실측하지 않았다. */
@@ -1668,29 +1683,79 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     knownTokens = undefined;
   };
   // 다음 압축에 쓸 요약이다. `end`는 요약이 덮는 `history` 앞쪽 메시지 수이고 `lastSeq`는 그 마지막 메시지의 seq다.
+  // `tailTokens`는 만들 때 `end` 뒤에 있던 메시지의 어림 토큰 수, `replacementTokens`는 요약이 컨텍스트에 남기는 어림 토큰 수다.
   let prepared:
-    { end: number; lastSeq: number; narrative: string; kind: 'ahead' | 'idle' } | undefined;
+    | ({
+        end: number;
+        lastSeq: number;
+        kind: 'ahead' | 'idle';
+        tailTokens: number;
+        replacementTokens: number;
+      } & (
+        { method: 'summary'; narrative: string } | { method: 'remote'; result: ModelCompactResult }
+      ))
+    | undefined;
+  // 불투명한 서버 항목이 대신하는 원본 메시지다. 다음 압축은 항목을 요약으로 읽지 않고 이 원문을 다시 펼쳐 압축한다.
+  let opaque: { messages: ModelMessage[]; seqs: number[]; hasSummary: boolean } | undefined =
+    resume?.plan.opaque === undefined
+      ? undefined
+      : {
+          messages: [...resume.plan.opaque.messages],
+          seqs: [...resume.plan.opaque.seqs],
+          hasSummary: resume.plan.opaque.hasSummary,
+        };
+  /** 첫 메시지가 불투명한 서버 항목이면 원본 메시지로 되돌린다. 항목 뒤에 합쳐진 사용자 내용은 원본 끝에 붙인다. */
+  const expandOpaque = () => {
+    const first = history[0];
+    if (opaque === undefined || first?.replay?.kind !== 'openai') return;
+    const extras = first.content.slice(1);
+    history.splice(0, 1, ...opaque.messages);
+    historySeqs.splice(0, 1, ...opaque.seqs);
+    const last = opaque.messages.length - 1;
+    if (extras.length > 0) {
+      const tail = history[last];
+      if (tail?.role === 'user')
+        history[last] = { role: 'user', content: [...tail.content, ...extras] };
+      else {
+        history.splice(last + 1, 0, { role: 'user', content: extras });
+        historySeqs.splice(last + 1, 0, historySeqs[last] ?? 1);
+      }
+    }
+    hasSummary = opaque.hasSummary;
+    opaque = undefined;
+    prepared = undefined;
+    knownTokens = undefined;
+  };
   /** 앞 `cut`개 메시지를 요약 문서 하나로 바꾼다. 필수 절은 엔진이 기록에서 만든다. */
   const commit = async (
     method: 'handoff' | 'summary' | 'remote',
     cut: number,
-    parts: { narrative: string; turnPrefix?: string; prepared?: 'ahead' | 'idle' },
+    parts: {
+      narrative: string;
+      turnPrefix?: string;
+      prepared?: 'ahead' | 'idle';
+      replay?: NonNullable<ModelCompactResult['replay']>;
+    },
   ) => {
-    const { prepared: preparedKind, ...documentParts } = parts;
-    const document = scrubText(
-      buildSummaryDocument({
-        instructions,
-        todos: [...todos.values()],
-        objective,
-        phases: summaryPhases(),
-        ...(current === undefined ? {} : { current }),
-        openErrors: [...lastResults]
-          .filter(([, result]) => result.isError)
-          .map(([tool, result]) => ({ tool, summary: result.text })),
-        method: method === 'handoff' ? 'handoff' : 'summary',
-        ...documentParts,
-      }),
-    ).text;
+    const buildDocument = (narrative: string, turnPrefix?: string) =>
+      scrubText(
+        buildSummaryDocument({
+          instructions,
+          todos: [...todos.values()],
+          objective,
+          phases: summaryPhases(),
+          ...(current === undefined ? {} : { current }),
+          openErrors: [...lastResults]
+            .filter(([, result]) => result.isError)
+            .map(([tool, result]) => ({ tool, summary: result.text })),
+          method: method === 'handoff' ? 'handoff' : 'summary',
+          narrative,
+          ...(turnPrefix === undefined ? {} : { turnPrefix }),
+        }),
+      ).text;
+    const document = buildDocument(parts.narrative, parts.turnPrefix);
+    const replay: CompactionReplay | undefined =
+      parts.replay === undefined ? undefined : { ...parts.replay, supplement: buildDocument('') };
     const fromSeq = historySeqs[0] ?? 1;
     const toSeq = historySeqs[cut - 1] ?? fromSeq;
     const path = await store.writeCompaction(document);
@@ -1702,10 +1767,15 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         toSeq,
         path,
         prunedCallIds: [],
-        ...(preparedKind === undefined ? {} : { prepared: preparedKind }),
+        ...(parts.prepared === undefined ? {} : { prepared: parts.prepared }),
+        ...(replay === undefined ? {} : { replay }),
       },
     });
-    history.splice(0, cut, summaryMessage(document));
+    opaque =
+      replay?.kind === 'openai'
+        ? { messages: history.slice(0, cut), seqs: historySeqs.slice(0, cut), hasSummary }
+        : undefined;
+    history.splice(0, cut, summaryMessage(document, replay));
     historySeqs.splice(0, cut, fromSeq);
     hasSummary = true;
     prepared = undefined;
@@ -1749,6 +1819,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     modelSignal: AbortSignal,
     minimal = false,
   ): Promise<boolean> => {
+    expandOpaque();
     const port = await currentPort('compaction');
     const kept = keepCut(window, port.maxOutputTokens, minimal);
     if (kept === undefined) return false;
@@ -1788,83 +1859,33 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       modelSignal,
       askCap,
     );
-  /**
-   * 다음 압축에 쓸 요약을 미리 만들어 `prepared`에 둔다. 만들지 못하면 조용히 넘어가고, 압축 시점에 평소대로 요약한다.
-   * 비용은 `requestCompaction`이 비용 합계에 더한다.
-   */
-  const prepareSummary = async (kind: 'ahead' | 'idle', window: number) => {
-    if (prepared !== undefined || !settings.methodOrder.includes('summary')) return;
-    if (
-      estimateInput() <
-      window * settings.compactAtRatio * (kind === 'ahead' ? AHEAD_RATIO : IDLE_RATIO)
-    )
-      return;
-    const port = await currentPort('compaction');
-    const kept = keepCut(window, port.maxOutputTokens);
-    if (kept === undefined) return;
-    const lastSeq = historySeqs[kept.cut - 1];
-    if (lastSeq === undefined) return;
-    try {
-      const narrative = await askSummary(
-        port,
-        AbortSignal.any([signal, softStop]),
-        SUMMARY_SYSTEM,
-        history.slice(firstEligible(), kept.cut),
-        kept.cap,
-        previousNarrative(),
-      );
-      if (narrative !== undefined) prepared = { end: kept.cut, lastSeq, narrative, kind };
-    } catch (error) {
-      if (signal.aborted || softStop.aborted) throw error;
-    }
-  };
-  // 쉴 때 요약이 돌고 있으면 그 요청이다. 다음 모델 요청 전에 끝까지 기다린다.
-  let preparing: Promise<void> = Promise.resolve();
-  /** 사용자 입력을 기다리기 시작할 때 부른다. `idleSummaryMs`가 지나도 기다리는 중이면 쉴 때 요약을 만들고, 돌려준 함수를 부르면 타이머를 끈다. */
-  const startIdleSummary = (): (() => void) => {
-    const delay = settings.idleSummaryMs ?? 0;
-    if (delay <= 0) return () => undefined;
-    const timer = setTimeout(() => {
-      preparing = (async () => {
-        const window = (await currentPort('default')).contextWindow;
-        if (window !== undefined) await prepareSummary('idle', window);
-      })().catch(() => undefined);
-    }, delay);
-    return () => {
-      clearTimeout(timer);
-    };
-  };
-  /** 미리 만든 요약이 지금도 `history`의 앞쪽 `cut` 안을 그대로 덮으면 돌려준다. */
-  const usablePrepared = (cut: number) =>
-    prepared !== undefined &&
-    prepared.end > firstEligible() &&
-    prepared.end <= cut &&
-    historySeqs[prepared.end - 1] === prepared.lastSeq
-      ? prepared
-      : undefined;
-  const runRemote = async (
-    window: number,
+  /** 서버 압축 요청이다. 성공하면 사용량을 `purpose: 'compaction'` 요청으로 남긴다. 쓸 수 없거나 실패하면 `undefined`다. */
+  const requestRemote = async (
+    port: ModelPort,
+    cut: number,
+    cap: number,
     modelSignal: AbortSignal,
-    minimal = false,
-  ): Promise<boolean> => {
-    const port = await currentPort('compaction');
-    if (port.compact === undefined) return false;
-    const kept = keepCut(window, port.maxOutputTokens, minimal);
-    if (kept === undefined) return false;
-    const { cut, cap } = kept;
+  ): Promise<ModelCompactResult | undefined> => {
     await guardCost(port.model);
     const started = clock.now().getTime();
-    let result;
+    let result: ModelCompactResult | undefined;
     try {
-      result = await port.compact(
-        { system, messages: history.slice(0, cut), tools: specs, maxOutputTokens: cap },
+      result = await port.compact?.(
+        {
+          system,
+          messages: history.slice(0, cut),
+          tools: specs,
+          maxOutputTokens: cap,
+          instructions:
+            port.acceptsOutputCap === true ? SUMMARY_SYSTEM : withCap(SUMMARY_SYSTEM, cap),
+        },
         modelSignal,
       );
     } catch (error) {
       if (signal.aborted || softStop.aborted) throw error;
-      return false;
+      return undefined;
     }
-    if (result === undefined) return false;
+    if (result === undefined) return undefined;
     await noteUse('compaction');
     await emit('model', {
       type: 'model_request',
@@ -1880,16 +1901,166 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         purpose: 'compaction',
       },
     });
-    const text = scrubText(result.text.trim()).text;
-    if (text === '' || estimateTokens(text) > cap) return false;
-    await commit('remote', cut, { narrative: text });
+    return result;
+  };
+  /** 서버 결과가 요약 문서를 대신하며 컨텍스트에 남기는 어림 토큰 수다. 불투명 항목은 세지 않는다. */
+  const replacementTokens = (result: ModelCompactResult) =>
+    result.replay?.kind === 'openai'
+      ? estimateTokens(result.replay.items.filter((item) => item.type !== 'compaction'))
+      : estimateTokens(result.text);
+  /** 다음 압축에 쓸 요약을 미리 만들어 `prepared`에 둔다. 만들지 못하면 조용히 넘어가고, 압축 시점에 평소대로 요약한다. 비용은 요청이 비용 합계에 더한다. */
+  const prepareSummary = async (kind: 'ahead' | 'idle', window: number) => {
+    if (prepared !== undefined) return;
+    if (
+      kind === 'idle' &&
+      estimateInput() < (settings.idleThresholdTokens ?? IDLE_THRESHOLD_TOKENS)
+    ) {
+      return;
+    }
+    expandOpaque();
+    const port = await currentPort('compaction');
+    const methods = settings.methodOrder.filter(
+      (name) => name === 'summary' || (name === 'remote' && port.compact !== undefined),
+    );
+    const kept = keepCut(window, port.maxOutputTokens);
+    const lastSeq = kept === undefined ? undefined : historySeqs[kept.cut - 1];
+    if (kept === undefined || lastSeq === undefined) return;
+    const base = {
+      end: kept.cut,
+      lastSeq,
+      kind,
+      tailTokens: estimateTokens(history.slice(kept.cut)),
+    };
+    const stop = AbortSignal.any([signal, softStop]);
+    for (const method of methods) {
+      try {
+        if (method === 'remote') {
+          const result = await requestRemote(port, kept.cut, kept.cap, stop);
+          if (result === undefined) continue;
+          prepared = { ...base, method, result, replacementTokens: replacementTokens(result) };
+          return;
+        }
+        const narrative = await askSummary(
+          port,
+          stop,
+          SUMMARY_SYSTEM,
+          history.slice(firstEligible(), kept.cut),
+          kept.cap,
+          previousNarrative(),
+        );
+        if (narrative !== undefined) {
+          prepared = {
+            ...base,
+            method: 'summary',
+            narrative,
+            replacementTokens: estimateTokens(narrative),
+          };
+          return;
+        }
+      } catch (error) {
+        if (signal.aborted || softStop.aborted) throw error;
+      }
+    }
+  };
+  // 입력을 기다리는 동안 요약이 돌고 있으면 그 요청이다. 다음 모델 요청 전에 끝까지 기다린다.
+  let preparing: Promise<void> = Promise.resolve();
+  // 마지막 모델 응답이 1시간 캐시를 읽거나 썼으면 그 요청을 보낸 시각이다.
+  let cacheUse: { at: number; ttlMs: number } | undefined;
+  /**
+   * 입력을 기다리기 시작한 뒤 요약을 만들기까지 기다릴 시간이다.
+   * 1시간 캐시가 살아 있으면 캐시를 갱신할 시점 `min(TTL×0.9, TTL−10초)`의 5초 전이고, 이미 지났지만 캐시가 끝나기 전이면 바로다.
+   * 5분 캐시이거나 캐시를 모르거나 이미 끝났으면 설정한 초다.
+   */
+  const idleDelayMs = () => {
+    const fallback = (settings.idleTimeoutSeconds ?? IDLE_TIMEOUT_SECONDS) * 1000;
+    if (cacheUse === undefined) return fallback;
+    const elapsed = clock.now().getTime() - cacheUse.at;
+    if (elapsed >= cacheUse.ttlMs) return fallback;
+    const refreshAt = Math.min(cacheUse.ttlMs * 0.9, cacheUse.ttlMs - 10_000);
+    return Math.max(0, refreshAt - IDLE_EARLY_MS - elapsed);
+  };
+  /** 사용자 입력을 기다리기 시작할 때 부른다. 캐시 만료 전 요약을 켰고 컨텍스트가 설정한 토큰 이상이면 타이머를 걸고, 돌려준 함수를 부르면 타이머를 끈다. */
+  const startIdleSummary = (): (() => void) => {
+    if (
+      settings.idleEnabled !== true ||
+      estimateInput() < (settings.idleThresholdTokens ?? IDLE_THRESHOLD_TOKENS)
+    ) {
+      return () => undefined;
+    }
+    const timer = setTimeout(() => {
+      preparing = (async () => {
+        const window = (await currentPort('default')).contextWindow;
+        if (window !== undefined) await prepareSummary('idle', window);
+      })().catch(() => undefined);
+    }, idleDelayMs());
+    return () => {
+      clearTimeout(timer);
+    };
+  };
+  /** 미리 만든 요약이 지금도 `history`의 앞쪽을 그대로 덮고, 그 뒤로 늘어난 부분이 `keepRecentTokens` 이하이고, 컨텍스트를 줄이면 돌려준다. */
+  const isPreparedValid = (candidate: NonNullable<typeof prepared>) =>
+    candidate.end > firstEligible() &&
+    historySeqs[candidate.end - 1] === candidate.lastSeq &&
+    estimateTokens(history.slice(candidate.end)) - candidate.tailTokens <=
+      settings.keepRecentTokens &&
+    estimateTokens(history.slice(firstEligible(), candidate.end)) > candidate.replacementTokens;
+  const usableSummary = (cut: number) =>
+    prepared?.method === 'summary' && prepared.end <= cut && isPreparedValid(prepared)
+      ? prepared
+      : undefined;
+  const usableRemote = () =>
+    prepared?.method === 'remote' && isPreparedValid(prepared) ? prepared : undefined;
+  /**
+   * 서버가 쓴 압축 결과를 앞 `cut`개 메시지 대신 커밋한다. 불투명 항목은 압축을 요청한 모델과 같은 프로바이더의 기본 모델만 읽으므로, 기본 모델이 다른 프로바이더면 커밋하지 않는다.
+   * 읽을 수 있는 요약이 비었거나 출력 상한을 넘으면 커밋하지 않는다.
+   */
+  const commitRemote = async (
+    cut: number,
+    result: ModelCompactResult,
+    cap: number,
+    preparedKind?: 'ahead' | 'idle',
+  ): Promise<boolean> => {
+    const { replay } = result;
+    let narrative = scrubText(result.text.trim()).text;
+    if (replay?.kind === 'openai') {
+      if ((await currentPort('default')).provider !== replay.provider) return false;
+      narrative = OPAQUE_NARRATIVE;
+    } else if (narrative === '' || estimateTokens(narrative) > cap) {
+      return false;
+    }
+    await commit('remote', cut, {
+      narrative,
+      ...(replay === undefined ? {} : { replay }),
+      ...(preparedKind === undefined ? {} : { prepared: preparedKind }),
+    });
     return true;
+  };
+  const runRemote = async (
+    window: number,
+    modelSignal: AbortSignal,
+    minimal = false,
+  ): Promise<boolean> => {
+    expandOpaque();
+    const port = await currentPort('compaction');
+    if (port.compact === undefined) return false;
+    const kept = keepCut(window, port.maxOutputTokens, minimal);
+    if (kept === undefined) return false;
+    const { cut, cap } = kept;
+    const ready = minimal ? undefined : usableRemote();
+    if (ready !== undefined) {
+      const done = await commitRemote(ready.end, ready.result, cap, ready.kind);
+      prepared = undefined;
+      return done;
+    }
+    const result = await requestRemote(port, cut, cap, modelSignal);
+    return result !== undefined && (await commitRemote(cut, result, cap));
   };
   const runSummary = async (
     window: number,
     modelSignal: AbortSignal,
     minimal = false,
   ): Promise<boolean> => {
+    expandOpaque();
     const port = await currentPort('compaction');
     const kept = keepCut(window, port.maxOutputTokens, minimal);
     if (kept === undefined) return false;
@@ -1903,7 +2074,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         ? turnStart
         : undefined;
     const mainCap = splitAt === undefined ? cap : cap - Math.floor(cap / 3);
-    const ready = splitAt === undefined ? usablePrepared(cut) : undefined;
+    const ready = splitAt === undefined ? usableSummary(cut) : undefined;
     let narrative: string | undefined;
     if (ready === undefined) {
       narrative = await askSummary(
@@ -2093,7 +2264,15 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         }
         await preparing;
         let estimate = estimateInput();
-        if (estimate < threshold && estimate >= threshold * AHEAD_RATIO) {
+        // 기준선 직전 구간 `[기준선 − lead, 기준선)`에서 미리 요약한다. lead는 기준선의 12.5%이고 8192~32000토큰 범위다. 기준선의 절반을 넘지 않게 줄인다.
+        const lead = Math.min(
+          Math.min(
+            Math.max(threshold * AHEAD_LEAD_RATIO, AHEAD_LEAD_MIN_TOKENS),
+            AHEAD_LEAD_MAX_TOKENS,
+          ),
+          threshold / 2,
+        );
+        if (estimate < threshold && estimate >= threshold - lead) {
           await prepareSummary('ahead', window);
         }
         if (estimate >= threshold) {
@@ -2119,11 +2298,12 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           };
           let reached = false;
           let lastCompressor: 'remote' | 'handoff' | 'summary' = 'summary';
-          // 미리 만든 요약이 있으면 그 뒤로 늘어난 부분만 요약하면 되므로 다른 방식보다 먼저 시도한다.
+          // 미리 만든 요약이 있으면 다른 방식보다 먼저 시도한다. 요약 방식은 그 뒤로 늘어난 부분만 요약하면 되고, 서버 압축은 미리 받은 결과를 그대로 쓴다.
+          const readyMethod = (usableRemote() ?? usableSummary(history.length))?.method;
           const order =
-            usablePrepared(history.length) === undefined
+            readyMethod === undefined
               ? settings.methodOrder
-              : ['summary' as const, ...settings.methodOrder.filter((name) => name !== 'summary')];
+              : [readyMethod, ...settings.methodOrder.filter((name) => name !== readyMethod)];
           for (const method of order) {
             if (!(await methods[method](window, passSignal))) continue;
             if (method !== 'shake') lastCompressor = method;
@@ -2172,6 +2352,11 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           durationMs,
         },
       });
+      cacheUse =
+        port.cacheTtl === '1h' &&
+        completed.usage.cacheReadInputTokens + completed.usage.cacheCreationInputTokens > 0
+          ? { at: clock.now().getTime() - durationMs, ttlMs: CACHE_TTL_1H_MS }
+          : undefined;
       history.push({ role: 'assistant', content: scrubValue(content) });
       await emit('model', {
         type: 'message',

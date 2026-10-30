@@ -544,7 +544,9 @@ const IDLE_SCENARIO = {
     compactAtRatio: 0.8,
     keepRecentTokens: 1,
     methodOrder: ['summary'],
-    idleSummaryMs: 300,
+    idleEnabled: true,
+    idleThresholdTokens: 5_000,
+    idleTimeoutSeconds: 0.3,
   },
 };
 

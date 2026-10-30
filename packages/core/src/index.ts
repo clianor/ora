@@ -1,4 +1,5 @@
 export * from './engine.ts';
+export { estimateTokens } from './compaction.ts';
 export * from './harness-cli.ts';
 export * from './permission.ts';
 export * from './origin.ts';

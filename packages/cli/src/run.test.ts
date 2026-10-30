@@ -1156,9 +1156,42 @@ test(
   },
   TEST_TIMEOUT_MS,
 );
+test(
+  'remote 압축 결과의 서버 항목은 compaction 이벤트에 남고, 이어지는 모델 요청의 첫 메시지가 그대로 받는다',
+  async () => {
+    const project = createProject();
+    const responses: { content: Block[]; usage?: object }[] = compactionResponses(
+      'ZZ-쓰이지 않음',
+      [finalReport],
+    );
+    const bigAt = responses.findIndex((response) => response.usage !== undefined);
+    responses.splice(bigAt + 1, 1);
+    const block = { type: 'compaction', content: 'ZZ-서버 요약', signature: 'sig-1' };
+    await startCompactionRun(
+      project,
+      responses,
+      { methodOrder: ['remote', 'summary'] },
+      '파일을 고친다',
+      COMPACTION_WINDOW,
+      {
+        remote: { text: 'ZZ-서버 요약', replay: { kind: 'anthropic', provider: 'claude', block } },
+      },
+    ).done;
+
+    const { events } = readSession(project);
+    const first = events.find((event) => event.type === 'compaction');
+    expect(first?.payload.replay).toMatchObject({ kind: 'anthropic', block });
+    expect(first?.payload.replay?.supplement).toContain('파일을 고친다');
+    const after = readModelInputs(project, 'first').findLast(
+      (input) => !JSON.stringify(input.messages).includes('<conversation>'),
+    );
+    expect(after?.messages[0]).toMatchObject({ replay: { kind: 'anthropic', block } });
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test(
-  '기준선 바로 아래에서 미리 만든 요약은 압축 때 쓰고, 그 뒤로 늘어난 부분만 이어서 요약한다',
+  '기준선 직전에 미리 만든 요약 뒤로 keepRecentTokens보다 많이 늘면 버리고, 압축 때 다시 요약한다',
   async () => {
     const project = createProject();
     await startCompactionRun(
@@ -1183,15 +1216,15 @@ test(
 
     const { events } = readSession(project);
     const compaction = events.find((event) => event.type === 'compaction');
-    expect(compaction?.payload).toMatchObject({ method: 'summary', prepared: 'ahead' });
+    expect(compaction?.payload.method).toBe('summary');
+    expect(compaction?.payload.prepared).toBeUndefined();
     expect(
       events.filter((event) => event.type === 'model_request' && event.payload.purpose),
     ).toHaveLength(2);
     const inputs = readModelInputs(project, 'first');
-    const delta = inputs.find((input) =>
-      JSON.stringify(input.messages).includes('<previous-summary>'),
-    );
-    expect(JSON.stringify(delta?.messages)).toContain('ZZ-미리 만든 요약');
+    expect(
+      inputs.some((input) => JSON.stringify(input.messages).includes('<previous-summary>')),
+    ).toBe(false);
   },
   TEST_TIMEOUT_MS,
 );

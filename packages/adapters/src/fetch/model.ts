@@ -1,4 +1,5 @@
 import { compactAnthropicMessages } from '../anthropic.ts';
+import { compactOpenAIResponses } from './openai-responses.ts';
 import type { ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import type { SessionRecord } from '@ora/protocol';
 import type { Account, AccountStore } from './accounts.ts';
@@ -110,30 +111,44 @@ export function createFetchModel(options: FetchModelOptions): ModelPort {
 
   return {
     model: catalog.id,
+    provider: catalog.provider,
     adapter: `${catalog.provider}-fetch`,
     contextWindow: catalog.contextWindow,
     maxOutputTokens: catalog.maxOutputTokens,
     acceptsOutputCap: catalog.wire !== 'openai-codex-responses',
-    ...(catalog.wire === 'anthropic-messages'
+    cacheTtl: catalog.cacheTtl,
+    ...(catalog.wire === 'anthropic-messages' || catalog.wire === 'openai-codex-responses'
       ? {
-          async compact(request: ModelRequest, signal: AbortSignal) {
+          async compact(request: ModelRequest & { instructions: string }, signal: AbortSignal) {
             const [account] = await rank(await store.list(catalog.provider), false);
             if (account === undefined) return undefined;
+            const maxTokens = Math.min(
+              request.maxOutputTokens ?? catalog.maxOutputTokens,
+              catalog.maxOutputTokens,
+            );
+            const run = (credential: WireCredential) => {
+              const input = {
+                model: catalog,
+                credential,
+                request,
+                signal,
+                options: { ...options.wireOptions, sessionId, maxTokens },
+              };
+              return catalog.wire === 'anthropic-messages'
+                ? compactAnthropicMessages(input)
+                : compactOpenAIResponses(input);
+            };
             const credential = await store.resolveCredential(catalog.provider, account.name);
-            const fetchImpl = options.wireOptions?.fetch;
-            return compactAnthropicMessages({
-              model: catalog,
-              credential,
-              request,
-              signal,
-              options: {
-                maxTokens: Math.min(
-                  request.maxOutputTokens ?? catalog.maxOutputTokens,
-                  catalog.maxOutputTokens,
-                ),
-                ...(fetchImpl === undefined ? {} : { fetch: fetchImpl }),
-              },
-            });
+            try {
+              return await run(credential);
+            } catch (error) {
+              if (!(error instanceof WireAuthError) || credential.kind !== 'oauth') throw error;
+              return run(
+                await store.resolveCredential(catalog.provider, account.name, {
+                  forceRefresh: true,
+                }),
+              );
+            }
           },
         }
       : {}),

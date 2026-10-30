@@ -146,7 +146,7 @@ export function planRecovery(parsed: ParsedTranscript, cause: StopCause): DraftE
 export function appendMessage(history: ModelMessage[], message: ModelMessage): void {
   const last = history.at(-1);
   if (last?.role === message.role && message.role === 'user') {
-    history[history.length - 1] = { role: 'user', content: [...last.content, ...message.content] };
+    history[history.length - 1] = { ...last, content: [...last.content, ...message.content] };
     return;
   }
   history.push(message);
@@ -221,6 +221,12 @@ export interface ResumePlan {
   readonly summaryFallback?: EventOf<'resume'>['payload']['summaryFallback'];
   /** 마지막 압축 요약이 `history`의 첫 메시지를 대신한다. */
   readonly hasSummary: boolean;
+  /** 마지막 압축이 불투명한 서버 항목이면 그 항목이 대신하는 원본 메시지다. */
+  readonly opaque?: {
+    readonly messages: readonly ModelMessage[];
+    readonly seqs: readonly number[];
+    readonly hasSummary: boolean;
+  };
   /** 지난 실행까지 모델 요청마다 쓴 토큰이다. 재개한 세션이 비용 누적을 이어받는 데 쓴다. */
   readonly modelUsage: readonly { readonly model: string; readonly usage: ModelUsage }[];
   /** 비용 경고를 이미 한 번 남겼는지다. */
@@ -318,10 +324,32 @@ export function planResume(
     }
   }
 
+  // 불투명한 서버 항목이 대신하는 원본 메시지다. 다음 압축이 항목 대신 원문을 다시 펼치는 데 쓴다.
+  let opaque: ResumePlan['opaque'];
+  if (compaction?.payload.replay?.kind === 'openai') {
+    const { fromSeq, toSeq } = compaction.payload;
+    const seqs: number[] = [];
+    const expanded: ModelMessage[] = [];
+    for (const event of events) {
+      if (
+        event.type !== 'message' ||
+        event.seq < fromSeq ||
+        event.seq > toSeq ||
+        trimmedRanges.some(([from, to]) => event.seq >= from && event.seq <= to)
+      ) {
+        continue;
+      }
+      const before = expanded.length;
+      appendMessage(expanded, { role: event.payload.role, content: event.payload.content });
+      if (expanded.length > before) seqs.push(event.seq);
+      else seqs[seqs.length - 1] = event.seq;
+    }
+    opaque = { messages: expanded, seqs, hasSummary: false };
+  }
   const history: ModelMessage[] = [];
   const historySeqs: number[] = [];
   if (compaction !== undefined && summaryText !== undefined) {
-    history.push(summaryMessage(summaryText));
+    history.push(summaryMessage(summaryText, compaction.payload.replay));
     historySeqs.push(compaction.payload.fromSeq);
   }
   for (const message of messages) {
@@ -400,6 +428,7 @@ export function planResume(
     instructions,
     openErrors,
     hasSummary: compaction !== undefined,
+    ...(opaque === undefined ? {} : { opaque }),
     modelUsage: events.flatMap((event) =>
       event.type === 'model_request'
         ? [{ model: event.payload.model, usage: event.payload.usage }]
