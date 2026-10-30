@@ -212,13 +212,17 @@ async function main(): Promise<number> {
         process.stderr.write(`웹 결과물 디렉터리가 없어 API만 제공합니다: ${webDir}\n`);
       }
       const closed = Promise.withResolvers<undefined>();
+      let isStopping = false;
       const onStop = () => {
+        if (isStopping) return;
+        isStopping = true;
         server.close().then(() => {
           closed.resolve(undefined);
         }, closed.reject);
       };
-      process.once('SIGINT', onStop);
-      process.once('SIGTERM', onStop);
+      // once로 받으면 두 번째 신호가 기본 동작(즉시 종료)으로 떨어져 종료 처리의 파일 쓰기를 끊는다.
+      // omp는 서비스를 끌 때 SIGTERM을 두 번 보낸다. 띄운 터미널을 닫으면 SIGHUP이 온다.
+      for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, onStop);
       await closed.promise;
       return EXIT_CODES.passed;
     }
