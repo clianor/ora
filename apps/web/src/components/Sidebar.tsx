@@ -91,7 +91,12 @@ function WorktreeRow({
   return (
     <>
       {isSelected ? (
-        <div className="flex flex-col rounded-md border border-border-strong bg-surface pb-1">
+        <div
+          className={cn(
+            'flex flex-col rounded-md bg-surface ring-1 ring-border-strong ring-inset',
+            active.length > 0 && 'pb-1',
+          )}
+        >
           {row}
           {active.map((session) => {
             const { Icon: StatusIcon, color } = sessionIcons[session.record.status] ?? {
