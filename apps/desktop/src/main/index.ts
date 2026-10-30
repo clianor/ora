@@ -9,6 +9,7 @@ import type { EventStream, Host } from '@ora/host';
 
 const APP_ORIGIN = 'app://ora';
 const STREAM_BATCH = 2000;
+const SETTLE_MS = 2000;
 const TARGETS = { windowMs: 2000, bigSessionMs: 1000, diffMs: 200, soakGrowthMb: 500 };
 const BIG_SESSION_ID = 's-20261030-perfbg';
 const DIFF_SESSION_ID = 's-20261030-perfdf';
@@ -292,10 +293,17 @@ async function runPerf(win: BrowserWindow, reportPath: string, soakMinutes: numb
   );
   const startToWindowMs = round(process.uptime() * 1000);
   await measureTextShown(win, '워크트리', 60_000);
+  // 창을 띄운 직후에는 시작 요청(git, 스킬 조회)이 몰려 있으므로, 그 요청이 끝난 뒤 세션 화면 시간을 잰다.
+  await new Promise((done) => setTimeout(done, SETTLE_MS));
   const diffRenderMs = round(await showSession(win, DIFF_SESSION_ID, 'const after4999 = 4999;'));
-  const bigSessionFirstScreenMs = round(
-    await showSession(win, BIG_SESSION_ID, '성능 측정용 작업입니다.'),
+  // 기본 화면이 가장 새 세션을 미리 읽으므로, 페이지를 새로 불러 그 세션을 처음 여는 시간을 잰다.
+  const bigStartedAt = performance.now();
+  await win.webContents.executeJavaScript(
+    `globalThis.location.hash = ${JSON.stringify(`#/session/${BIG_SESSION_ID}`)}`,
   );
+  await reloadPage(win);
+  await measureTextShown(win, '파일 24999을 읽었습니다', 120_000);
+  const bigSessionFirstScreenMs = round(performance.now() - bigStartedAt);
   const bigSessionDeliveryMs = round(
     streamDeliveryMs.get(`/api/sessions/${BIG_SESSION_ID}/events`) ?? -1,
   );

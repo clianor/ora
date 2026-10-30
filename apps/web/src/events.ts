@@ -8,6 +8,9 @@ type JsonObject = NonNullable<ToolPart['args']>;
 
 export const stages: readonly Stage[] = stageSchema.options;
 
+/** 긴 어시스턴트 응답을 이 개수의 조각으로 나눠 메시지로 만듭니다. 화면은 뒤쪽 조각만 그려 첫 화면을 빠르게 합니다. */
+const assistantChunkSize = 20;
+
 export const stageLabels: Record<Stage, string> = {
   understand: 'Understand',
   research: 'Research',
@@ -204,13 +207,20 @@ export function buildThread(
   const failedMcpServers = new Set<string>();
   const messages: ThreadMessageLike[] = [];
   const assistantContent: MessageContent[number][] = [];
+  /** 지금 모으는 어시스턴트 메시지의 첫 파트를 만든 이벤트의 seq입니다. 메시지 ID로 써서, 앞쪽에 조각이 붙어도 기존 조각의 ID가 바뀌지 않게 합니다. */
+  let assistantStartSeq = 0;
   const flushAssistant = () => {
     if (assistantContent.length === 0) return;
-    messages.push({ role: 'assistant', content: [...assistantContent] });
+    messages.push({
+      id: `a${String(assistantStartSeq)}`,
+      role: 'assistant',
+      content: [...assistantContent],
+    });
     assistantContent.length = 0;
   };
 
   for (const event of events) {
+    const wasEmpty = assistantContent.length === 0;
     if (event.type === 'message') {
       const text = event.payload.content
         .flatMap((block) => (block.type === 'text' ? [block.text] : []))
@@ -221,7 +231,11 @@ export function buildThread(
         assistantContent.push({ type: 'text', text });
       } else {
         flushAssistant();
-        messages.push({ role: 'user', content: [{ type: 'text', text }] });
+        messages.push({
+          id: `u${String(event.seq)}`,
+          role: 'user',
+          content: [{ type: 'text', text }],
+        });
       }
     } else if (event.type === 'answer') {
       const questions = questionsByCall.get(event.payload.callId) ?? [];
@@ -235,7 +249,11 @@ export function buildThread(
         )
         .join('\n\n');
       flushAssistant();
-      messages.push({ role: 'user', content: [{ type: 'text', text }] });
+      messages.push({
+        id: `u${String(event.seq)}`,
+        role: 'user',
+        content: [{ type: 'text', text }],
+      });
     } else if (event.type === 'permission' && event.payload.warning) {
       assistantContent.push({ type: 'data-warning', data: { text: event.payload.warning } });
     } else if (event.type === 'mcp_server') {
@@ -293,6 +311,8 @@ export function buildThread(
         result: results.get(callId),
       });
     }
+    if (wasEmpty && assistantContent.length > 0) assistantStartSeq = event.seq;
+    if (assistantContent.length >= assistantChunkSize) flushAssistant();
   }
   flushAssistant();
 

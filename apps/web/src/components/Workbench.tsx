@@ -1,5 +1,6 @@
 import { Gauge, X } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { getStageIndex, stageLabels, stages } from '../events.ts';
 import { formatCostRatio, getCostView } from '../lib/cost.ts';
 import { runningStatuses } from '../lib/status.ts';
@@ -29,6 +30,18 @@ const timeFormat = new Intl.DateTimeFormat('ko-KR', {
   timeZone: 'Asia/Seoul',
 });
 
+/** 처음 그리는 대화 조각 수입니다. 스크롤로 창 끝에 닿을 때마다 같은 수만큼 이어 그립니다. */
+const initialShownMessages = 10;
+
+/** 한꺼번에 그려 두는 대화 조각 수의 상한입니다. 이 값이면 한 번 이어 그리는 시간이 최대 약 120ms였습니다(10만 줄 세션 실측). */
+const maxWindowMessages = 60;
+
+/** 그리지 않은 조각 하나가 차지하는 높이로 어림하는 값(px)입니다. 조각 20개 파트 기준 실측 약 840px입니다. */
+const estimatedMessagePx = 840;
+
+/** 그린 조각의 위·아래 끝이 화면 경계에서 이 값(px) 안이면 다음 조각을 이어 그립니다. */
+const loadMoreThresholdPx = 400;
+
 interface WorkbenchProps {
   view: SessionView;
   /** 같은 워크트리에서 실행 중인 세션 수입니다. 2개 이상이면 입력창 위에 덮어쓰기 경고를 보입니다. */
@@ -42,7 +55,25 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
   const store = useStore();
   const { actions, watchSession } = store;
   const { record, thread } = view;
+  const isRangePending = useRef(false);
+  const [range, setRange] = useState<{ start: number; end: number | null }>({
+    start: -1,
+    end: null,
+  });
+  const [firstMessage, ...laterMessages] = thread.messages;
+  const total = laterMessages.length;
+  const effectiveEnd = Math.min(range.end ?? total, total);
+  let effectiveStart = Math.min(range.start, effectiveEnd);
+  if (range.start < 0) effectiveStart = Math.max(0, effectiveEnd - initialShownMessages);
+  else if (range.end === null) {
+    effectiveStart = Math.max(range.start, effectiveEnd - maxWindowMessages);
+  }
+  const shownMessages =
+    firstMessage === undefined
+      ? thread.messages
+      : [firstMessage, ...laterMessages.slice(effectiveStart, effectiveEnd)];
   const sessionId = record.id;
+
   const repoPath = findWorktreeOfSession(store.sidebar.repos, sessionId)?.repo.path;
 
   /** 세션의 실시간 이벤트(SSE)는 브라우저 밖 서버 연결이라 화면에 보이는 동안만 구독합니다. */
@@ -103,12 +134,34 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
       <main className="relative flex min-w-0 flex-1 flex-col">
         <ModelSwitchToast events={view.events} />
         <ChatProvider
-          messages={thread.messages}
+          messages={shownMessages}
           onSend={(text) => actions.sendMessage(sessionId, text)}
         >
           <SteerRestore failure={view.steerFailure} />
           <DraftSync draftKey={draftKey} />
-          <ThreadView>
+          <ThreadView
+            topSpacerPx={effectiveStart * estimatedMessagePx}
+            bottomSpacerPx={(total - effectiveEnd) * estimatedMessagePx}
+            onScroll={(event) => {
+              const viewport = event.currentTarget;
+              const next = getNextRange(viewport, {
+                start: effectiveStart,
+                end: effectiveEnd,
+                total,
+              });
+              if (next === undefined || isRangePending.current) return;
+              // 스크롤 이벤트 안에서 바로 그리면 읽던 위치가 어긋났습니다(위로 400번 이어 그릴 때 최대 약 5만 px 실측). 그래서 다음 프레임에 그립니다.
+              isRangePending.current = true;
+              requestAnimationFrame(() => {
+                flushSync(() => {
+                  setRange(next);
+                });
+                requestAnimationFrame(() => {
+                  isRangePending.current = false;
+                });
+              });
+            }}
+          >
             {approval && (
               <div key={approval.requestId} ref={scrollIfRequested}>
                 <ApprovalCard
@@ -194,4 +247,36 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
       </main>
     </>
   );
+}
+
+/** 위로 올라가며 이어 그리는 창에서 뒤쪽 조각은 버려 DOM과 위젯 수가 넘치지 않게 합니다. */
+function getNextRange(
+  viewport: HTMLElement,
+  range: { start: number; end: number; total: number },
+): { start: number; end: number | null } | undefined {
+  const { start, end, total } = range;
+  const viewportRect = viewport.getBoundingClientRect();
+  const topSpacer = viewport.querySelector('[data-window-spacer="top"]');
+  const bottomSpacer = viewport.querySelector('[data-window-spacer="bottom"]');
+  let next: { start: number; end: number } | undefined;
+  if (start > 0 && topSpacer !== null) {
+    // 그린 조각의 맨 위가 화면 위쪽 경계에서 이 값 안이면 앞쪽을 더 그립니다. 스페이서 안이면 그 위치의 조각으로 건너뜁니다.
+    const gap = topSpacer.getBoundingClientRect().bottom - viewportRect.top;
+    if (gap >= -loadMoreThresholdPx) {
+      const inside =
+        gap > 0 ? Math.floor((start * estimatedMessagePx - gap) / estimatedMessagePx) : start;
+      const newStart = Math.max(0, Math.min(start, inside) - initialShownMessages);
+      next = { start: newStart, end: Math.min(end, newStart + maxWindowMessages) };
+    }
+  }
+  if (next === undefined && end < total && bottomSpacer !== null) {
+    const gap = viewportRect.bottom - bottomSpacer.getBoundingClientRect().top;
+    if (gap >= -loadMoreThresholdPx) {
+      const inside = gap > 0 ? end + Math.floor(gap / estimatedMessagePx) : end;
+      const newEnd = Math.min(total, Math.max(end, inside) + initialShownMessages);
+      next = { start: Math.max(start, newEnd - maxWindowMessages), end: newEnd };
+    }
+  }
+  if (next === undefined) return undefined;
+  return { start: next.start, end: next.end >= total ? null : next.end };
 }

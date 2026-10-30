@@ -37,7 +37,14 @@ export function createSkillsApi(options: SkillsApiOptions): {
       for (const id of ids) {
         const text = await readTranscriptText(join(sessionsDir, id));
         if (text === undefined) continue;
-        const events = parseTranscript(text).events.filter((event) => event.type === 'recall');
+        // 사용 횟수는 `recall` 줄에서만 세므로, 큰 기록에서도 그 줄만 파싱한다.
+        const recallText = text
+          .split('\n')
+          .filter((line) => line.includes('"type":"recall"'))
+          .join('\n');
+        const events = parseTranscript(recallText).events.filter(
+          (event) => event.type === 'recall',
+        );
         for (const event of events) {
           for (const ref of event.payload.skills) {
             const entry = usage.get(keyOf(ref)) ?? { count: 0 };

@@ -2077,7 +2077,8 @@ test(
     expect(events.find((event) => event.type === 'memory')).toMatchObject({
       payload: { learnSkipped: true, reason: 'cost_limit' },
     });
-    expect(JSON.stringify(events)).not.toMatch(/0\.6|1\.2/);
+    // 시각 문자열(`…:40.650+09:00`)에 우연히 맞지 않도록, 앞뒤에 숫자가 없는 단독 숫자만 금액으로 본다.
+    expect(JSON.stringify(events)).not.toMatch(/(?<![\d.])(?:0\.6|1\.2)(?!\d)/);
 
     const same = await startResume(
       project,

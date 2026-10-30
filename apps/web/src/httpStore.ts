@@ -1010,10 +1010,11 @@ export function createHttpStore(
     },
     loadTabs: async (cwd) => {
       const query = `?cwd=${encodeURIComponent(cwd)}`;
+      // 브랜치는 git 호출이라 느리므로 탭 화면을 막지 않고 도착하면 따로 갱신합니다.
+      loadBranch(cwd).catch(() => undefined);
       const [saved, listed] = await Promise.all([
         requestJson(`/api/tabs${query}`, tabsResponseSchema),
         requestJson(`/api/terminals${query}`, terminalListResponseSchema),
-        loadBranch(cwd),
       ]);
       tabs.set(cwd, saved.tabs);
       for (const terminal of listed.terminals) terminals.set(terminal.id, terminal);

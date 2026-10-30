@@ -22,7 +22,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { Popover } from 'radix-ui';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode, type UIEventHandler } from 'react';
 import { getComposerDraft, setComposerDraft } from '../lib/composerDraft.ts';
 import type { ComposerChips, Effort, RoutingModel, SessionView, StatusItem } from '../model.ts';
 import { cn } from '../lib/cn.ts';
@@ -169,16 +169,40 @@ function AssistantMessage() {
 interface ThreadViewProps {
   /** 메시지 아래에 놓는 카드(승인, 질문, 멈춤 안내)입니다. */
   children?: ReactNode;
+  /** 대화 영역을 스크롤할 때 부릅니다. 그린 조각의 끝에 닿으면 앞뒤 조각을 이어 그리는 데 씁니다. */
+  onScroll?: UIEventHandler<HTMLDivElement>;
+  /** 첫 메시지 뒤에서 그리지 않은 앞쪽 조각이 차지하는 어림 높이(px)입니다. */
+  topSpacerPx?: number;
+  /** 마지막으로 그린 조각 뒤에서 그리지 않은 뒤쪽 조각이 차지하는 어림 높이(px)입니다. */
+  bottomSpacerPx?: number;
 }
 
-export function ThreadView({ children }: ThreadViewProps) {
+export function ThreadView({
+  children,
+  onScroll,
+  topSpacerPx = 0,
+  bottomSpacerPx = 0,
+}: ThreadViewProps) {
   return (
     <ThreadPrimitive.Root className="flex min-h-0 flex-1 flex-col items-center">
-      <ThreadPrimitive.Viewport className="flex w-full flex-1 flex-col items-center overflow-y-auto pt-5">
+      <ThreadPrimitive.Viewport
+        onScroll={onScroll}
+        className="flex w-full flex-1 flex-col items-center overflow-y-auto pt-5"
+      >
         <div className="flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] flex-col gap-4 pb-6">
           <ThreadPrimitive.Messages>
-            {({ message }) => (message.role === 'user' ? <UserMessage /> : <AssistantMessage />)}
+            {({ message }) => (
+              <>
+                {message.role === 'user' ? <UserMessage /> : <AssistantMessage />}
+                {message.index === 0 && topSpacerPx > 0 && (
+                  <div aria-hidden data-window-spacer="top" style={{ height: topSpacerPx }} />
+                )}
+              </>
+            )}
           </ThreadPrimitive.Messages>
+          {bottomSpacerPx > 0 && (
+            <div aria-hidden data-window-spacer="bottom" style={{ height: bottomSpacerPx }} />
+          )}
           {children}
         </div>
       </ThreadPrimitive.Viewport>
