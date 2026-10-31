@@ -2289,35 +2289,59 @@ function m3PrStatusScreen() {
 /**
  * "머지된 워크트리 삭제" 확인 창. 판정은 브랜치의 가장 최근 PR 상태만 본다.
  * Merged는 처음부터 골라 두고, Closed는 따로 묶어 고르지 않은 채 보인다. 데이터를 잃을 수 있는 항목은 고를 수 없고 이유를 보인다.
+ * Ora 터미널에서 돌던 프로세스는 막지 않고, 지우기 전에 종료할 목록으로 보인다(SPEC 2.12절 v0.42).
  */
 function m3CleanupScreen() {
   const c = palette('Slate');
-  const row = ({ name, num, note, state = 'merged', checked = false, blocked = null }) => {
+  const proc = ([name, pid, port]) =>
+    `<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${I(c, 'square-terminal', 'ink3', 12)}${T(c, 12, 16, 500, 'ink2', name, '', mono)}${T(c, 12, 16, 400, 'ink3', port ? `PID ${pid} · 포트 ${port}` : `PID ${pid}`, '', mono)}</Frame>`;
+  const row = ({
+    name,
+    num,
+    note,
+    state = 'merged',
+    checked = false,
+    blocked = null,
+    procs = [],
+  }) => {
     const icon = state === 'merged' ? 'git-merge' : 'git-pull-request-closed';
     const body = blocked
       ? `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, 'triangle-alert', 'warn', 12)}${T(c, 12, 16, 500, 'ink2', blocked)}</Frame>`
       : T(c, 12, 16, 400, 'ink3', note);
-    return `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={12} py={9} rounded={8} ${checked ? `bg="${c.raised}"` : ''}>${I(c, checked ? 'square-check' : 'square', blocked ? 'ink3' : 'ink', 16)}${I(c, icon, blocked ? 'ink3' : 'ink2', 14)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, blocked ? 'ink3' : 'ink', name, '', mono)}${body}</Frame>${T(c, 12, 16, 400, 'ink3', `#${num}`, '', mono)}</Frame>`;
+    const kill = procs.length
+      ? `<Frame w="fill" h="hug" flex="col" gap={3} pt={2}>${T(c, 12, 16, 500, 'ink2', `종료할 프로세스 ${String(procs.length)}개`)}${procs.map(proc).join('')}</Frame>`
+      : '';
+    return `<Frame w="fill" h="hug" flex="row" items="start" gap={10} px={12} py={9} rounded={8} ${checked ? `bg="${c.raised}"` : ''}><Frame w="hug" h={18} flex="row" items="center" gap={10}>${I(c, checked ? 'square-check' : 'square', blocked ? 'ink3' : 'ink', 16)}${I(c, icon, blocked ? 'ink3' : 'ink2', 14)}</Frame><Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, blocked ? 'ink3' : 'ink', name, '', mono)}${body}${kill}</Frame>${T(c, 12, 16, 400, 'ink3', `#${num}`, '', mono)}</Frame>`;
   };
   const head = (label, note) =>
     `<Frame w="fill" h={26} flex="row" items="center" gap={8} px={4}>${T(c, 12, 16, 600, 'ink2', label)}${T(c, 12, 16, 400, 'ink3', note, 'grow={1}')}</Frame>`;
-  const dialog = `<Frame name="CleanupMerged" w={560} h="hug" flex="col" gap={12} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+  const dialog = `<Frame name="CleanupMerged" w={580} h="hug" flex="col" gap={12} p={20} rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
 <Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'trash-2', 'ink', 18)}${T(c, 17, 24, 600, 'ink', '머지된 워크트리 삭제')}${SP}${T(c, 12, 16, 400, 'ink3', 'math-demo')}${I(c, 'x', 'ink3', 15)}</Frame>
-${T(c, 13, 20, 400, 'ink2', '워크트리마다 브랜치의 가장 최근 PR을 보고 목록을 만들었습니다. 고른 워크트리의 폴더와 로컬 브랜치를 지웁니다. 원격 브랜치와 세션 기록은 그대로 둡니다.', 'w="fill" textAutoResize="height"')}
+${T(c, 13, 20, 400, 'ink2', '워크트리마다 브랜치의 가장 최근 PR을 보고 목록을 만들었습니다. 고른 워크트리에서 Ora 터미널이 띄운 프로세스를 먼저 종료한 뒤, 폴더와 로컬 브랜치를 지웁니다. 원격 브랜치와 세션 기록은 그대로 둡니다.', 'w="fill" textAutoResize="height"')}
 <Frame w="fill" h="hug" flex="col" gap={2}>
 ${head('Merged', 'PR을 머지한 워크트리')}
-${row({ name: 'ora/old-cleanup', num: 35, note: '2일 전에 머지했습니다', checked: true })}
+${row({
+  name: 'ora/old-cleanup',
+  num: 35,
+  note: '2일 전에 머지했습니다',
+  checked: true,
+  procs: [
+    ['vite', 48211, 5173],
+    ['node', 48230],
+  ],
+})}
 ${row({ name: 'ora/fix-typo', num: 40, note: '3시간 전에 머지했습니다', checked: true })}
 ${row({ name: 'ora/hotfix-login', num: 41, blocked: '커밋하지 않은 변경 3개' })}
 ${row({ name: 'ora/api-retry', num: 44, blocked: '머지 뒤 새 커밋 2개' })}
-${row({ name: 'ora/docs-tweak', num: 37, blocked: '실행 중인 세션 1개' })}
+${row({ name: 'ora/docs-tweak', num: 37, blocked: '실행 중인 에이전트 세션 1개' })}
+${row({ name: 'ora/web-preview', num: 36, blocked: 'Ora 밖에서 시작한 프로세스 1개 · next-server (포트 3000)' })}
 </Frame>
 <Frame w="fill" h="hug" flex="col" gap={2}>
 ${head('Closed', '머지하지 않고 닫은 PR')}
 ${row({ name: 'ora/try-sqlite', num: 31, state: 'closed', note: '5일 전에 닫았습니다 · 커밋은 원격 브랜치에 남아 있습니다' })}
 ${row({ name: 'ora/spike-cache', num: 29, state: 'closed', blocked: '원격에 없는 커밋 3개 · 지우면 사라집니다' })}
 </Frame>
-<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '2개 선택', 'grow={1}')}${button(c, 'ghost', '취소')}<Frame w="hug" h={30} flex="row" items="center" gap={6} px={12} rounded={8} bg="${c.delBg}">${I(c, 'trash-2', 'del', 14)}${T(c, 13, 18, 600, 'del', '2개 삭제')}</Frame></Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${T(c, 12, 16, 400, 'ink3', '2개 선택 · 프로세스 2개를 먼저 종료합니다', 'grow={1}')}${button(c, 'ghost', '취소')}<Frame w="hug" h={30} flex="row" items="center" gap={6} px={12} rounded={8} bg="${c.delBg}">${I(c, 'trash-2', 'del', 14)}${T(c, 13, 18, 600, 'del', '2개 삭제')}</Frame></Frame>
 </Frame>`;
   const overlay = `<Frame position="absolute" x={0} y={0} w={1440} h={900} flex="col" items="center" justify="center" bg="${c.overlay}">${dialog}</Frame>`;
   return windowV3(c, '46 M3 Cleanup Merged · Slate', {
@@ -2337,6 +2361,46 @@ ${row({ name: 'ora/spike-cache', num: 29, state: 'closed', blocked: '원격에 �
       ),
     status: statusBarV3(c, V3_STATUS),
     overlay,
+  });
+}
+
+/**
+ * 라이브 포트(SPEC 2.12.2절, Orca 참조). 포트를 연 프로세스가 있는 워크트리 줄에 플러그 아이콘과 개수를 보이고,
+ * 누르면 목록을 연다. 줄을 누르면 브라우저로 열고, 오른쪽 단추로 그 프로세스 하나만 끈다.
+ */
+function m3PortsScreen() {
+  const c = palette('Slate');
+  const PORTS = { main: 3, 'ora/fix-negative-add': 1 };
+  const groups = M3_PR_GROUPS().map((g, i) =>
+    i === 0
+      ? { ...g, worktrees: g.worktrees.map((w) => ({ ...w, ports: PORTS[w.name] ?? 0 })) }
+      : g,
+  );
+  const port = ({ num, name, addr, pid, external = false, hover = false }) =>
+    `<Frame w="fill" h={40} flex="row" items="center" gap={10} px={10} rounded={8} ${hover ? `bg="${c.hover}"` : ''}>${T(c, 14, 20, 600, 'ink', String(num), 'w={52}', mono)}<Frame w="fill" h="hug" flex="col" gap={1}><Frame w="hug" h="hug" flex="row" items="center" gap={6}>${T(c, 13, 18, 500, 'ink', name, '', mono)}${external ? `<Frame w="hug" h={18} flex="row" items="center" px={6} rounded={5} bg="${c.hover}">${T(c, 11, 14, 500, 'ink2', 'Ora 밖에서 시작')}</Frame>` : ''}</Frame>${T(c, 12, 16, 400, 'ink3', `${addr} · PID ${pid}`, '', mono)}</Frame>${hover ? `${I(c, 'external-link', 'ink2', 14)}<Frame w="hug" h={26} flex="row" items="center" gap={5} px={8} rounded={6} bg="${c.delBg}">${I(c, 'square', 'del', 11)}${T(c, 12, 16, 600, 'del', '종료')}</Frame>` : ''}</Frame>`;
+  const popover = `<Frame name="LivePorts" position="absolute" x={300} y={196} w={400} h="hug" flex="col" gap={4} p={10} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={30} flex="row" items="center" gap={8} px={6}>${I(c, 'git-branch', 'ink2', 14)}${T(c, 13, 18, 600, 'ink', 'main', '', mono)}${SP}${I(c, 'refresh-cw', 'ink3', 13)}</Frame>
+<Frame w="fill" h={26} flex="row" items="center" gap={6} px={6}>${I(c, 'plug', 'ink2', 13)}${T(c, 12, 16, 600, 'ink2', '라이브 포트 (3)')}</Frame>
+${port({ num: 5173, name: 'vite', addr: '127.0.0.1', pid: 48211, hover: true })}
+${port({ num: 51565, name: 'agy', addr: '127.0.0.1', pid: 50102 })}
+${port({ num: 3000, name: 'next-server', addr: '*', pid: 39917, external: true })}
+${T(c, 12, 18, 400, 'ink3', '줄을 누르면 브라우저에서 엽니다. 종료는 그 프로세스 하나만 끕니다.', 'w="fill" textAutoResize="height" px={6} py={4}')}
+</Frame>`;
+  return windowV3(c, '50 M3 Live Ports · Slate', {
+    side: sidebarV3(c, { groups }),
+    main:
+      titleTabsV3(c, {
+        tabs: [{ title: 'add 함수 버그 수정', state: 'done' }],
+        active: 0,
+        right: v3Right(c),
+      }) +
+      threadV2(
+        c,
+        [userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.')],
+        { composer: composerV2(c, {}) },
+      ),
+    status: statusBarV3(c, V3_STATUS),
+    overlay: popover,
   });
 }
 
@@ -2508,4 +2572,5 @@ export const SCREENS = [
   { file: 'm3-edit-message-slate', jsx: m3EditMessageScreen },
   { file: 'm3-rewind-confirm-slate', jsx: m3RewindConfirmScreen },
   { file: 'm3-rewound-slate', jsx: m3RewoundScreen },
+  { file: 'm3-live-ports-slate', jsx: m3PortsScreen },
 ];

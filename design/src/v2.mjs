@@ -254,8 +254,9 @@ export function sidebarV3(c, { groups }) {
     pr = null,
     sync = null,
     child = false,
+    ports = 0,
   }) =>
-    `<Frame w="fill" h={34} flex="row" items="center" gap={8} pl={${child ? 26 : 10}} pr={10}>${child ? I(c, 'corner-down-right', 'ink3', 13) : ''}${I(c, 'git-branch', selected ? 'ink' : 'ink3', 14)}${T(c, 14, 20, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'maxLines={1} truncate')}${base ? badge('기본') : ''}${SP}${status ? `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, status[0], status[2], 13)}${T(c, 12, 16, 500, status[2], status[1])}</Frame>` : ''}${!status && !selected && running ? T(c, 12, 16, 500, 'ink2', `실행 ${running}`) : ''}${pr ? prBadge(pr) : ''}${sync ? syncBadge(sync) : ''}</Frame>`;
+    `<Frame w="fill" h={34} flex="row" items="center" gap={8} pl={${child ? 26 : 10}} pr={10}>${child ? I(c, 'corner-down-right', 'ink3', 13) : ''}${I(c, 'git-branch', selected ? 'ink' : 'ink3', 14)}${T(c, 14, 20, selected ? 500 : 400, selected ? 'ink' : 'ink2', name, 'maxLines={1} truncate')}${base ? badge('기본') : ''}${SP}${status ? `<Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, status[0], status[2], 13)}${T(c, 12, 16, 500, status[2], status[1])}</Frame>` : ''}${!status && !selected && running ? T(c, 12, 16, 500, 'ink2', `실행 ${running}`) : ''}${ports ? `<Frame w="hug" h="hug" flex="row" items="center" gap={3}>${I(c, 'plug', 'ink2', 13)}${T(c, 12, 16, 500, 'ink2', String(ports), '', mono)}</Frame>` : ''}${pr ? prBadge(pr) : ''}${sync ? syncBadge(sync) : ''}</Frame>`;
   const wt = (w) =>
     w.selected
       ? `<Frame w="fill" h="hug" flex="col" pb={4} rounded={10} bg="${c.raised}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">${wtRow(w)}${(w.sessions ?? []).map(sessionRow).join('')}</Frame>`
