@@ -52,6 +52,16 @@ export const memoryProposeSchema = z.object({
   text: z.string().min(1),
   source: z.string().min(1).optional(),
 });
+export const agentDelegateSchema = z.object({
+  agent: z.string().min(1),
+  todoId: z.string().min(1).optional(),
+  brief: z.object({
+    goal: z.string().min(1),
+    writeScope: z.array(z.string()).default([]),
+    verifyCommand: z.string().min(1).optional(),
+    stopCondition: z.string().min(1),
+  }),
+});
 
 const CONTROL_TOOLS = {
   'todo.update': {
@@ -81,6 +91,11 @@ const CONTROL_TOOLS = {
     description: 'Learn 단계에서 교훈 후보를 낸다. 엔진 규칙이 기록 여부를 판정한다.',
     schema: memoryProposeSchema,
   },
+  'agent.delegate': {
+    description:
+      '에이전트 정의(agent)로 하위 세션을 만들어 일을 맡기고, 끝나면 결과를 돌려받는다. 하위 세션은 이 대화를 보지 못하고 brief(goal, writeScope, verifyCommand, stopCondition)만 받는다. 하위 세션이 낸 검증 증거는 인정하지 않는다. todoId에 연결할 todo를 적으면 위임이 끝난 뒤 그 todo가 attempted가 되고, verify.run으로 같은 검증 명령을 직접 실행해야 verified가 된다. 한 응답에서 여러 번 부르면 동시에 실행한다.',
+    schema: agentDelegateSchema,
+  },
 } as const;
 
 export type ControlToolName = keyof typeof CONTROL_TOOLS;
@@ -89,8 +104,11 @@ export function isControlTool(name: string): name is ControlToolName {
   return Object.hasOwn(CONTROL_TOOLS, name);
 }
 
-/** 모든 도구 스키마에 필수 `intent`를 더해 모델에 보여 줄 도구 목록을 만든다 (SPEC 2.3.1절). */
-export function buildToolSpecs(tools: readonly Tool[]): ToolSpec[] {
+/** 모든 도구 스키마에 필수 `intent`를 더해 모델에 보여 줄 도구 목록을 만든다 (SPEC 2.3.1절). `hidden`에 든 이름은 목록에서 뺀다. */
+export function buildToolSpecs(
+  tools: readonly Tool[],
+  hidden: ReadonlySet<string> = new Set(),
+): ToolSpec[] {
   const entries = [
     ...tools.map((tool) => ({
       name: tool.name,
@@ -98,7 +116,7 @@ export function buildToolSpecs(tools: readonly Tool[]): ToolSpec[] {
       schema: tool.inputSchema,
     })),
     ...Object.entries(CONTROL_TOOLS).map(([name, tool]) => ({ name, ...tool })),
-  ];
+  ].filter((entry) => !hidden.has(entry.name));
   return entries.map(({ name, description, schema }) => {
     const json = z.toJSONSchema(schema, { io: 'input' });
     const properties = (json.properties ?? {}) as Record<string, unknown>;

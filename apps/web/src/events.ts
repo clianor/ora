@@ -1,4 +1,11 @@
-import { dropRewoundEvents, stageSchema, type OraEvent, type Stage } from '@ora/protocol';
+import {
+  dropRewoundEvents,
+  stageSchema,
+  type EventOf,
+  type OraEvent,
+  type Stage,
+  type TodoStatus,
+} from '@ora/protocol';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { getStepRange, type StepRange } from './lib/context.ts';
 
@@ -95,6 +102,37 @@ export interface ModelSwitchData {
 
 /** 상태를 헤더와 할 일 패널이 이미 보여 주는 제어 도구입니다. 실패했을 때만 줄로 보입니다. */
 const controlTools = new Set(['ask_user', 'todo.update', 'stage.advance', 'memory.propose']);
+
+/** 대화의 위임 카드가 그리는 하위 세션 한 줄입니다. `rejected`는 하위 세션을 만들지 못하고 도구 오류로 끝난 위임입니다. */
+export interface DelegateItem {
+  callId: string;
+  /** 위임을 부른 부모 세션입니다. */
+  sessionId: string;
+  agent: string;
+  intent: string;
+  writeScope: string[];
+  startedAt: string;
+  endedAt?: string;
+  state: 'running' | 'done' | 'stopped' | 'failed' | 'rejected';
+  childSessionId?: string;
+  changedFiles?: string[];
+  /** 시작할 때 정한 최대 스텝이다. */
+  maxSteps?: number;
+  /** 끝난 뒤의 스텝 수와 더하고 지운 줄 수다. */
+  steps?: number;
+  added?: number;
+  deleted?: number;
+  reason?: string;
+}
+
+/** 위임이 끝난 뒤 부모가 같은 검증 명령을 다시 돌린 줄입니다. `from`과 `to`는 그 todo의 상태 변화입니다. */
+export interface ReverifyData {
+  command: string;
+  exitCode?: number;
+  todoContent: string;
+  from?: TodoStatus;
+  to?: TodoStatus;
+}
 
 /** 질문 하나의 답을 짧은 글로 만듭니다. */
 function formatAnswer(
@@ -197,6 +235,19 @@ export function buildThread(
       });
     }
   }
+  const delegateStarts = new Map<string, EventOf<'delegate_start'>>();
+  const delegateEnds = new Map<string, EventOf<'delegate_end'>>();
+  /** 위임이 끝난 뒤 부모가 `verify.run`으로 다시 검증하는 todo입니다. 그 호출은 "다시 검증" 줄로 그립니다. */
+  const reverifyAfter = new Set<string>();
+  for (const event of events) {
+    if (event.type === 'delegate_start') delegateStarts.set(event.payload.callId, event);
+    else if (event.type === 'delegate_end') {
+      delegateEnds.set(event.payload.callId, event);
+      const todoId = delegateStarts.get(event.payload.callId)?.payload.todoId;
+      if (todoId !== undefined) reverifyAfter.add(todoId);
+    }
+  }
+  let delegateGroup: { part: MessageContent[number]; items: DelegateItem[] } | undefined;
   /** `history.read`가 가리키는 원문의 이름입니다. 호출 ID면 그 호출의 대상과 동사, 범위면 seq 범위입니다. */
   const describeHistoryRead = (args: Record<string, unknown>): string => {
     if (typeof args.callId === 'string') {
@@ -302,20 +353,98 @@ export function buildThread(
       assistantContent.push({ type: 'data-compaction', data });
     } else if (event.type === 'tool_call' && !waitingCallIds.has(event.payload.callId)) {
       const { callId, tool, args } = event.payload;
-      if (controlTools.has(tool) && (results.get(callId)?.status ?? 'ok') === 'ok') continue;
-      let labeled: Record<string, unknown> = args;
-      if (tool === 'history.read') labeled = { ...args, label: describeHistoryRead(args) };
-      else if (tool === 'verify.run') {
-        const command = verifyCommands.get(String(args.todoId));
-        if (command !== undefined) labeled = { ...args, label: command };
+      if (tool === 'agent.delegate') {
+        const start = delegateStarts.get(callId);
+        const end = delegateEnds.get(callId);
+        const result = results.get(callId);
+        const startedAt = start?.ts ?? event.ts;
+        let state: DelegateItem['state'] = 'running';
+        if (end !== undefined) {
+          if (end.payload.endReason === 'user_cancel') state = 'stopped';
+          else if (end.payload.status === 'failed' || end.payload.status === 'crashed')
+            state = 'failed';
+          else state = 'done';
+        } else if (start === undefined && result !== undefined) {
+          state = 'rejected';
+        }
+        const item: DelegateItem = {
+          callId,
+          sessionId: event.sessionId,
+          agent: typeof args.agent === 'string' ? args.agent : '',
+          intent: typeof args.intent === 'string' ? args.intent : '',
+          writeScope: start?.payload.writeScope ?? [],
+          startedAt,
+          state,
+          ...(start === undefined ? {} : { childSessionId: start.payload.childSessionId }),
+          ...(start === undefined ? {} : { maxSteps: start.payload.maxSteps }),
+          ...(end === undefined
+            ? {}
+            : {
+                endedAt: end.ts,
+                changedFiles: end.payload.changedFiles,
+                steps: end.payload.steps,
+                added: end.payload.added,
+                deleted: end.payload.deleted,
+              }),
+          ...(state === 'rejected' && result !== undefined ? { reason: result.summary } : {}),
+        };
+        const last = assistantContent.at(-1);
+        if (last !== undefined && last === delegateGroup?.part) delegateGroup.items.push(item);
+        else {
+          const items = [item];
+          const part = { type: 'data-delegate' as const, data: { items } };
+          delegateGroup = { part, items };
+          assistantContent.push(part);
+        }
+      } else if (tool === 'verify.run' && reverifyAfter.has(String(args.todoId))) {
+        const todoId = String(args.todoId);
+        const command = verifyCommands.get(todoId) ?? '';
+        const verdict = events.find(
+          (later) =>
+            later.type === 'verification' &&
+            later.payload.todoId === todoId &&
+            later.seq > event.seq,
+        );
+        const after = events.find(
+          (later) =>
+            later.type === 'todo_update' &&
+            later.payload.todoId === todoId &&
+            later.seq > event.seq,
+        );
+        const before = events.findLast(
+          (earlier) =>
+            earlier.type === 'todo_update' &&
+            earlier.payload.todoId === todoId &&
+            earlier.seq < event.seq,
+        );
+        assistantContent.push({
+          type: 'data-reverify',
+          data: {
+            command,
+            ...(verdict?.type === 'verification' && verdict.payload.evidence.exitCode !== undefined
+              ? { exitCode: verdict.payload.evidence.exitCode }
+              : {}),
+            todoContent: before?.type === 'todo_update' ? before.payload.todo.content : todoId,
+            ...(before?.type === 'todo_update' ? { from: before.payload.to } : {}),
+            ...(after?.type === 'todo_update' ? { to: after.payload.to } : {}),
+          },
+        });
+      } else {
+        if (controlTools.has(tool) && (results.get(callId)?.status ?? 'ok') === 'ok') continue;
+        let labeled: Record<string, unknown> = args;
+        if (tool === 'history.read') labeled = { ...args, label: describeHistoryRead(args) };
+        else if (tool === 'verify.run') {
+          const command = verifyCommands.get(String(args.todoId));
+          if (command !== undefined) labeled = { ...args, label: command };
+        }
+        assistantContent.push({
+          type: 'tool-call',
+          toolCallId: callId,
+          toolName: tool,
+          args: labeled as JsonObject,
+          result: results.get(callId),
+        });
       }
-      assistantContent.push({
-        type: 'tool-call',
-        toolCallId: callId,
-        toolName: tool,
-        args: labeled as JsonObject,
-        result: results.get(callId),
-      });
     }
     if (wasEmpty && assistantContent.length > 0) assistantStartSeq = event.seq;
     if (assistantContent.length >= assistantChunkSize) flushAssistant();

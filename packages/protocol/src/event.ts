@@ -287,6 +287,37 @@ export const oraEventSchema = z.discriminatedUnion('type', [
     'answer',
     z.strictObject({ callId: z.string().min(1), answers: z.array(questionAnswerSchema) }),
   ),
+  // 위임을 시작한 기록이다. `tools`는 부모 권한과 정의의 허용 목록을 모두 만족하는 도구 이름이고, `todoId`는 연결한 부모 todo다.
+  defineEvent(
+    'delegate_start',
+    z.strictObject({
+      callId: z.string().min(1),
+      agent: z.string().min(1),
+      childSessionId: sessionIdSchema,
+      permissionMode: permissionModeSchema,
+      tools: z.array(z.string()),
+      brief: z.string(),
+      writeScope: z.array(z.string()),
+      maxSteps: z.number().int().positive(),
+      todoId: z.string().min(1).optional(),
+    }),
+  ),
+  // `evidence`는 하위 세션이 남긴 검증 증거 요약이다. 부모가 같은 명령을 다시 돌리기 전에는 증거로 인정하지 않는다. `cost`는 부모 비용 상한에 더한 금액이다.
+  defineEvent(
+    'delegate_end',
+    z.strictObject({
+      callId: z.string().min(1),
+      childSessionId: sessionIdSchema,
+      status: sessionStatusSchema,
+      endReason: endReasonSchema,
+      evidence: z.string(),
+      changedFiles: z.array(z.string()),
+      steps: z.number().int().nonnegative(),
+      added: z.number().int().nonnegative(),
+      deleted: z.number().int().nonnegative(),
+      cost: z.number().nonnegative(),
+    }),
+  ),
   // 변경 주체는 envelope의 actor다. rejected가 있으면 to는 요청된 상태이고 todo는 거부 전 스냅샷이다.
   // `current`는 이 변경 뒤에 작업 중인 todo의 ID다. 표시가 바뀐 변경에만 적고(null은 작업 중인 todo 없음), 재개는 마지막 값을 되살린다.
   defineEvent(

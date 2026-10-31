@@ -95,6 +95,8 @@ export interface SessionHandle {
   answerQuestion(requestId: string, answers: QuestionAnswer[]): void;
   /** 실행 중인 워커에 사용자의 포기·포기 취소를 보낸다. 워커가 지금 스텝이 끝난 뒤 반영한다. */
   sendTodoAction(action: UserTodoAction): void;
+  /** 실행 중인 부모 워커에 하위 세션 하나만 멈추라고 보낸다. */
+  cancelDelegate(sessionId: string): void;
   /** 세션 ID가 정해지면 풀린다. 재개 요청이 시작 전에 실패하면 거부로 끝난다. */
   readonly sessionId: Promise<string>;
   readonly result: Promise<SessionResult>;
@@ -172,6 +174,19 @@ async function acquireSlot(
   }
 }
 
+/** 자리가 있으면 슬롯을 잡고, 없으면 기다리지 않고 `undefined`를 돌려준다. 하위 세션이 부모 슬롯을 기다리며 교착하지 않게 한다. */
+export async function tryAcquireSlot(
+  slotsDir: string,
+  max: number,
+): Promise<(() => Promise<void>) | undefined> {
+  await mkdir(slotsDir, { recursive: true });
+  for (let index = 0; index < max; index += 1) {
+    const release = await tryLock(join(slotsDir, String(index)));
+    if (release !== undefined) return release;
+  }
+  return undefined;
+}
+
 function killGroup(pid: number | undefined): void {
   if (pid === undefined) return;
   try {
@@ -197,7 +212,7 @@ async function assertResumable(sessionDir: string, sessionId: string): Promise<v
   }
 }
 
-function createSessionId(): string {
+export function createSessionId(): string {
   const suffix = randomBytes(6)
     .toString('base64url')
     .replace(/[^A-Za-z0-9]/g, 'x')
@@ -401,6 +416,9 @@ export function launchSession(options: LaunchOptions): SessionHandle {
     },
     sendTodoAction(action) {
       sendToWorker?.({ type: 'todoAction', ...action });
+    },
+    cancelDelegate(sessionId) {
+      sendToWorker?.({ type: 'cancelDelegate', sessionId });
     },
     sessionId: idReady.promise,
     result: run().catch((error: unknown) => {

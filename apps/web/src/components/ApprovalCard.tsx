@@ -1,5 +1,5 @@
 import type { ApprovalDecision, ApprovalRequest, RiskLevel } from '@ora/protocol';
-import { Pencil, ShieldCheck, ShieldQuestionMark } from 'lucide-react';
+import { CornerDownRight, Pencil, ShieldCheck, ShieldQuestionMark } from 'lucide-react';
 import { useState } from 'react';
 import { Button, KeyHint } from '../ui/button.tsx';
 
@@ -14,6 +14,12 @@ const titles = {
   file: '이 파일을 쓸까요?',
   arguments: '이 도구 호출을 실행할까요?',
   verify_waiver: '검증 예외를 승인할까요?',
+} as const;
+
+const childTitles = {
+  shell: '하위 세션이 명령 실행을 묻습니다',
+  file: '하위 세션이 파일 쓰기를 묻습니다',
+  arguments: '하위 세션이 도구 호출을 묻습니다',
 } as const;
 
 interface ApprovalCardProps {
@@ -102,13 +108,22 @@ export function ApprovalCard({ request, onDecide }: ApprovalCardProps) {
     >
       <div className="flex items-center gap-2">
         <ShieldCheck aria-hidden className="size-4 text-warning" />
-        <h2 className="text-sm leading-5 font-semibold text-foreground">{titles[detail.kind]}</h2>
+        <h2 className="text-sm leading-5 font-semibold text-foreground">
+          {request.from ? childTitles[detail.kind] : titles[detail.kind]}
+        </h2>
         {detail.kind === 'shell' && (
           <span className="ml-auto text-xs leading-4 font-medium text-warning">
             {riskLabel[detail.risk]}
           </span>
         )}
       </div>
+      {request.from && (
+        <p className="flex items-center gap-2 text-xs leading-4 text-foreground-muted">
+          <CornerDownRight aria-hidden className="size-[13px] shrink-0 text-foreground-subtle" />
+          <span className="font-mono font-semibold text-foreground">{request.from.agent}</span>
+          <span className="truncate">{request.from.intent}</span>
+        </p>
+      )}
       <div
         className={
           isEditing
@@ -178,6 +193,12 @@ export function ApprovalCard({ request, onDecide }: ApprovalCardProps) {
           {request.reason}
         </p>
       )}
+      {request.from && (
+        <p className="text-[13px] leading-5 text-foreground-muted">
+          하위 세션의 권한은 이 세션의 권한 모드 안에서만 정합니다. 허용하면 그 하위 세션에만
+          적용합니다.
+        </p>
+      )}
       <div className="flex flex-wrap items-center justify-end gap-2">
         {isEditing ? (
           <>
@@ -211,21 +232,23 @@ export function ApprovalCard({ request, onDecide }: ApprovalCardProps) {
             >
               거부
             </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                approve('always');
-              }}
-            >
-              항상 허용
-            </Button>
+            {!request.from && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  approve('always');
+                }}
+              >
+                항상 허용
+              </Button>
+            )}
             <Button
               variant="secondary"
               onClick={() => {
                 approve('session');
               }}
             >
-              이 세션 동안 허용
+              {request.from ? '이 하위 세션 동안 허용' : '이 세션 동안 허용'}
             </Button>
             <Button
               variant="primary"

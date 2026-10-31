@@ -8,6 +8,7 @@ import {
   permissionSettingsResponseSchema,
   mcpServerListResponseSchema,
   skillListResponseSchema,
+  agentListResponseSchema,
   memoryDeleteResponseSchema,
   memoryListResponseSchema,
   memoryPassSummarySchema,
@@ -83,6 +84,7 @@ import type {
   EngineSettingsData,
   McpServersData,
   SkillsData,
+  AgentsData,
   MemoryData,
   OraActions,
   OraStore,
@@ -347,6 +349,8 @@ export function createHttpStore(
   let mcpServers: McpServersData = { status: 'loading', servers: [] };
   let skills: SkillsData = { status: 'loading' };
   let skillsCwd: string | undefined;
+  let agents: AgentsData = { status: 'loading' };
+  let agentsCwd: string | undefined;
   let memory: MemoryData = { status: 'loading' };
   let memoryCwd: string | undefined;
   const tabs = new Map<string, WorktreeTabs>();
@@ -462,6 +466,7 @@ export function createHttpStore(
       engineSettings,
       mcpServers,
       skills,
+      agents,
       memory,
     };
   };
@@ -529,6 +534,7 @@ export function createHttpStore(
       listRefreshTimer = null;
       refreshList().catch(() => undefined);
       refreshSkills(skillsCwd).catch(() => undefined);
+      refreshAgents(agentsCwd).catch(() => undefined);
       refreshMemory(memoryCwd).catch(() => undefined);
     }, refreshDelayMs);
   };
@@ -763,6 +769,19 @@ export function createHttpStore(
       };
     } catch (error) {
       skills = { status: 'error', errorMessage: toMessage(error) };
+    }
+    notifySoon();
+  };
+  const refreshAgents = async (cwd?: string): Promise<void> => {
+    agentsCwd = cwd;
+    const query = cwd === undefined ? '' : `?cwd=${encodeURIComponent(cwd)}`;
+    try {
+      agents = {
+        status: 'ready',
+        list: await requestJson(`/api/agents${query}`, agentListResponseSchema),
+      };
+    } catch (error) {
+      agents = { status: 'error', errorMessage: toMessage(error) };
     }
     notifySoon();
   };
@@ -1079,6 +1098,13 @@ export function createHttpStore(
     },
     refreshMcpServers,
     refreshSkills,
+    refreshAgents,
+    openPath: async (path, cwd) => {
+      await requestJson('/api/open-path', okResponseSchema, {
+        method: 'POST',
+        body: { path, ...(cwd === undefined ? {} : { cwd }) },
+      });
+    },
     refreshMemory,
     deleteMemory: async (id) => {
       await requestJson(`/api/memory/${encodeURIComponent(id)}`, memoryDeleteResponseSchema, {
@@ -1236,6 +1262,7 @@ export function createHttpStore(
     engineSettings,
     mcpServers,
     skills,
+    agents,
     memory,
   };
 
@@ -1255,6 +1282,7 @@ export function createHttpStore(
   refreshWorktrees().catch(() => undefined);
   refreshMcpServers().catch(() => undefined);
   refreshSkills().catch(() => undefined);
+  refreshAgents().catch(() => undefined);
   refreshMemory().catch(() => undefined);
   requestJson('/api/routing', routingResponseSchema)
     .then((result) => {

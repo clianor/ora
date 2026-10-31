@@ -33,6 +33,15 @@ export const approvalRequestSchema = z.strictObject({
   detail: approvalDetailSchema,
   /** 이 호출과 연결된 todo다. `verify.run`은 검증 대상 todo, 그 밖의 도구는 진행 중인 todo다. */
   todo: z.strictObject({ id: z.string().min(1), content: z.string() }).optional(),
+  /** 하위 세션이 올린 요청이면 그 하위 세션이다. 부모 세션의 승인 카드가 어느 하위 세션의 요청인지 보인다 (SPEC 2.15.1절). */
+  from: z
+    .strictObject({
+      sessionId: z.string().min(1),
+      agent: z.string().min(1),
+      /** 부모가 위임할 때 적은 `intent`다. 승인 카드가 하위 세션이 하는 일을 한 줄로 보인다. */
+      intent: z.string(),
+    })
+    .optional(),
 });
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 

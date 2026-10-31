@@ -177,12 +177,15 @@ const configSchema = z.object({
       maxRepairsPerTodo: z.number().int().nonnegative().default(3),
       noProgressSteps: z.number().int().positive().default(5),
       maxConcurrentSessions: z.number().int().positive().default(4),
+      /** 1이면 하위 세션은 다시 위임하지 못한다 (SPEC 2.15.1절). */
+      maxDelegationDepth: z.number().int().nonnegative().default(1),
     })
     .default({
       maxSteps: 50,
       maxRepairsPerTodo: 3,
       noProgressSteps: 5,
       maxConcurrentSessions: 4,
+      maxDelegationDepth: 1,
     }),
   verify: z
     .strictObject({

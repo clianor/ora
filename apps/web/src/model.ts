@@ -12,6 +12,7 @@ import type {
   McpServerAddBody,
   McpServerStatus,
   SkillListResponse,
+  AgentListResponse,
   MemoryListResponse,
   MemoryLogResponse,
   MemorySessionFeedback,
@@ -208,6 +209,10 @@ export interface OraActions {
   refreshMcpServers: () => Promise<void>;
   /** 스킬 목록과 최근 회상을 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 스킬도 읽습니다. */
   refreshSkills: (cwd?: string) => Promise<void>;
+  /** 에이전트 정의 목록과 건너뛴 파일의 이유를 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 정의도 읽습니다. */
+  refreshAgents: (cwd?: string) => Promise<void>;
+  /** 에이전트 정의 파일이나 폴더를 운영체제로 엽니다. 서버가 정의 폴더 밖의 경로를 거부하면 그 이유로 거부합니다. */
+  openPath: (path: string, cwd?: string) => Promise<void>;
   /** 메모리 목록과 마지막 전체 패스를 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 메모리도 읽습니다. */
   refreshMemory: (cwd?: string) => Promise<void>;
   /** 메모리 하나를 지웁니다. 서버가 아카이브로 옮깁니다. 없는 항목이면 거부합니다. */
@@ -318,6 +323,13 @@ export interface SkillsData {
   list?: SkillListResponse;
 }
 
+/** 설정 › 에이전트 페이지가 그리는 데이터입니다. */
+export interface AgentsData {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  list?: AgentListResponse;
+}
+
 /** 설정 › 메모리 페이지와 대화의 저장 줄이 그리는 데이터입니다. */
 export interface MemoryData {
   status: 'loading' | 'ready' | 'error';
@@ -374,6 +386,7 @@ export interface OraStore {
   engineSettings: EngineSettingsData;
   mcpServers: McpServersData;
   skills: SkillsData;
+  agents: AgentsData;
   memory: MemoryData;
 }
 

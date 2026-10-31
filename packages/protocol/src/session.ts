@@ -78,5 +78,16 @@ export const sessionRecordSchema = z.strictObject({
       }),
     )
     .optional(),
+  /** 하위 세션만 가진다. 일을 맡긴 부모 세션 ID, 위임 호출 ID, 에이전트 정의 이름이다 (SPEC 2.15.1절). */
+  delegatedBy: z
+    .strictObject({
+      sessionId: sessionIdSchema,
+      callId: z.string().min(1),
+      agent: z.string().min(1),
+      /** 위임할 때 정한 쓰기 범위와 정의의 최대 스텝이다. 하위 세션 탭의 머리 띠가 보인다. */
+      writeScope: z.array(z.string()).optional(),
+      maxSteps: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 export type SessionRecord = z.infer<typeof sessionRecordSchema>;

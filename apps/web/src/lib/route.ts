@@ -15,6 +15,7 @@ export type SettingsPage =
   | 'notifications'
   | 'mcp'
   | 'skills'
+  | 'agents'
   | 'memory';
 
 const settingsPages: readonly string[] = [
@@ -29,6 +30,7 @@ const settingsPages: readonly string[] = [
   'notifications',
   'mcp',
   'skills',
+  'agents',
   'memory',
 ];
 

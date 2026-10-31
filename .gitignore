@@ -18,3 +18,6 @@ AGENTS.local.md
 
 # ora eval 결과는 커밋하지 않는다
 eval/results/
+
+# 시안 PNG는 design/src/의 생성 코드로 다시 만들 수 있으므로 커밋하지 않는다
+design/previews/

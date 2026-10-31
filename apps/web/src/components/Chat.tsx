@@ -34,6 +34,7 @@ import { MarkdownText } from './Markdown.tsx';
 import { CacheStat } from './CacheStat.tsx';
 import { CompactionMark } from './CompactionMark.tsx';
 import { ReviewNote } from './ReviewCard.tsx';
+import { DelegateCard, ReverifyNote } from './DelegateCard.tsx';
 import { MemorySavedNote } from './MemorySavedNote.tsx';
 import { ContextStat } from './ContextStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
@@ -203,6 +204,8 @@ function AssistantMessage() {
               mcp: McpNote,
               review: ReviewNote,
               memory: MemorySavedNote,
+              delegate: DelegateCard,
+              reverify: ReverifyNote,
             },
             Fallback: WarningNote,
           },
@@ -221,6 +224,8 @@ interface ThreadViewProps {
   topSpacerPx?: number;
   /** 마지막으로 그린 조각 뒤에서 그리지 않은 뒤쪽 조각이 차지하는 어림 높이(px)입니다. */
   bottomSpacerPx?: number;
+  /** 메시지 위에 놓는 영역입니다(하위 세션 탭의 브리프). */
+  header?: ReactNode;
 }
 
 export function ThreadView({
@@ -228,6 +233,7 @@ export function ThreadView({
   onScroll,
   topSpacerPx = 0,
   bottomSpacerPx = 0,
+  header,
 }: ThreadViewProps) {
   const editingSeq = useRewind()?.editingSeq ?? null;
   return (
@@ -237,6 +243,7 @@ export function ThreadView({
         className="flex w-full flex-1 flex-col items-center overflow-y-auto pt-5"
       >
         <div className="flex w-[720px] max-w-[calc(100%-var(--s-6)*2)] flex-col gap-4 pb-6">
+          {header}
           <ThreadPrimitive.Messages>
             {({ message }) => (
               <>

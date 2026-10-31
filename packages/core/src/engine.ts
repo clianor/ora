@@ -18,6 +18,7 @@ import type {
 } from '@ora/protocol';
 import { z } from 'zod';
 import {
+  agentDelegateSchema,
   askUserSchema,
   buildToolSpecs,
   isControlTool,
@@ -40,6 +41,7 @@ import type {
 } from './ports/approval.ts';
 import type { McpNoticePort } from './ports/mcp-notices.ts';
 import type { CommandRunner } from './ports/command-runner.ts';
+import type { DelegatePort } from './ports/delegate.ts';
 import type { ConflictJudge, MemoryPort } from './ports/memory.ts';
 import type { SkillEntry, SkillPort } from './ports/skills.ts';
 import { scoreBm25 } from './relevance.ts';
@@ -135,6 +137,8 @@ export interface EngineSettings {
   readonly pricing?: Readonly<Record<string, ModelPricing>>;
   /** 검증이 통과한 todo를 `review` 역할의 다른 모델에 검토시킨다. 기본은 끈다. */
   readonly reviewEnabled?: boolean;
+  /** 위임 깊이 상한이다 (SPEC 2.15.1절). 기본 1이라 하위 세션은 다시 위임하지 못한다. */
+  readonly maxDelegationDepth?: number;
 }
 
 export interface EngineDeps {
@@ -158,6 +162,8 @@ export interface EngineDeps {
   readonly mcpNotices?: McpNoticePort;
   /** 없으면 스킬을 쓰지 않는다. */
   readonly skills?: SkillPort;
+  /** 없으면 `agent.delegate`를 쓰지 않는다. */
+  readonly delegate?: DelegatePort;
 }
 
 export interface RunInput {
@@ -176,6 +182,27 @@ export interface RunInput {
   readonly resume?: ResumeInput;
   /** 사용자가 보낸 포기·포기 취소다. 엔진이 스텝이 끝날 때마다 꺼내 반영한다. */
   readonly userTodoActions?: { drain(): readonly UserTodoAction[] };
+  /** 하위 세션이면 값이 있다. 부모의 위임 호출이 이 값을 만들어 넘긴다. */
+  readonly delegation?: {
+    readonly depth: number;
+    readonly delegatedBy: {
+      readonly sessionId: string;
+      readonly callId: string;
+      readonly agent: string;
+      readonly writeScope?: string[];
+      readonly maxSteps?: number;
+    };
+    /** 모델 체인을 고르는 역할이다. */
+    readonly role: string;
+    /** 하위 세션이 부를 수 있는 도구 이름이다. */
+    readonly allowedTools: readonly string[];
+    /** 부모와 같이 쓰는 비용 합계다. */
+    readonly ledger: { spent: number };
+    /** 세션 제목이다. 없으면 작업 글에서 만든다. */
+    readonly title?: string;
+    /** 시스템 프롬프트 끝에 덧붙이는 에이전트 정의 본문이다. */
+    readonly systemSuffix: string;
+  };
 }
 
 /** 멈춘 세션을 잇는 데 필요한 입력이다. 호스트가 transcript를 봉인한 뒤 `planResume`으로 만든다. */
@@ -190,6 +217,8 @@ export interface RunOutcome {
   readonly endReason: EndReason;
   readonly summary: string;
   readonly todos: readonly Todo[];
+  /** 이 세션이 쓴 비용이다. 단위는 `pricing`과 같다. 부모가 위임 결과로 받아 자기 비용에 더한다. */
+  readonly cost: number;
 }
 
 interface ToolCall {
@@ -371,7 +400,23 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     injectedSkills.push(skill);
     skillTokens += tokens;
   }
-  const specs = buildToolSpecs(deps.tools);
+  const delegation = input.delegation;
+  const mainRole = delegation?.role ?? 'default';
+  const allowedTools = new Set(
+    delegation === undefined ? deps.tools.map((tool) => tool.name) : delegation.allowedTools,
+  );
+  const canVerify =
+    delegation === undefined ||
+    deps.tools.some((tool) => tool.tier === 'exec' && allowedTools.has(tool.name));
+  const hiddenTools = new Set<string>([
+    ...deps.tools.filter((tool) => !allowedTools.has(tool.name)).map((tool) => tool.name),
+    ...(canVerify ? [] : ['verify.run', 'verify.waive']),
+    ...(deps.delegate === undefined ||
+    (delegation?.depth ?? 0) >= (settings.maxDelegationDepth ?? 1)
+      ? ['agent.delegate']
+      : []),
+  ]);
+  const specs = buildToolSpecs(deps.tools, hiddenTools);
   const system = scrubText(
     assembleSystemPrompt({
       promptFiles,
@@ -383,7 +428,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       skills,
       skillBodies: injectedSkills,
       cwd: input.cwd,
-    }),
+    }) + (delegation === undefined ? '' : `\n\n## 에이전트 정의\n${delegation.systemSuffix}`),
   ).text;
   const promptHash = await workspace.hashText(
     JSON.stringify({
@@ -398,7 +443,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     id: input.sessionId,
     createdAt,
     updatedAt: createdAt,
-    title: scrubText(input.task.slice(0, 80)).text,
+    title: scrubText(delegation?.title ?? input.task.slice(0, 80)).text,
     actor: 'user',
     status: 'created',
     ...(input.repo === undefined ? {} : { repo: input.repo }),
@@ -408,6 +453,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     isolation: settings.isolation,
     promptHash,
     engineVersion: settings.engineVersion,
+    ...(delegation === undefined ? {} : { delegatedBy: delegation.delegatedBy }),
   };
   const saveSession = async (patch: Partial<SessionRecord>) => {
     session = { ...session, ...patch, updatedAt: now() };
@@ -471,14 +517,18 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       1_000_000
     );
   };
-  let spent = (resume?.plan.modelUsage ?? []).reduce(
-    (total, item) => total + costOf(item.model, item.usage),
-    0,
-  );
+  /** 부모와 하위 세션이 같은 값을 더하는 비용 합계다. 모든 요청이 이 합계로 상한을 확인한다. */
+  const ledger = delegation?.ledger ?? {
+    spent: (resume?.plan.modelUsage ?? []).reduce(
+      (total, item) => total + costOf(item.model, item.usage),
+      0,
+    ),
+  };
+  let ownSpent = 0;
   let costWarned = resume?.plan.costWarned ?? false;
   const ratioPct = () => {
     const base = settings.maxCost ?? settings.warnCost;
-    return base === undefined || base <= 0 ? undefined : Math.floor((spent / base) * 100);
+    return base === undefined || base <= 0 ? undefined : Math.floor((ledger.spent / base) * 100);
   };
   /** 모델 요청 전에 호출한다. 상한 이상이거나 `maxCost`가 있는데 단가가 없으면 요청을 막고, 경고 비용에 처음 닿으면 한 번 기록한다. */
   const guardCost = async (model: string) => {
@@ -493,7 +543,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           'pricing_missing',
         );
       }
-      if (spent >= settings.maxCost) {
+      if (ledger.spent >= settings.maxCost) {
         const pct = ratioPct() ?? 100;
         await emit('engine', { type: 'cost_guard', payload: { outcome: 'limit', ratioPct: pct } });
         throw new CostStopError(
@@ -502,7 +552,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         );
       }
     }
-    if (settings.warnCost !== undefined && !costWarned && spent >= settings.warnCost) {
+    if (settings.warnCost !== undefined && !costWarned && ledger.spent >= settings.warnCost) {
       costWarned = true;
       await emit('engine', {
         type: 'cost_guard',
@@ -511,7 +561,9 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     }
   };
   const addSpend = (model: string, usage: ModelUsage) => {
-    spent += costOf(model, usage);
+    const price = costOf(model, usage);
+    ledger.spent += price;
+    ownSpent += price;
     const pct = settings.maxCost === undefined ? undefined : ratioPct();
     return pct === undefined ? {} : { costRatioPct: pct };
   };
@@ -534,7 +586,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     });
     await saveSession({});
     await saveSession({ status: 'running' });
-    await noteUse('default');
+    await noteUse(mainRole);
     await emit('user', {
       type: 'message',
       payload: {
@@ -591,7 +643,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     });
     await saveTodos();
     await saveSession({ status, endReason });
-    return { status, endReason, summary: safeSummary, todos: [...todos.values()] };
+    return { status, endReason, summary: safeSummary, todos: [...todos.values()], cost: ownSpent };
   };
 
   /** 스텝이 끝나면 사용자의 포기를 반영하고, 남은 todo가 전부 `blocked`이거나 전부 `abandoned`이면 세션을 멈춘다 (SPEC 6.1절). */
@@ -1275,6 +1327,121 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     };
   };
 
+  /** 하위 세션에 일을 맡기고 결과를 돌려준다. 하위 세션의 증거는 인정하지 않고, 연결한 부모 todo는 attempted로만 바꾼다 (SPEC 2.15.1절). */
+  const runDelegate = async (
+    data: z.infer<typeof agentDelegateSchema>,
+    call: ToolCall,
+  ): Promise<ControlOutput> => {
+    const port = deps.delegate;
+    if (port === undefined) return { status: 'error', text: '이 세션은 위임할 수 없습니다.' };
+    const linked = data.todoId === undefined ? undefined : todos.get(data.todoId);
+    if (data.todoId !== undefined && (linked === undefined || isDone(linked.status))) {
+      return {
+        status: 'error',
+        text: `연결할 todo ${data.todoId}가 없거나 이미 끝났습니다.`,
+      };
+    }
+    const intent = typeof call.input.intent === 'string' ? call.input.intent : '';
+    const { brief } = data;
+    const outcome = await port.run({
+      callId: call.callId,
+      agent: data.agent,
+      intent,
+      brief: {
+        goal: brief.goal,
+        writeScope: brief.writeScope,
+        stopCondition: brief.stopCondition,
+        ...(brief.verifyCommand === undefined ? {} : { verifyCommand: brief.verifyCommand }),
+      },
+      parentSessionId: input.sessionId,
+      permissionMode: settings.permissionMode,
+      parentToolNames: deps.tools
+        .map((tool) => tool.name)
+        .filter((name) => settings.toolPolicies[name] !== 'deny'),
+      depth: delegation?.depth ?? 0,
+      cwd: input.cwd,
+      ledger,
+      signal,
+      softStop,
+      ...(deps.approval === undefined ? {} : { approval: deps.approval }),
+      onStart: async (info) => {
+        await emit('engine', {
+          type: 'delegate_start',
+          payload: {
+            callId: call.callId,
+            agent: data.agent,
+            childSessionId: info.sessionId,
+            permissionMode: settings.permissionMode,
+            tools: [...info.tools],
+            brief: brief.goal.slice(0, 200),
+            writeScope: [...brief.writeScope],
+            maxSteps: info.maxSteps,
+            ...(data.todoId === undefined ? {} : { todoId: data.todoId }),
+          },
+        });
+      },
+    });
+    if ('error' in outcome) return { status: 'error', text: outcome.error };
+    const changed = outcome.changedFiles;
+    const evidenceLines = outcome.todos.map((todo) =>
+      todo.evidence === undefined
+        ? `${todo.id} [${todo.status}] 증거 없음`
+        : `${todo.id} [${todo.status}] exit ${todo.evidence.exitCode ?? 'signal'}: ${todo.evidence.command}`,
+    );
+    await emit('engine', {
+      type: 'delegate_end',
+      payload: {
+        callId: call.callId,
+        childSessionId: outcome.sessionId,
+        status: outcome.status,
+        endReason: outcome.endReason,
+        evidence: evidenceLines.join('\n'),
+        changedFiles: [...changed],
+        steps: outcome.steps,
+        added: outcome.added,
+        deleted: outcome.deleted,
+        cost: outcome.cost,
+      },
+    });
+    let relink = '';
+    if (linked !== undefined) {
+      const current = todos.get(linked.id) ?? linked;
+      const verify =
+        current.verify ??
+        (brief.verifyCommand === undefined
+          ? undefined
+          : { command: brief.verifyCommand, origin: 'model' as const });
+      const rewind = ['pending', 'failed', 'interrupted', 'blocked'].includes(current.status);
+      if (rewind || verify !== current.verify) {
+        const next: Todo = {
+          ...current,
+          ...(verify === undefined ? {} : { verify }),
+          status: rewind ? 'attempted' : current.status,
+          attempts: rewind ? current.attempts + 1 : current.attempts,
+          updatedAt: now(),
+        };
+        if (rewind) delete next.blockedReason;
+        todos.set(next.id, next);
+        await emit('engine', {
+          type: 'todo_update',
+          payload: { todoId: next.id, from: current.status, to: next.status, todo: next },
+        });
+        await saveTodos();
+      }
+      relink = `\n연결한 부모 todo ${linked.id}는 attempted입니다. 하위 세션의 증거는 인정하지 않으므로, 같은 검증 명령을 verify.run으로 직접 실행해야 verified가 됩니다.`;
+    }
+    const text = [
+      `하위 세션 ${outcome.sessionId} (${data.agent}) 종료: ${outcome.status} / ${outcome.endReason}`,
+      `요약: ${outcome.summary}`,
+      `하위 세션 todo:\n${evidenceLines.length === 0 ? '없음' : evidenceLines.map((line) => `- ${line}`).join('\n')}`,
+      `바꾼 파일 ${changed.length}개: ${changed.join(', ') || '없음'}`,
+    ].join('\n');
+    let status: 'ok' | 'error' | 'aborted' = 'ok';
+    if (outcome.endReason === 'user_cancel') status = 'aborted';
+    else if (outcome.status === 'failed' || outcome.status === 'crashed') status = 'error';
+    return { status, text: text + relink };
+  };
+
   const runControl = async (
     call: ToolCall,
     args: Record<string, unknown>,
@@ -1303,6 +1470,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       case 'memory.propose': {
         const parsed = memoryProposeSchema.safeParse(args);
         return parsed.success ? proposeMemory(parsed.data) : invalid(parsed.error);
+      }
+      case 'agent.delegate': {
+        const parsed = agentDelegateSchema.safeParse(args);
+        return parsed.success ? runDelegate(parsed.data, call) : invalid(parsed.error);
       }
       default: {
         const parsed = askUserSchema.safeParse(args);
@@ -1397,6 +1568,15 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
 
     if (!control && tool === undefined) {
       return conclude({ status: 'error', text: `알 수 없는 도구: ${call.tool}` });
+    }
+    if (hiddenTools.has(call.tool)) {
+      return conclude({
+        status: 'error',
+        text:
+          call.tool === 'agent.delegate'
+            ? '위임 깊이 상한(limits.maxDelegationDepth)에 닿았거나 위임을 쓸 수 없는 세션이라 거부했습니다.'
+            : `권한 거부: 이 세션의 에이전트 정의가 ${call.tool} 사용을 허용하지 않습니다.`,
+      });
     }
     if (intent === '') {
       return conclude({
@@ -2150,7 +2330,8 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     });
     return true;
   };
-  const isTool = (name: string) => !isControlTool(name) && toolMap.get(name)?.tier === 'read';
+  const isTool = (name: string) =>
+    name === 'agent.delegate' || (!isControlTool(name) && toolMap.get(name)?.tier === 'read');
 
   let step = 0;
   try {
@@ -2286,7 +2467,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       stepId = `step-${step}`;
       toolSucceeded = false;
 
-      const window = (await currentPort('default')).contextWindow;
+      const window = (await currentPort(mainRole)).contextWindow;
       if (window !== undefined) {
         const threshold = window * settings.compactAtRatio;
         // 시스템 프롬프트, 도구 명세, 필수 절만으로 창을 넘으면 더 줄일 곳이 없다 (SPEC 4.3절 넘침).
@@ -2370,7 +2551,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       }
       const modelSignal = AbortSignal.any([signal, softStop]);
       const { completed, port, chainPosition, durationMs } = await requestModel(
-        'default',
+        mainRole,
         { system, messages: history, tools: specs },
         modelSignal,
       );
@@ -2381,7 +2562,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
           model: port.model,
           adapter: port.adapter,
           chainPosition,
-          role: 'default',
+          role: mainRole,
           nativeToolCalls: completed.nativeToolCalls,
           usage: completed.usage,
           ...addSpend(port.model, completed.usage),
@@ -2431,6 +2612,14 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         const firstSentence = text.split(/(?<=[.!?。])\s/)[0] ?? '';
         if (firstSentence !== '')
           await emit('model', { type: 'intent', payload: { text: firstSentence } });
+        if (delegation !== undefined) {
+          const hasOpenTodo = [...todos.values()].some((todo) => !isDone(todo.status));
+          return await finish(
+            hasOpenTodo ? 'stopped' : 'completed',
+            hasOpenTodo ? 'blocked' : 'passed',
+            text,
+          );
+        }
         const stopped = await judgeTodos();
         if (stopped !== undefined) return stopped;
         const list = [...todos.values()];

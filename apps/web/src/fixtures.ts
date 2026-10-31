@@ -28,6 +28,7 @@ import type {
   Stage,
   Terminal,
   Todo,
+  TodoStatus,
   WorktreeTabs,
 } from '@ora/protocol';
 import type {
@@ -36,6 +37,7 @@ import type {
   EngineSettingsData,
   McpServersData,
   SkillsData,
+  AgentsData,
   MemoryData,
   OraActions,
   OraStore,
@@ -716,6 +718,380 @@ const crashedView: SessionView = finishView({
   placeholder: '재개할 때 함께 보낼 조향 메시지를 적습니다',
 });
 
+// 위임 시안(#/session/delegate-running, delegate-approval, delegate-done, delegate-child)입니다.
+// 시각은 모듈을 읽은 때를 기준으로 잡아, 경과 시간이 시안과 같게 보이게 합니다.
+const delegateNow = Date.now();
+const minutesAgo = (minutes: number): string =>
+  new Date(delegateNow - minutes * 60_000).toISOString();
+
+function createDelegateFactory(sessionId: string) {
+  let seq = 0;
+  return <T extends OraEventType>(
+    type: T,
+    ago: number,
+    actor: Actor,
+    payload: EventOf<T>['payload'],
+  ): OraEvent => {
+    seq += 1;
+    return {
+      seq,
+      ts: minutesAgo(ago),
+      sessionId,
+      actor,
+      type,
+      payload,
+    } as unknown as OraEvent;
+  };
+}
+
+const delegateTask =
+  '결제 API에 부분 환불을 더해 주세요. 기존 결제 테스트와 같은 방식으로 테스트도 붙여 주세요.';
+const delegateTitle = '결제 API에 환불 추가';
+const delegateScope = ['src/refund/', 'test/refund/'];
+const delegateVerify = 'pnpm test test/refund';
+const delegateBrief =
+  '## 브리프\n목표: 결제 API에 부분 환불 엔드포인트와 테스트를 더한다.\n쓰기 범위: src/refund/, test/refund/\n검증 명령: pnpm test test/refund\n중단 조건: 결제 모델 스키마를 바꿔야 하면 멈추고 보고한다.';
+
+interface DelegateScenario {
+  parentId: string;
+  scoutId: string;
+  taskId: string;
+  parentStatus: SessionStatus;
+  /** 하위 세션 `task`의 상태입니다. `approval`은 부모 대화가 승인을 기다리는 상태입니다. */
+  taskState: 'running' | 'approval' | 'done';
+}
+
+function createDelegateChildView(scenario: DelegateScenario, agent: 'scout' | 'task'): SessionView {
+  const id = agent === 'scout' ? scenario.scoutId : scenario.taskId;
+  const isDone = agent === 'scout' || scenario.taskState === 'done';
+  const intent =
+    agent === 'scout'
+      ? '기존 결제 테스트의 구조와 픽스처를 조사한다'
+      : '환불 API와 테스트를 추가한다';
+  const make = createDelegateFactory(id);
+  const pendingCommand =
+    scenario.taskState === 'approval'
+      ? 'pnpm prisma migrate dev --name add_refund'
+      : delegateVerify;
+  const call = (
+    ago: number,
+    callId: string,
+    tool: string,
+    args: Record<string, unknown>,
+    result?: string,
+  ): OraEvent[] => [
+    make('tool_call', ago, 'model', { callId, tool, args: { intent: `${tool} 호출`, ...args } }),
+    ...(result === undefined
+      ? []
+      : [
+          make('tool_result', ago, 'tool', {
+            callId,
+            status: 'ok',
+            summary: result,
+            durationMs: 40,
+          }),
+        ]),
+  ];
+  const events: OraEvent[] = [
+    make('session_start', 7, 'engine', {
+      configSummary: {},
+      isolation: 'harness',
+      permissionMode: 'always-ask',
+      instructionFiles: [],
+      promptHash: 'p-demo',
+    }),
+    make('message', 7, 'user', {
+      role: 'user',
+      content: [{ type: 'text', text: delegateBrief }],
+      instructions: [delegateBrief],
+    }),
+    ...Array.from({ length: scenario.taskState === 'approval' ? 17 : 14 }, () =>
+      make('model_request', 6, 'model', {
+        model: 'fake/scripted',
+        adapter: 'fake',
+        chainPosition: 0,
+        nativeToolCalls: true,
+        usage: {
+          uncachedInputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          outputTokens: 0,
+        },
+        durationMs: 100,
+      }),
+    ),
+    ...call(6, 'r1', 'file_read', { path: 'test/payments/charge.test.ts' }, '1\timport'),
+    ...(agent === 'scout'
+      ? [
+          make('message', 5, 'model', {
+            role: 'assistant',
+            content: [{ type: 'text', text: '조사를 마쳤습니다.' }],
+          }),
+        ]
+      : [
+          ...call(5, 'w1', 'file_write', { path: 'src/refund/route.ts', add: 41 }, '41줄'),
+          ...call(4, 'w2', 'file_write', { path: 'test/refund/refund.test.ts', add: 38 }, '38줄'),
+          ...(isDone
+            ? call(3, 'v1', 'shell', { command: delegateVerify }, 'exit code: 0')
+            : call(1, 'v1', 'shell', { command: pendingCommand })),
+        ]),
+  ];
+  let status: SessionStatus = 'running';
+  if (isDone) status = 'completed';
+  else if (scenario.taskState === 'approval') status = 'awaiting_approval';
+  return finishView({
+    record: {
+      ...createRecord(id, `${agent} · ${intent}`, status, 'math-demo'),
+      createdAt: minutesAgo(agent === 'scout' ? 7 : 6),
+      updatedAt: minutesAgo(0.2),
+      delegatedBy: {
+        sessionId: scenario.parentId,
+        callId: agent === 'scout' ? 'd1' : 'd2',
+        agent,
+        writeScope: agent === 'scout' ? [] : delegateScope,
+        maxSteps: 30,
+      },
+    },
+    events,
+    todos: [],
+    repoLabel: 'math-demo · main',
+    diff: null,
+    statusLine: [],
+  });
+}
+
+function createDelegateParentView(scenario: DelegateScenario): SessionView {
+  const make = createDelegateFactory(scenario.parentId);
+  const isDone = scenario.taskState === 'done';
+  const taskIntent = '환불 API와 테스트를 추가한다';
+  const scoutIntent = '기존 결제 테스트의 구조와 픽스처를 조사한다';
+  const todo = (status: TodoStatus): Todo => ({
+    id: 't1',
+    content: '환불 API와 테스트',
+    status,
+    attempts: status === 'pending' ? 0 : 1,
+    writeScope: delegateScope,
+    phase: '구현',
+    verify: { command: delegateVerify, origin: 'user' },
+    updatedAt: minutesAgo(0.5),
+  });
+  const brief = (scope: string[]) => ({
+    goal: '결제 API에 부분 환불 엔드포인트와 테스트를 더한다',
+    writeScope: scope,
+    stopCondition: '결제 모델 스키마를 바꿔야 하면 멈추고 보고한다',
+  });
+  const events: OraEvent[] = [
+    make('session_start', 8, 'engine', {
+      configSummary: {},
+      isolation: 'harness',
+      permissionMode: 'always-ask',
+      instructionFiles: [],
+      promptHash: 'p-demo',
+    }),
+    make('stage', 8, 'engine', { outcome: 'entered', stage: 'execute' }),
+    make('message', 8, 'user', {
+      role: 'user',
+      content: [{ type: 'text', text: delegateTask }],
+      instructions: [delegateTask],
+    }),
+    make('todo_update', 7.5, 'model', { todoId: 't1', to: 'pending', todo: todo('pending') }),
+    make('message', 7, 'model', {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: '일을 둘로 나눕니다. `scout`가 기존 테스트 구조를 읽고, `task`가 환불 API와 테스트를 씁니다. 하위 세션이 끝나면 제가 같은 검증 명령을 다시 돌립니다.',
+        },
+      ],
+    }),
+    make('tool_call', 7, 'model', {
+      callId: 'd1',
+      tool: 'agent.delegate',
+      args: { intent: scoutIntent, agent: 'scout', brief: brief([]) },
+    }),
+    make('tool_call', 7, 'model', {
+      callId: 'd2',
+      tool: 'agent.delegate',
+      args: { intent: taskIntent, agent: 'task', todoId: 't1', brief: brief(delegateScope) },
+    }),
+    make('delegate_start', 7, 'engine', {
+      callId: 'd1',
+      agent: 'scout',
+      childSessionId: scenario.scoutId,
+      permissionMode: 'always-ask',
+      tools: ['file_read', 'search'],
+      brief: scoutIntent,
+      writeScope: [],
+      maxSteps: 30,
+    }),
+    make('delegate_start', 6, 'engine', {
+      callId: 'd2',
+      agent: 'task',
+      childSessionId: scenario.taskId,
+      permissionMode: 'always-ask',
+      tools: ['file_read', 'file_write', 'file_edit', 'shell'],
+      brief: taskIntent,
+      writeScope: delegateScope,
+      maxSteps: 30,
+      todoId: 't1',
+    }),
+    make('delegate_end', 5.8, 'engine', {
+      callId: 'd1',
+      childSessionId: scenario.scoutId,
+      status: 'completed',
+      endReason: 'passed',
+      evidence: '',
+      changedFiles: [],
+      steps: 9,
+      added: 0,
+      deleted: 0,
+      cost: 0,
+    }),
+    make('tool_result', 5.8, 'tool', {
+      callId: 'd1',
+      status: 'ok',
+      summary: '하위 세션 종료: completed / passed',
+      durationMs: 72_000,
+    }),
+    ...(isDone
+      ? [
+          make('delegate_end', 0.8, 'engine', {
+            callId: 'd2',
+            childSessionId: scenario.taskId,
+            status: 'completed',
+            endReason: 'passed',
+            evidence: `c1 [verified] exit 0: ${delegateVerify}`,
+            changedFiles: [
+              'src/refund/route.ts',
+              'src/refund/service.ts',
+              'test/refund/refund.test.ts',
+              'test/refund/fixtures.ts',
+            ],
+            steps: 23,
+            added: 84,
+            deleted: 3,
+            cost: 0,
+          }),
+          make('tool_result', 0.8, 'tool', {
+            callId: 'd2',
+            status: 'ok',
+            summary: '하위 세션 종료: completed / passed',
+            durationMs: 420_000,
+          }),
+          make('todo_update', 0.8, 'engine', {
+            todoId: 't1',
+            from: 'pending',
+            to: 'attempted',
+            todo: todo('attempted'),
+          }),
+          make('tool_call', 0.6, 'model', {
+            callId: 'v1',
+            tool: 'verify.run',
+            args: { intent: '같은 검증 명령을 다시 돌린다', todoId: 't1' },
+          }),
+          make('verification', 0.5, 'engine', {
+            todoId: 't1',
+            evidence: {
+              command: delegateVerify,
+              exitCode: 0,
+              summary: '6 passed',
+              origin: 'user',
+              ranAt: minutesAgo(0.5),
+              scopeDigest: 'sha256:abc',
+            },
+          }),
+          make('tool_result', 0.5, 'tool', {
+            callId: 'v1',
+            status: 'ok',
+            summary: 't1: verified (exit 0)',
+            durationMs: 5000,
+          }),
+          make('todo_update', 0.5, 'engine', {
+            todoId: 't1',
+            from: 'attempted',
+            to: 'verified',
+            todo: todo('verified'),
+          }),
+          make('message', 0.4, 'model', {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: '`task`가 `POST /payments/:id/refunds`와 테스트 6개를 더했습니다. 하위 세션의 검증 결과를 그대로 쓰지 않고, 같은 명령을 다시 돌려 통과를 확인했습니다.',
+              },
+            ],
+          }),
+        ]
+      : []),
+  ];
+  const waiting: PendingApproval[] =
+    scenario.taskState === 'approval'
+      ? [
+          {
+            requestId: 'req-delegate-1',
+            request: {
+              callId: 'v1',
+              tool: 'shell',
+              tier: 'exec',
+              reason: '마이그레이션을 만든다',
+              detail: {
+                kind: 'shell',
+                command: 'pnpm prisma migrate dev --name add_refund',
+                cwd: '~/projects/math-demo',
+                risk: 'medium',
+              },
+              from: { sessionId: scenario.taskId, agent: 'task', intent: taskIntent },
+            },
+          },
+        ]
+      : [];
+  return finishView(
+    {
+      record: {
+        ...createRecord(scenario.parentId, delegateTitle, scenario.parentStatus, 'math-demo'),
+        createdAt: minutesAgo(8),
+        updatedAt: minutesAgo(0.2),
+      },
+      events,
+      todos: [todo(isDone ? 'verified' : 'pending')],
+      repoLabel: 'math-demo · main',
+      diff: isDone ? { add: 84, del: 3 } : null,
+      statusLine: [],
+    },
+    { approvals: waiting },
+  );
+}
+
+const delegateRunning: DelegateScenario = {
+  parentId: 's-20261030-dlg0r1',
+  scoutId: 's-20261030-dlgsr1',
+  taskId: 's-20261030-dlgtr1',
+  parentStatus: 'running',
+  taskState: 'running',
+};
+const delegateApproval: DelegateScenario = {
+  parentId: 's-20261030-dlg0a1',
+  scoutId: 's-20261030-dlgsa1',
+  taskId: 's-20261030-dlgta1',
+  parentStatus: 'awaiting_approval',
+  taskState: 'approval',
+};
+const delegateDone: DelegateScenario = {
+  parentId: 's-20261030-dlg0d1',
+  scoutId: 's-20261030-dlgsd1',
+  taskId: 's-20261030-dlgtd1',
+  parentStatus: 'completed',
+  taskState: 'done',
+};
+
+const delegateViews: SessionView[] = [delegateRunning, delegateApproval, delegateDone].flatMap(
+  (scenario) => [
+    createDelegateParentView(scenario),
+    createDelegateChildView(scenario, 'scout'),
+    createDelegateChildView(scenario, 'task'),
+  ],
+);
+
 function createSession(
   record: SessionRecord,
   detail?: string,
@@ -756,6 +1132,7 @@ const rawRepos: RepoNode[] = [
           undefined,
           sessionView.todos.map((t) => t.content),
         ),
+        ...delegateViews.map((view) => createSession(view.record)),
       ]),
       createWorktree(
         'docs/readme-pnpm',
@@ -1893,6 +2270,73 @@ const fixtureSkills: SkillsData = {
     ],
   },
 };
+
+const fixtureAgents: AgentsData = {
+  status: 'ready',
+  list: {
+    projectName: 'math-demo',
+    projectDir: '/Users/me/projects/math-demo/.ora/agents',
+    globalDir: '/Users/me/.ora/agents',
+    project: [
+      {
+        name: 'db-migrator',
+        description: '마이그레이션 파일만 쓰고, 적용 전에 dry-run 출력을 보고한다.',
+        scope: 'project',
+        role: 'default',
+        tools: ['tier:read', 'tier:write', 'tier:exec'],
+        maxSteps: 20,
+        overridesBuiltin: false,
+        isShadowed: false,
+        path: '/Users/me/projects/math-demo/.ora/agents/db-migrator.md',
+      },
+      {
+        name: 'reviewer',
+        description: '보안과 결제 금액 계산을 먼저 본다.',
+        scope: 'project',
+        role: 'review',
+        tools: ['tier:read'],
+        maxSteps: 15,
+        overridesBuiltin: true,
+        isShadowed: false,
+        path: '/Users/me/projects/math-demo/.ora/agents/reviewer.md',
+      },
+    ],
+    global: [],
+    builtin: [
+      {
+        name: 'scout',
+        description: '코드를 읽고 조사해 요약한다.',
+        scope: 'builtin',
+        role: 'fast',
+        tools: ['tier:read'],
+        maxSteps: 30,
+        overridesBuiltin: false,
+        isShadowed: false,
+      },
+      {
+        name: 'task',
+        description: '일반 작업을 맡아 구현하고 검증한다.',
+        scope: 'builtin',
+        role: 'default',
+        tools: ['*'],
+        maxSteps: 30,
+        overridesBuiltin: false,
+        isShadowed: false,
+      },
+      {
+        name: 'reviewer',
+        description: '변경을 읽고 문제를 찾아 보고한다.',
+        scope: 'builtin',
+        role: 'review',
+        tools: ['tier:read'],
+        maxSteps: 30,
+        overridesBuiltin: false,
+        isShadowed: true,
+      },
+    ],
+    errors: [],
+  },
+};
 // 대화 끝에 메모리를 저장한 시안입니다. 주소는 `#/session/memory-saved`입니다. 설정 › 메모리 시안은 `#/settings/memory`입니다.
 const memorySessionId = 's-20261030-mem0e1';
 const makeMemory = createEventFactory(memorySessionId);
@@ -2187,6 +2631,7 @@ const detailedViews = new Map<string, SessionView>(
     memorySavedView,
     reviewView,
     reviewSkippedView,
+    ...delegateViews,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -2209,6 +2654,10 @@ const devAliases = new Map<string, string>([
   ['memory-saved', memorySavedView.record.id],
   ['review', reviewView.record.id],
   ['review-skipped', reviewSkippedView.record.id],
+  ['delegate-running', delegateRunning.parentId],
+  ['delegate-approval', delegateApproval.parentId],
+  ['delegate-done', delegateDone.parentId],
+  ['delegate-child', delegateRunning.taskId],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */
@@ -2306,6 +2755,8 @@ const fixtureActions: Omit<OraActions, StatefulActionName> = {
   readCompaction: () => Promise.resolve(compactionDocument),
   dismissError: () => undefined,
   refreshSkills: () => Promise.resolve(),
+  refreshAgents: () => Promise.resolve(),
+  openPath: () => Promise.resolve(),
 };
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -2883,6 +3334,7 @@ export function createFixtureStore(): OraStoreSource {
     engineSettings,
     mcpServers,
     skills: fixtureSkills,
+    agents: fixtureAgents,
     memory,
   };
   return {

@@ -11,6 +11,8 @@ const soft = new AbortController();
 delete process.env.ELECTRON_RUN_AS_NODE;
 // 호스트가 보낸 포기·포기 취소다. 엔진이 스텝이 끝날 때 꺼내 간다.
 const todoActions: UserTodoAction[] = [];
+// 실행 중인 하위 세션을 멈추는 함수다. 위임 카드의 "중지"가 이 목록으로 그 하위 세션만 소프트 스톱한다.
+const children = new Map<string, () => void>();
 
 function send(message: WorkerMessage, then: () => void = () => undefined): void {
   process.send?.(message, then);
@@ -24,6 +26,7 @@ function start(command: LaunchCommand): void {
     signal: hard.signal,
     softStop: soft.signal,
     userTodoActions: { drain: () => todoActions.splice(0) },
+    children,
     onEvent: (event) => {
       send({ type: 'event', event });
     },
@@ -62,6 +65,9 @@ process.on('message', (raw) => {
       break;
     case 'todoAction':
       todoActions.push({ todoId: command.todoId, action: command.action });
+      break;
+    case 'cancelDelegate':
+      children.get(command.sessionId)?.();
       break;
     case 'cancel':
       if (command.mode === 'soft') {

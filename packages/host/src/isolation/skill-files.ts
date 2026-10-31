@@ -10,7 +10,7 @@ const SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const MAX_SKILL_BYTES = 262144;
 
 /** 실제 경로가 기존 하네스 디렉터리 안이면 true다 (SPEC 5.6절). 심링크를 따라간 뒤의 경로로 판정한다. */
-async function isHarnessPath(realPath: string): Promise<boolean> {
+export async function isHarnessPath(realPath: string): Promise<boolean> {
   for (const name of HARNESS_DIRS) {
     const root = await realpath(join(homedir(), name)).catch(() => join(homedir(), name));
     if (realPath === root || realPath.startsWith(root + sep)) return true;
@@ -18,7 +18,7 @@ async function isHarnessPath(realPath: string): Promise<boolean> {
   return false;
 }
 
-function splitList(value: string): string[] {
+export function splitList(value: string): string[] {
   return value
     .replace(/^\[|\]$/g, '')
     .split(',')
@@ -27,7 +27,9 @@ function splitList(value: string): string[] {
 }
 
 /** `---`로 감싼 앞부분의 `키: 값` 줄만 읽는다. 앞부분이 없으면 undefined다. */
-function parseSkillFile(text: string): { meta: Record<string, string>; body: string } | undefined {
+export function parseSkillFile(
+  text: string,
+): { meta: Record<string, string>; body: string } | undefined {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (match === null) return undefined;
   const meta: Record<string, string> = {};

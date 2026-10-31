@@ -310,7 +310,10 @@ export function WorktreeScreen({ state }: { state: RouteState }) {
   }
 
   const runningCount = ref
-    ? ref.node.sessions.filter((session) => runningStatuses.has(session.record.status)).length
+    ? ref.node.sessions.filter(
+        (session) =>
+          runningStatuses.has(session.record.status) && session.record.delegatedBy === undefined,
+      ).length
     : 0;
   const changes = store.getChanges(cwd);
   const diff = changes?.isRepo

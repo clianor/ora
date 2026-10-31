@@ -24,6 +24,7 @@ import { ModelSwitchToast } from './ModelSwitchToast.tsx';
 import { findWorktreeOfSession } from '../lib/worktrees.ts';
 import { OverwriteNotice } from './OverwriteNotice.tsx';
 import { LastRewindButton, RewindProvider, UndoNotice } from './Rewind.tsx';
+import { BriefBox, ChildBanner, ChildNote } from './ChildSession.tsx';
 
 const timeFormat = new Intl.DateTimeFormat('ko-KR', {
   hour: '2-digit',
@@ -57,12 +58,24 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
   const store = useStore();
   const { actions, watchSession } = store;
   const { record, thread } = view;
+  const isChild = record.delegatedBy !== undefined;
+  const briefMessage =
+    isChild && thread.messages[0]?.role === 'user' ? thread.messages[0] : undefined;
+  const threadMessages = briefMessage === undefined ? thread.messages : thread.messages.slice(1);
+  let briefText: string | undefined;
+  if (briefMessage !== undefined) {
+    const { content } = briefMessage;
+    briefText =
+      typeof content === 'string'
+        ? content
+        : content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+  }
   const isRangePending = useRef(false);
   const [range, setRange] = useState<{ start: number; end: number | null }>({
     start: -1,
     end: null,
   });
-  const [firstMessage, ...laterMessages] = thread.messages;
+  const [firstMessage, ...laterMessages] = threadMessages;
   const total = laterMessages.length;
   const effectiveEnd = Math.min(range.end ?? total, total);
   let effectiveStart = Math.min(range.start, effectiveEnd);
@@ -72,7 +85,7 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
   }
   const shownMessages =
     firstMessage === undefined
-      ? thread.messages
+      ? threadMessages
       : [firstMessage, ...laterMessages.slice(effectiveStart, effectiveEnd)];
   const sessionId = record.id;
 
@@ -134,6 +147,7 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
   return (
     <>
       <main className="relative flex min-w-0 flex-1 flex-col">
+        {isChild && <ChildBanner record={record} isRunning={isRunning} />}
         <ModelSwitchToast events={view.events} />
         <ChatProvider
           messages={shownMessages}
@@ -143,6 +157,7 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
             <SteerRestore failure={view.steerFailure} />
             <DraftSync draftKey={draftKey} />
             <ThreadView
+              header={briefText === undefined ? undefined : <BriefBox text={briefText} />}
               topSpacerPx={effectiveStart * estimatedMessagePx}
               bottomSpacerPx={(total - effectiveEnd) * estimatedMessagePx}
               onScroll={(event) => {
@@ -237,24 +252,30 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
                 </p>
               )}
               {!isRunning && <UndoNotice sessionId={sessionId} events={view.events} />}
-              <Composer
-                isRunning={isRunning}
-                isStopping={view.isStopping}
-                placeholder={
-                  view.placeholder ??
-                  (cost.stop ? '지시를 바꿔 보내면 멈춘 곳에서 이어 갑니다' : undefined)
-                }
-                chips={view.chips}
-                onStop={() => {
-                  runAction(actions.cancelRun(sessionId, view.isStopping ? 'hard' : 'soft'));
-                }}
-              />
-              <StatusLine
-                items={statusItems}
-                context={view.context}
-                cache={view.cache}
-                trailing={<LastRewindButton lastSeq={thread.lastUserSeq} />}
-              />
+              {isChild ? (
+                <ChildNote />
+              ) : (
+                <>
+                  <Composer
+                    isRunning={isRunning}
+                    isStopping={view.isStopping}
+                    placeholder={
+                      view.placeholder ??
+                      (cost.stop ? '지시를 바꿔 보내면 멈춘 곳에서 이어 갑니다' : undefined)
+                    }
+                    chips={view.chips}
+                    onStop={() => {
+                      runAction(actions.cancelRun(sessionId, view.isStopping ? 'hard' : 'soft'));
+                    }}
+                  />
+                  <StatusLine
+                    items={statusItems}
+                    context={view.context}
+                    cache={view.cache}
+                    trailing={<LastRewindButton lastSeq={thread.lastUserSeq} />}
+                  />
+                </>
+              )}
             </div>
           </RewindProvider>
         </ChatProvider>

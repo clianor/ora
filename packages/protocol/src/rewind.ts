@@ -17,6 +17,8 @@ const REWOUND_EVENT_TYPES = new Set<OraEvent['type']>([
   'approval_request',
   'question',
   'answer',
+  'delegate_start',
+  'delegate_end',
   'todo_update',
   'objective',
   'phase',

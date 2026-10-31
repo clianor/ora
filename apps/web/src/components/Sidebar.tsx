@@ -77,6 +77,14 @@ function WorktreeRow({
   const branch = getBranch(cwd);
   const isDefault = branch !== undefined && branch === getDefaultBranch(cwd);
   const active = node.sessions.filter((session) => runningStatuses.has(session.record.status));
+  const activeIds = new Set(active.map((session) => session.record.id));
+  /** 하위 세션은 부모 세션 아래에 들여 씁니다. 부모가 실행 중이 아니면 하위 세션도 최상위 줄로 보입니다. */
+  const children = active.filter(
+    (session) =>
+      session.record.delegatedBy !== undefined &&
+      activeIds.has(session.record.delegatedBy.sessionId),
+  );
+  const roots = active.filter((session) => !children.includes(session));
   const entry = status?.worktrees.find((item) => item.path === cwd);
   const ports =
     repoPath === undefined
@@ -195,35 +203,54 @@ function WorktreeRow({
           )}
         >
           {rowBlock}
-          {active.map((session) => {
-            const { Icon: StatusIcon, color } = sessionIcons[session.record.status] ?? {
-              Icon: Loader,
-              color: 'text-foreground-muted',
-            };
-            return (
-              <a
-                key={session.record.id}
-                href={hashFor('worktree', { sessionId: session.record.id })}
-                className="flex h-[30px] items-center gap-2 rounded-sm pr-2.5 pl-7 hover:bg-surface-hover"
-              >
-                <StatusIcon
-                  role="img"
-                  aria-label={statusLabel[session.record.status]}
-                  className={cn(
-                    'size-3.5 shrink-0',
-                    color,
-                    StatusIcon === Loader && 'motion-safe:animate-spin',
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-foreground">
-                  {session.record.title}
-                </span>
-                <span className="text-xs leading-4 text-foreground-subtle">
-                  {formatShortElapsed(session.record.createdAt, now)}
-                </span>
-              </a>
-            );
-          })}
+          {roots.map((root) => (
+            <div key={root.record.id} className="flex flex-col">
+              {[
+                root,
+                ...children.filter(
+                  (child) => child.record.delegatedBy?.sessionId === root.record.id,
+                ),
+              ].map((session) => {
+                const isChild = session.record.delegatedBy !== undefined;
+                const { Icon: StatusIcon, color } = sessionIcons[session.record.status] ?? {
+                  Icon: Loader,
+                  color: 'text-foreground-muted',
+                };
+                return (
+                  <a
+                    key={session.record.id}
+                    href={hashFor('worktree', { sessionId: session.record.id })}
+                    className={cn(
+                      'flex h-[30px] items-center gap-2 rounded-sm pr-2.5 hover:bg-surface-hover',
+                      isChild ? 'pl-12' : 'pl-7',
+                    )}
+                  >
+                    {isChild && (
+                      <CornerDownRight
+                        aria-hidden
+                        className="-ml-5 size-3 shrink-0 text-foreground-subtle"
+                      />
+                    )}
+                    <StatusIcon
+                      role="img"
+                      aria-label={statusLabel[session.record.status]}
+                      className={cn(
+                        'size-3.5 shrink-0',
+                        color,
+                        StatusIcon === Loader && 'motion-safe:animate-spin',
+                      )}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-foreground">
+                      {session.record.title}
+                    </span>
+                    <span className="text-xs leading-4 text-foreground-subtle">
+                      {formatShortElapsed(session.record.createdAt, now)}
+                    </span>
+                  </a>
+                );
+              })}
+            </div>
+          ))}
         </div>
       ) : (
         rowBlock

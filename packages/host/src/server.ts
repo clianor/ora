@@ -81,6 +81,8 @@ import { createSettingsApi } from './settings-api.ts';
 import { createMcpApi } from './mcp-api.ts';
 import { createMemoryApi } from './memory-api.ts';
 import { createSkillsApi } from './skills-api.ts';
+import { createAgentsApi } from './agents-api.ts';
+import { openPathBodySchema } from '@ora/protocol';
 import { createTerminalManager } from './terminal.ts';
 import { createProcessScanner, listWorktreePaths, toCleanupProcess } from './processes.ts';
 import { readSurvivors } from './recovery.ts';
@@ -405,6 +407,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
     env: options.env,
     ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
   });
+  const agentsApi = createAgentsApi({ env: options.env });
   const memoryApi = createMemoryApi({
     env: options.env,
     ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
@@ -1077,6 +1080,30 @@ export async function createHost(options: HostOptions): Promise<Host> {
       reply(res, 200, await skillsApi.list(await canonicalPath(rawCwd)));
       return;
     }
+    if (segments[1] === 'agents' && segments.length === 2) {
+      if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const rawCwd = url.searchParams.get('cwd');
+      if (rawCwd === null) {
+        reply(res, 200, await agentsApi.list());
+        return;
+      }
+      await assertKnownWorktree(rawCwd);
+      reply(res, 200, await agentsApi.list(await canonicalPath(rawCwd)));
+      return;
+    }
+    if (segments[1] === 'open-path' && segments.length === 2) {
+      if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+      const body = parseBody(openPathBodySchema, await readJson(req));
+      let cwd: string | undefined;
+      if (body.cwd !== undefined) {
+        await assertKnownWorktree(body.cwd);
+        cwd = await canonicalPath(body.cwd);
+      }
+      const opened = await agentsApi.openPath(body.path, cwd);
+      if (opened.refused !== undefined) throw new HttpError(403, opened.refused);
+      reply(res, 200, { ok: true });
+      return;
+    }
     if (segments[1] === 'memory') {
       const [, , action] = segments;
       if (action === undefined) {
@@ -1356,7 +1383,20 @@ export async function createHost(options: HostOptions): Promise<Host> {
       }
       case 'cancel': {
         const body = parseBody(cancelBodySchema, await readJson(req));
-        requireLive(id).handle.cancel(body.mode);
+        const own = live.get(id);
+        if (own === undefined) {
+          // 하위 세션은 부모 워커 안에서 돈다. 위임 카드의 "중지"는 그 하위 세션만 소프트 스톱한다.
+          // 하위 세션 기록이 아직 없을 수 있어서, 기록의 부모를 우선하고 없으면 실행 중인 모든 워커에 보낸다. 워커는 모르는 ID를 무시한다.
+          const parentId = (await readSessionRecordOrWarn(sessionDir))?.delegatedBy?.sessionId;
+          const parent = parentId === undefined ? undefined : live.get(parentId);
+          const targets = parent === undefined ? [...live.values()] : [parent];
+          if (targets.length === 0) {
+            throw new HttpError(409, `이 서버에서 실행 중인 세션이 아닙니다: ${id}`);
+          }
+          for (const target of targets) target.handle.cancelDelegate(id);
+        } else {
+          own.handle.cancel(body.mode);
+        }
         reply(res, 200, { ok: true });
         return;
       }

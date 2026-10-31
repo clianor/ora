@@ -13,6 +13,8 @@ import type { CatalogModel } from '@ora/adapters';
 import { formatKst, parseTranscript, planResume, runSession, scrubValue } from '@ora/core';
 import type {
   ApprovalPort,
+  EngineDeps,
+  EngineSettings,
   Clock,
   InstructionFile,
   ModelChainEntry,
@@ -47,6 +49,7 @@ import {
   resolveSkillsDir,
 } from './config.ts';
 import type { Config } from './config.ts';
+import { createDelegatePort } from './delegate.ts';
 import { createChildEnv, resolveIsolationRoot } from './isolation/child-env.ts';
 import { findHarnessFiles, listSearchDirs } from './isolation/harness-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
@@ -351,6 +354,8 @@ export interface ExecuteHooks {
   readonly questions?: QuestionPort;
   /** 사용자가 보낸 포기·포기 취소를 엔진이 스텝이 끝날 때 꺼내 가는 대기열이다. */
   readonly userTodoActions?: { drain(): readonly UserTodoAction[] };
+  /** 실행 중인 하위 세션의 소프트 스톱 함수다. 워커가 `cancelDelegate` 명령으로 이 목록을 쓴다. */
+  readonly children?: Map<string, () => void>;
 }
 
 /** 워커 프로세스 안에서 세션 하나를 끝까지 실행한다. 재개는 호스트가 transcript를 봉인한 뒤에 부른다. */
@@ -465,108 +470,118 @@ export async function executeSession(
     now: () => formatKst(new Date()),
   });
   await mcp.configure(config.mcpServers);
-  const outcome = await runSession(
-    {
-      models,
-      mcpNotices: mcp,
-      tools: [
-        ...createBuiltinTools({
-          runner: trackedRunner,
-          shellTimeoutMs: config.tools.shellTimeoutMs,
-          maxOutputBytes: config.tools.maxOutputBytes,
-          maxFileBytes: config.tools.maxFileBytes,
-          secretPaths: [join(oraHome, AUTH_FILE)],
-          sessionDir,
-          onBeforeWrite: async (path, before) => {
-            await storage.recordBaseline(path, before);
-            await tracker?.beforeWrite(path, before);
-          },
-          onAfterWrite: async (path, after) => {
-            await tracker?.afterWrite(path, after);
-          },
-          protectedPaths: [
-            join(oraHome, PERMISSIONS_FILE),
-            join(oraHome, 'engine.config.json'),
-            join(oraHome, 'vault'),
-            resolveSessionsDir(config, oraHome),
-            memoryDir,
-            ...(command.configPath === undefined ? [] : [resolve(command.configPath)]),
-          ],
-        }),
-        ...mcp.tools(),
-      ],
-      runner: trackedRunner,
-      sink: {
-        async append(event) {
-          await storage.transcript.append(event);
-          lastSeq = event.seq;
-          hooks.onEvent(event);
-        },
-      },
-      store: storage.sessions,
-      workspace: createWorkspace(command.cwd, gitRoot, config.tools.maxFileBytes),
-      skills: {
-        list: async () =>
-          mergeSkills(
-            await readAllSkills({
-              projectDir: join(command.cwd, '.ora', 'skills'),
-              globalDir: resolveSkillsDir(config, oraHome),
-            }),
-          ),
-      },
-      memory: createFileMemory({
-        memoryDir,
-        projectId: config.projectId ?? (gitRoot ?? command.cwd).split('/').pop() ?? 'project',
-        clock: systemClock,
-      }),
-      clock: systemClock,
-      alwaysApprovals: createPermissionsStore(join(oraHome, PERMISSIONS_FILE)),
-      restrictedFolders: createRestrictedFolders(config.permissions.restrictedFolders),
-      ...(hooks.approval === undefined ? {} : { approval: hooks.approval }),
-      ...(hooks.questions === undefined ? {} : { questions: hooks.questions }),
-    },
-    {
-      sessionId: command.sessionId,
-      task: resume?.plan.task ?? (command.type === 'createSession' ? command.task : ''),
-      cwd: command.cwd,
-      ...(gitRoot === undefined ? {} : { repo: gitRoot }),
-      ...(baseRef === undefined ? {} : { baseRef }),
-      settings: {
-        permissionMode:
-          resume?.session.permissionMode ??
-          (command.type === 'createSession' ? command.permissionMode : undefined) ??
-          config.permissions.mode,
-        toolPolicies: config.permissions.tools,
-        isolation,
-        engineVersion: ENGINE_VERSION,
-        maxSteps: config.limits.maxSteps,
-        maxRepairsPerTodo: config.limits.maxRepairsPerTodo,
-        noProgressSteps: config.limits.noProgressSteps,
+  const engineSettings: EngineSettings = {
+    permissionMode:
+      resume?.session.permissionMode ??
+      (command.type === 'createSession' ? command.permissionMode : undefined) ??
+      config.permissions.mode,
+    toolPolicies: config.permissions.tools,
+    isolation,
+    engineVersion: ENGINE_VERSION,
+    maxSteps: config.limits.maxSteps,
+    maxRepairsPerTodo: config.limits.maxRepairsPerTodo,
+    noProgressSteps: config.limits.noProgressSteps,
+    maxDelegationDepth: config.limits.maxDelegationDepth,
+    shellTimeoutMs: config.tools.shellTimeoutMs,
+    recallTokenBudget: config.recall.tokenBudget,
+    reviewEnabled: config.verify.review,
+    compactAtRatio: config.context.compactAtRatio,
+    keepRecentTokens: config.context.keepRecentTokens,
+    protectToolTokens: config.context.protectToolTokens,
+    minPruneSavings: config.context.minPruneSavings,
+    methodOrder: config.context.methodOrder,
+    idleEnabled: config.context.idleEnabled,
+    idleThresholdTokens: config.context.idleThresholdTokens,
+    idleTimeoutSeconds: config.context.idleTimeoutSeconds,
+    ...(config.session.maxCost === null ? {} : { maxCost: config.session.maxCost }),
+    ...(config.session.warnCost === null ? {} : { warnCost: config.session.warnCost }),
+    pricing: config.pricing,
+  };
+  const engineDeps: EngineDeps = {
+    models,
+    mcpNotices: mcp,
+    tools: [
+      ...createBuiltinTools({
+        runner: trackedRunner,
         shellTimeoutMs: config.tools.shellTimeoutMs,
-        recallTokenBudget: config.recall.tokenBudget,
-        reviewEnabled: config.verify.review,
-        compactAtRatio: config.context.compactAtRatio,
-        keepRecentTokens: config.context.keepRecentTokens,
-        protectToolTokens: config.context.protectToolTokens,
-        minPruneSavings: config.context.minPruneSavings,
-        methodOrder: config.context.methodOrder,
-        idleEnabled: config.context.idleEnabled,
-        idleThresholdTokens: config.context.idleThresholdTokens,
-        idleTimeoutSeconds: config.context.idleTimeoutSeconds,
-        ...(config.session.maxCost === null ? {} : { maxCost: config.session.maxCost }),
-        ...(config.session.warnCost === null ? {} : { warnCost: config.session.warnCost }),
-        pricing: config.pricing,
+        maxOutputBytes: config.tools.maxOutputBytes,
+        maxFileBytes: config.tools.maxFileBytes,
+        secretPaths: [join(oraHome, AUTH_FILE)],
+        sessionDir,
+        onBeforeWrite: async (path, before) => {
+          await storage.recordBaseline(path, before);
+          await tracker?.beforeWrite(path, before);
+        },
+        onAfterWrite: async (path, after) => {
+          await tracker?.afterWrite(path, after);
+        },
+        protectedPaths: [
+          join(oraHome, PERMISSIONS_FILE),
+          join(oraHome, 'engine.config.json'),
+          join(oraHome, 'vault'),
+          resolveSessionsDir(config, oraHome),
+          memoryDir,
+          ...(command.configPath === undefined ? [] : [resolve(command.configPath)]),
+        ],
+      }),
+      ...mcp.tools(),
+    ],
+    runner: trackedRunner,
+    sink: {
+      async append(event) {
+        await storage.transcript.append(event);
+        lastSeq = event.seq;
+        hooks.onEvent(event);
       },
-      configSummary: {
-        limits: config.limits,
-        tools: config.tools,
-        permissionTools: config.permissions.tools,
-      },
-      signal: hooks.signal,
-      softStop: hooks.softStop,
-      ...(resume === undefined ? {} : { resume }),
-      ...(hooks.userTodoActions === undefined ? {} : { userTodoActions: hooks.userTodoActions }),
     },
-  ).finally(() => mcp.close());
+    store: storage.sessions,
+    workspace: createWorkspace(command.cwd, gitRoot, config.tools.maxFileBytes),
+    skills: {
+      list: async () =>
+        mergeSkills(
+          await readAllSkills({
+            projectDir: join(command.cwd, '.ora', 'skills'),
+            globalDir: resolveSkillsDir(config, oraHome),
+          }),
+        ),
+    },
+    memory: createFileMemory({
+      memoryDir,
+      projectId: config.projectId ?? (gitRoot ?? command.cwd).split('/').pop() ?? 'project',
+      clock: systemClock,
+    }),
+    clock: systemClock,
+    alwaysApprovals: createPermissionsStore(join(oraHome, PERMISSIONS_FILE)),
+    restrictedFolders: createRestrictedFolders(config.permissions.restrictedFolders),
+    ...(hooks.approval === undefined ? {} : { approval: hooks.approval }),
+    ...(hooks.questions === undefined ? {} : { questions: hooks.questions }),
+    delegate: createDelegatePort({
+      parentDeps: () => engineDeps,
+      settings: engineSettings,
+      config,
+      oraHome,
+      sessionsDir: resolveSessionsDir(config, oraHome),
+      ...(gitRoot === undefined ? {} : { repo: gitRoot }),
+      onEvent: hooks.onEvent,
+      children: hooks.children ?? new Map<string, () => void>(),
+    }),
+  };
+  const outcome = await runSession(engineDeps, {
+    sessionId: command.sessionId,
+    task: resume?.plan.task ?? (command.type === 'createSession' ? command.task : ''),
+    cwd: command.cwd,
+    ...(gitRoot === undefined ? {} : { repo: gitRoot }),
+    ...(baseRef === undefined ? {} : { baseRef }),
+    settings: engineSettings,
+    configSummary: {
+      limits: config.limits,
+      tools: config.tools,
+      permissionTools: config.permissions.tools,
+    },
+    signal: hooks.signal,
+    softStop: hooks.softStop,
+    ...(resume === undefined ? {} : { resume }),
+    ...(hooks.userTodoActions === undefined ? {} : { userTodoActions: hooks.userTodoActions }),
+  }).finally(() => mcp.close());
   return { ...outcome, todos: scrubValue(outcome.todos) };
 }

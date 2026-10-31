@@ -6,6 +6,7 @@ import { HistoryScreen } from './components/History.tsx';
 import { AppearancePage, SettingsNav } from './components/Settings.tsx';
 import { McpPage } from './components/McpPage.tsx';
 import { SkillsPage } from './components/SkillsPage.tsx';
+import { AgentsPage } from './components/AgentsPage.tsx';
 import { MemoryPage } from './components/MemoryPage.tsx';
 import { GeneralPage, IsolationPage, KeysPage } from './components/EngineSettings.tsx';
 import { ReposPage } from './components/ReposPage.tsx';
@@ -76,6 +77,7 @@ function Screen({ state }: { state: RouteState }) {
             {page === 'notifications' && <NotificationsPage />}
             {page === 'mcp' && <McpPage />}
             {page === 'skills' && <SkillsPage cwd={state.cwd} />}
+            {page === 'agents' && <AgentsPage cwd={state.cwd} />}
             {page === 'memory' && <MemoryPage cwd={state.cwd} />}
             {page === 'appearance' && <AppearancePage />}
           </main>

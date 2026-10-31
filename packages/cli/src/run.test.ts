@@ -1587,7 +1587,7 @@ test(
         finalReport,
       ],
       { methodOrder: ['handoff', 'summary'] },
-      'lorem ipsum '.repeat(3300),
+      'lorem ipsum '.repeat(3000),
     ).done;
 
     const { events, session } = readSession(project);

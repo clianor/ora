@@ -44,6 +44,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     steer: z.string().min(1).optional(),
   }),
   z.strictObject({ type: z.literal('cancel'), mode: z.enum(['soft', 'hard']) }),
+  /** 위임 카드의 "중지"다. 그 하위 세션만 소프트 스톱하고 부모는 계속 돈다. */
+  z.strictObject({ type: z.literal('cancelDelegate'), sessionId: sessionIdSchema }),
   z.strictObject({
     type: z.literal('todoAction'),
     todoId: z.string().min(1),
@@ -71,6 +73,7 @@ export const workerMessageSchema = z.discriminatedUnion('type', [
     status: sessionStatusSchema,
     endReason: endReasonSchema,
     summary: z.string(),
+    cost: z.number().nonnegative().optional(),
     todos: z.array(todoSchema),
   }),
   // 세션을 시작하기 전에 알 수 있는 사용 오류(설정, 모델 스크립트, 재개 불가 상태)다.
