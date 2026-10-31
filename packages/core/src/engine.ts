@@ -182,6 +182,8 @@ export interface RunInput {
   readonly resume?: ResumeInput;
   /** 사용자가 보낸 포기·포기 취소다. 엔진이 스텝이 끝날 때마다 꺼내 반영한다. */
   readonly userTodoActions?: { drain(): readonly UserTodoAction[] };
+  /** 재개하는 부모 세션이 이전에 위임한 하위 세션의 모델 요청 사용량이다. 공유 비용 합계에 다시 더한다. */
+  readonly resumedChildUsage?: readonly { readonly model: string; readonly usage: ModelUsage }[];
   /** 하위 세션이면 값이 있다. 부모의 위임 호출이 이 값을 만들어 넘긴다. */
   readonly delegation?: {
     readonly depth: number;
@@ -519,7 +521,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
   };
   /** 부모와 하위 세션이 같은 값을 더하는 비용 합계다. 모든 요청이 이 합계로 상한을 확인한다. */
   const ledger = delegation?.ledger ?? {
-    spent: (resume?.plan.modelUsage ?? []).reduce(
+    spent: [...(resume?.plan.modelUsage ?? []), ...(input.resumedChildUsage ?? [])].reduce(
       (total, item) => total + costOf(item.model, item.usage),
       0,
     ),

@@ -351,6 +351,8 @@ export function createHttpStore(
   let skillsCwd: string | undefined;
   let agents: AgentsData = { status: 'loading' };
   let agentsCwd: string | undefined;
+  /** 세션 목록이 알려 준, 실행 중인 세션의 지금까지 스텝 수입니다. */
+  const stepCounts = new Map<string, number>();
   let memory: MemoryData = { status: 'loading' };
   let memoryCwd: string | undefined;
   const tabs = new Map<string, WorktreeTabs>();
@@ -451,6 +453,7 @@ export function createHttpStore(
       getPrStatus: (repo) => prStatuses.get(repo),
       getPorts: (repo) => ports.get(repo),
       getDefaultBranch: (cwd) => defaultBranches.get(cwd),
+      getSteps: (id) => stepCounts.get(id),
       getChanges: (cwd) => changes.get(cwd),
       getNewSessionContext: getNewSessionContext,
       empty: { repos: [], branches: [] },
@@ -517,6 +520,10 @@ export function createHttpStore(
         sessions.delete(id);
       }
       for (const record of list.sessions) ensureState(record);
+      stepCounts.clear();
+      for (const record of list.sessions) {
+        if (record.steps !== undefined) stepCounts.set(record.id, record.steps);
+      }
       requestBranches(
         list.sessions.flatMap((record) => (record.repo === undefined ? [] : [record.repo])),
       );
@@ -1247,6 +1254,7 @@ export function createHttpStore(
     getPrStatus: () => undefined,
     getPorts: () => undefined,
     getDefaultBranch: () => undefined,
+    getSteps: () => undefined,
     getChanges: () => undefined,
     getNewSessionContext: getNewSessionContext,
     empty: { repos: [], branches: [] },

@@ -62,7 +62,7 @@ function formatDuration(startedAt: string, endMs: number): string {
 }
 
 function DelegateRow({ item, now }: { item: DelegateItem; now: number }) {
-  const { getSession, actions } = useStore();
+  const { getSession, getSteps, actions } = useStore();
   const isWaiting =
     item.childSessionId !== undefined &&
     (getSession(item.sessionId)?.approvals.some(
@@ -79,12 +79,8 @@ function DelegateRow({ item, now }: { item: DelegateItem; now: number }) {
   else if (item.state === 'done' && item.changedFiles !== undefined) {
     scope = `파일 ${String(item.changedFiles.length)}개 · +${String(item.added ?? 0)} −${String(item.deleted ?? 0)}`;
   }
-  /** 실행 중에는 하위 세션의 모델 요청 수를 읽어 보이고, 끝난 뒤에는 위임이 남긴 스텝 수를 보입니다. */
-  const liveSteps =
-    item.childSessionId === undefined
-      ? undefined
-      : getSession(item.childSessionId)?.events.filter((event) => event.type === 'model_request')
-          .length;
+  /** 실행 중에는 세션 목록이 알려 준 스텝 수를, 끝난 뒤에는 위임이 남긴 스텝 수를 보입니다. */
+  const liveSteps = item.childSessionId === undefined ? undefined : getSteps(item.childSessionId);
   let stepText = '';
   if (item.steps !== undefined) stepText = `스텝 ${String(item.steps)}`;
   else if (liveSteps !== undefined && item.maxSteps !== undefined) {

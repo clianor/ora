@@ -373,6 +373,8 @@ export interface OraStore {
   getPorts: (repo: string) => PortsResponse | undefined;
   /** 서버가 알려 준 저장소의 기본 브랜치입니다. 찾지 못했으면 undefined입니다. */
   getDefaultBranch: (cwd: string) => string | undefined;
+  /** 세션 목록이 알려 준 지금까지의 스텝 수입니다. 실행 중이거나 응답을 기다리는 세션만 있습니다. */
+  getSteps: (sessionId: string) => number | undefined;
   /** `loadChanges`가 읽은 변경 목록입니다. 읽기 전에는 undefined입니다. */
   getChanges: (cwd: string) => ChangesResponse | undefined;
   /** 작업 폴더가 없는 옛 세션입니다. 사이드바에는 없고 기록 화면에만 보입니다. */

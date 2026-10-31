@@ -9,7 +9,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect } from 'react';
-import type { AgentSummary } from '@ora/protocol';
+import type { AgentSummary, ToolTier } from '@ora/protocol';
 import { runAction, useStore } from '../store.tsx';
 import { Button } from '../ui/button.tsx';
 import { PageShell } from './SettingsPages.tsx';
@@ -25,14 +25,11 @@ const cardClass =
 const badgeClass =
   'rounded-sm bg-surface-hover px-1.5 text-[11px] leading-[18px] text-foreground-muted';
 
-/** 허용 도구 목록을 한 줄 글로 줄입니다. `tier:`는 티어 전체, `*`는 모든 도구입니다. */
-function describeTools(tools: readonly string[]): string {
-  if (tools.includes('*')) return '모든 도구';
-  const tiers = tools.flatMap((entry) => (entry.startsWith('tier:') ? [entry.slice(5)] : []));
-  if (tiers.length !== tools.length) return tools.join(', ');
-  if (tiers.length === 1 && tiers[0] === 'read') return '읽기 도구만';
-  const labels: Record<string, string> = { read: '읽기', write: '쓰기', exec: '셸' };
-  return tiers.map((tier) => labels[tier] ?? tier).join('·');
+function describeTools(agent: AgentSummary): string {
+  if (agent.tools.includes('*')) return '모든 도구';
+  if (agent.tiers.length === 1 && agent.tiers[0] === 'read') return '읽기 도구만';
+  const labels: Record<ToolTier, string> = { read: '읽기', write: '쓰기', exec: '셸' };
+  return agent.tiers.map((tier) => labels[tier]).join('·');
 }
 
 function Group({
@@ -80,7 +77,7 @@ function AgentRow({ agent, cwd }: { agent: AgentSummary; cwd: string | undefined
         <p className="text-xs leading-[18px] text-foreground-muted">{agent.description}</p>
         <div className="flex flex-wrap items-center gap-1.5">
           <span className={badgeClass}>역할 {agent.role}</span>
-          <span className={badgeClass}>{describeTools(agent.tools)}</span>
+          <span className={badgeClass}>{describeTools(agent)}</span>
           <span className={badgeClass}>최대 스텝 {agent.maxSteps}</span>
         </div>
       </div>

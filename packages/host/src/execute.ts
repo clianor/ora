@@ -18,6 +18,7 @@ import type {
   Clock,
   InstructionFile,
   ModelChainEntry,
+  ModelUsage,
   ModelPort,
   ModelRouter,
   PromptFile,
@@ -38,7 +39,12 @@ import type {
 } from '@ora/protocol';
 import { createPermissionsStore, PERMISSIONS_FILE } from './permissions-store.ts';
 import { createRestrictedFolders } from './restricted-folders.ts';
-import { createSessionStorage, readSessionRecord, readTranscriptText } from '@ora/store';
+import {
+  createSessionStorage,
+  listSessionRecords,
+  readSessionRecord,
+  readTranscriptText,
+} from '@ora/store';
 import { createBuiltinTools, createCommandRunner, createMcpManager } from '@ora/tools';
 import {
   ENGINE_VERSION,
@@ -566,6 +572,21 @@ export async function executeSession(
       children: hooks.children ?? new Map<string, () => void>(),
     }),
   };
+  // 재개하는 부모의 공유 비용 합계에 이전에 위임한 하위 세션의 사용량을 다시 더한다.
+  const resumedChildUsage: { model: string; usage: ModelUsage }[] = [];
+  if (resume !== undefined) {
+    const sessionsDir = resolveSessionsDir(config, oraHome);
+    for (const record of await listSessionRecords(sessionsDir)) {
+      if (record.delegatedBy?.sessionId !== command.sessionId) continue;
+      const text = await readTranscriptText(join(sessionsDir, record.id));
+      if (text === undefined) continue;
+      for (const event of parseTranscript(text).events) {
+        if (event.type === 'model_request') {
+          resumedChildUsage.push({ model: event.payload.model, usage: event.payload.usage });
+        }
+      }
+    }
+  }
   const outcome = await runSession(engineDeps, {
     sessionId: command.sessionId,
     task: resume?.plan.task ?? (command.type === 'createSession' ? command.task : ''),
@@ -580,7 +601,7 @@ export async function executeSession(
     },
     signal: hooks.signal,
     softStop: hooks.softStop,
-    ...(resume === undefined ? {} : { resume }),
+    ...(resume === undefined ? {} : { resume, resumedChildUsage }),
     ...(hooks.userTodoActions === undefined ? {} : { userTodoActions: hooks.userTodoActions }),
   }).finally(() => mcp.close());
   return { ...outcome, todos: scrubValue(outcome.todos) };

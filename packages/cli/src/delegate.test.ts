@@ -494,6 +494,67 @@ test(
   TEST_TIMEOUT_MS,
 );
 
+test(
+  '부모를 재개하면 끝난 하위 세션의 비용을 다시 더해, 부모와 하위 세션의 합계가 상한이면 첫 요청을 보내지 않는다',
+  async () => {
+    const project = createProject();
+    const usage = (uncached: number) => ({
+      uncachedInputTokens: uncached,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      outputTokens: 0,
+    });
+    const config = {
+      pricing: { 'fake/scripted': { inputPerMTok: 1_000_000, outputPerMTok: 0 } },
+      session: { maxCost: 1000 },
+    };
+    await runCli(
+      project,
+      [
+        { ...respond(delegate('d1', 'scout', '조사한다')), usage: usage(10) },
+        { ...respond(use('l', 'file_read', { path: 'foo.js' })), usage: usage(600) },
+        { ...respond({ type: 'text', text: '조사를 마쳤습니다.' }), usage: usage(600) },
+        { ...finalReport, usage: usage(10) },
+      ],
+      { config },
+    );
+    const before = splitSessions(project.home).parent;
+    expect(before.record).toMatchObject({ status: 'stopped', endReason: 'cost_limit' });
+    const requestCount = (events: OraEvent[]) =>
+      events.filter((event) => event.type === 'model_request').length;
+
+    const scriptPath = join(project.home, 'resume-script.json');
+    writeFileSync(
+      scriptPath,
+      JSON.stringify({ responses: [{ ...finalReport, usage: usage(10) }] }),
+    );
+    const { promise, resolve } = Promise.withResolvers<undefined>();
+    execFile(
+      process.execPath,
+      [
+        CLI_PATH,
+        'resume',
+        before.id,
+        '--model-script',
+        scriptPath,
+        '--config',
+        join(project.home, 'engine.config.json'),
+      ],
+      { cwd: project.dir, env: { ...process.env, ORA_HOME: project.home } },
+      () => {
+        resolve(undefined);
+      },
+    );
+    await promise;
+
+    const after = splitSessions(project.home).parent;
+    // 하위 세션 비용을 더하지 않으면 부모 비용은 20뿐이라 재개한 부모가 요청을 보냈을 것이다.
+    expect(requestCount(after.events)).toBe(requestCount(before.events));
+    expect(after.record).toMatchObject({ status: 'stopped', endReason: 'cost_limit' });
+  },
+  TEST_TIMEOUT_MS,
+);
+
 interface Running {
   readonly child: ChildProcess;
   readonly port: number;
@@ -727,14 +788,16 @@ test(
     const { running, parentId, childId } = await startDelegatedSleep();
     try {
       await send(running, `/api/sessions/${parentId}/cancel`, 'POST', { mode: 'soft' });
-      await waitFor(() => eventsOf(running, childId).some((event) => event.type === 'session_end'));
-      const child = readSessions(running.home).find((session) => session.id === childId);
-      expect(child?.record).toMatchObject({ status: 'interrupted', endReason: 'user_cancel' });
-      await waitFor(() =>
-        eventsOf(running, parentId).some((event) => event.type === 'session_end'),
+      const statusOf = (id: string) =>
+        readSessions(running.home).find((session) => session.id === id)?.record;
+      // session.json은 session_end 이벤트 뒤에 쓰므로 기록의 상태가 바뀌길 기다린다.
+      await waitFor(
+        () =>
+          statusOf(childId)?.status === 'interrupted' &&
+          statusOf(parentId)?.status === 'interrupted',
       );
-      const parent = readSessions(running.home).find((session) => session.id === parentId);
-      expect(parent?.record).toMatchObject({ status: 'interrupted' });
+      expect(statusOf(childId)).toMatchObject({ status: 'interrupted', endReason: 'user_cancel' });
+      expect(statusOf(parentId)).toMatchObject({ status: 'interrupted' });
     } finally {
       await stopServer(running);
     }

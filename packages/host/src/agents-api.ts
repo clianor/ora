@@ -3,8 +3,31 @@ import { mkdir, realpath } from 'node:fs/promises';
 import { basename, join, sep } from 'node:path';
 import type { AgentDefinition } from '@ora/core';
 import type { AgentListResponse, AgentSummary } from '@ora/protocol';
-import { BUILTIN_AGENTS, readAllAgents } from './isolation/agent-files.ts';
+import { BUILTIN_AGENTS, intersectTools, readAllAgents } from './isolation/agent-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
+import { createBuiltinTools, createCommandRunner } from '@ora/tools';
+import type { ToolTier } from '@ora/protocol';
+
+/** 기본 제공 도구의 이름과 티어 표다. 도구를 실행하지 않고 읽기만 한다. */
+const TOOL_TIERS = createBuiltinTools({
+  runner: createCommandRunner(),
+  shellTimeoutMs: 1,
+  maxOutputBytes: 1,
+  maxFileBytes: 1,
+  protectedPaths: [],
+  secretPaths: [],
+  sessionDir: '',
+}).map((tool) => ({ name: tool.name, tier: tool.tier }));
+
+const TIER_ORDER: readonly ToolTier[] = ['read', 'write', 'exec'];
+
+function tiersOf(agent: AgentDefinition): ToolTier[] {
+  const names = new Set(intersectTools(agent, TOOL_TIERS));
+  const present = new Set(
+    TOOL_TIERS.filter((tool) => names.has(tool.name)).map((tool) => tool.tier),
+  );
+  return TIER_ORDER.filter((tier) => present.has(tier));
+}
 
 export interface AgentsApiOptions {
   readonly env: NodeJS.ProcessEnv;
@@ -39,6 +62,7 @@ export function createAgentsApi(options: AgentsApiOptions): {
         scope: agent.scope,
         role: agent.role,
         tools: [...agent.tools],
+        tiers: tiersOf(agent),
         maxSteps: agent.maxSteps,
         overridesBuiltin: agent.scope !== 'builtin' && builtinNames.has(agent.name),
         isShadowed: isShadowed(agent),

@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { open, readFile, realpath, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 import {
   BUILTIN_MODELS,
@@ -815,6 +815,43 @@ export async function createHost(options: HostOptions): Promise<Host> {
     throw new HttpError(403, `알려진 워크트리 밖의 폴더입니다: ${cwd}`);
   };
 
+  /**
+   * 실행 중인 세션의 스텝 수(목적 없는 `model_request` 줄 수)다. 웹이 이벤트가 올 때마다 세션 목록을 다시 받으므로,
+   * 파일 전체를 매번 읽지 않고 지난번에 읽은 위치 뒤에 붙은 바이트만 읽어 센다. 끝나지 않은 마지막 줄은 바이트로 남겨 다음에 잇는다.
+   */
+  const stepCounts = new Map<string, { offset: number; count: number; rest: Buffer }>();
+  const countSteps = async (id: string): Promise<number> => {
+    const cached = stepCounts.get(id) ?? { offset: 0, count: 0, rest: Buffer.alloc(0) };
+    const handle = await open(join(sessionDirOf(id), 'transcript.jsonl'), 'r').catch(
+      () => undefined,
+    );
+    if (handle === undefined) return cached.count;
+    try {
+      const { size } = await handle.stat();
+      if (size <= cached.offset) return cached.count;
+      const chunk = Buffer.alloc(size - cached.offset);
+      await handle.read(chunk, 0, chunk.length, cached.offset);
+      const bytes = Buffer.concat([cached.rest, chunk]);
+      const end = bytes.lastIndexOf(0x0a) + 1;
+      const added = bytes
+        .subarray(0, end)
+        .toString('utf8')
+        .split('\n')
+        .filter(
+          (line) => line.includes('"type":"model_request"') && !line.includes('"purpose"'),
+        ).length;
+      const next = {
+        offset: size,
+        count: cached.count + added,
+        rest: Buffer.from(bytes.subarray(end)),
+      };
+      stepCounts.set(id, next);
+      return next.count;
+    } finally {
+      await handle.close();
+    }
+  };
+
   const streamTerminal = (id: string, res: RouteResponse) => {
     if (terminals.get(id) === undefined) throw new HttpError(404, `터미널이 없습니다: ${id}`);
     const stream = res.openStream();
@@ -1283,8 +1320,24 @@ export async function createHost(options: HostOptions): Promise<Host> {
     if (rawId === undefined) {
       if (method === 'GET') {
         const records = await listSessions(options.env, options.configPath);
+        const running = new Set<string>([
+          'created',
+          'running',
+          'awaiting_approval',
+          'awaiting_user',
+        ]);
+        for (const id of stepCounts.keys()) {
+          if (!records.some((record) => record.id === id && running.has(record.status))) {
+            stepCounts.delete(id);
+          }
+        }
         reply(res, 200, {
-          sessions: await Promise.all(records.map(withCanonicalRepo)),
+          sessions: await Promise.all(
+            records.map(async (record) => ({
+              ...(await withCanonicalRepo(record)),
+              ...(running.has(record.status) ? { steps: await countSteps(record.id) } : {}),
+            })),
+          ),
         });
         return;
       }

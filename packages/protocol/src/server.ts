@@ -82,7 +82,15 @@ export const pendingQuestionSchema = z.strictObject({
 });
 export type PendingQuestion = z.infer<typeof pendingQuestionSchema>;
 
-export const sessionListResponseSchema = z.strictObject({ sessions: z.array(sessionRecordSchema) });
+/** 세션 목록의 한 항목이다. `steps`는 실행 중이거나 응답을 기다리는 세션이 지금까지 보낸 모델 요청 수이고, 끝난 세션에는 없다. */
+export const sessionListItemSchema = sessionRecordSchema.extend({
+  steps: z.number().int().nonnegative().optional(),
+});
+export type SessionListItem = z.infer<typeof sessionListItemSchema>;
+
+export const sessionListResponseSchema = z.strictObject({
+  sessions: z.array(sessionListItemSchema),
+});
 export type SessionListResponse = z.infer<typeof sessionListResponseSchema>;
 
 export const sessionIdResponseSchema = z.strictObject({ sessionId: sessionIdSchema });

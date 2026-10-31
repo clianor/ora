@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toolTierSchema } from './common.ts';
 
 export const agentScopeSchema = z.enum(['project', 'global', 'builtin']);
 export type AgentScope = z.infer<typeof agentScopeSchema>;
@@ -10,6 +11,8 @@ export const agentSummarySchema = z.strictObject({
   scope: agentScopeSchema,
   role: z.string().min(1),
   tools: z.array(z.string()),
+  /** 허용하는 도구가 속한 티어다. 기본 제공 도구의 티어 표로 `tools`를 풀어 만든다. */
+  tiers: z.array(toolTierSchema),
   maxSteps: z.number().int().positive(),
   /** 같은 이름의 기본 제공 정의를 이 정의가 덮어쓴다. */
   overridesBuiltin: z.boolean(),
