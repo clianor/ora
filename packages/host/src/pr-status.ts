@@ -31,6 +31,7 @@ const WATCH_DEBOUNCE_MS = 300;
 
 interface WorktreeBusy {
   sessions: number;
+  terminals: number;
   ora: CleanupProcess[];
   external: CleanupProcess[];
 }
@@ -415,6 +416,7 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
     const changed = changes === '' ? 0 : changes.split('\n').length;
     if (changed > 0) reasons.push(`커밋하지 않은 변경 ${String(changed)}개`);
     if (busy.sessions > 0) reasons.push(`실행 중인 에이전트 세션 ${String(busy.sessions)}개`);
+    if (busy.terminals > 0) reasons.push(`실행 중인 터미널 ${String(busy.terminals)}개`);
     if (busy.external.length > 0) {
       reasons.push(
         `Ora 밖에서 시작한 프로세스 ${String(busy.external.length)}개 · ${busy.external.map(describeProcess).join(', ')}`,
@@ -453,7 +455,12 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
     const candidates: CleanupCandidate[] = [];
     const busyByPath = await options.inspectBusy(status.worktrees.map((entry) => entry.path));
     for (const entry of status.worktrees) {
-      const busy = busyByPath.get(entry.path) ?? { sessions: 0, ora: [], external: [] };
+      const busy = busyByPath.get(entry.path) ?? {
+        sessions: 0,
+        terminals: 0,
+        ora: [],
+        external: [],
+      };
       const candidate = await judge(entry, busy);
       if (candidate !== undefined) candidates.push(candidate);
     }

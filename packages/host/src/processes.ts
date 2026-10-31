@@ -65,6 +65,8 @@ interface WorktreeProcesses {
   inner: ProcessRef[];
   /** 작업 폴더만 이 워크트리 안인 Ora 밖 프로세스다. */
   external: ProcessRef[];
+  /** macOS가 아닐 때만 채운다. 자식 프로세스를 가진 Ora 터미널 수다. */
+  busyTerminals: number;
 }
 
 function run(file: string, args: string[]): Promise<string> {
@@ -189,7 +191,7 @@ export function createProcessScanner(): ProcessScanner {
   const remembered = new Map<string, string>();
   const keyOf = (entry: Pick<ProcessEntry, 'pid' | 'started'>) => `${entry.pid}|${entry.started}`;
 
-  const scanOnce: ProcessScanner['scan'] = async (worktrees, shells, isFull) => {
+  const scanDarwin: ProcessScanner['scan'] = async (worktrees, shells, isFull) => {
     const [table, listeners] = await Promise.all([readTable(), readListeners()]);
     const byPid = new Map(table.map((entry) => [entry.pid, entry]));
     const children = new Map<number, ProcessEntry[]>();
@@ -256,7 +258,7 @@ export function createProcessScanner(): ProcessScanner {
 
     const live = new Set<string>();
     const results = new Map<string, WorktreeProcesses>(
-      worktrees.map((path) => [path, { path, ora: [], inner: [], external: [] }]),
+      worktrees.map((path) => [path, { path, ora: [], inner: [], external: [], busyTerminals: 0 }]),
     );
     const toRef = (entry: ProcessEntry, isExternal: boolean): ProcessRef => ({
       pid: entry.pid,
@@ -289,6 +291,31 @@ export function createProcessScanner(): ProcessScanner {
     for (const key of remembered.keys()) if (!live.has(key)) remembered.delete(key);
     return [...results.values()];
   };
+
+  /** macOS가 아니면 `ps -E`와 `lsof`에 기댈 수 없으므로 프로세스·포트는 찾지 않는다. 대신 자식 프로세스를 가진 셸을 세어, 삭제가 실행 중인 터미널을 막게 한다. */
+  const scanPortable: ProcessScanner['scan'] = async (worktrees, shells) => {
+    const text = await run('ps', ['-axo', 'pid=,ppid=']);
+    const parents = new Set(text.split('\n').map((line) => Number(line.trim().split(/\s+/)[1])));
+    const isUnknown = text.trim() === '';
+    const results = worktrees.map((path) => ({
+      path,
+      ora: [],
+      inner: [],
+      external: [],
+      busyTerminals: 0,
+    }));
+    for (const shell of shells) {
+      if (shell.pid === undefined) continue;
+      const root = owningWorktree(shell.cwd, worktrees);
+      const found = results.find((item) => item.path === root);
+      if (found !== undefined && (isUnknown || parents.has(shell.pid))) found.busyTerminals += 1;
+    }
+    return results;
+  };
+  const scanOnce: ProcessScanner['scan'] = (worktrees, shells, isFull) =>
+    process.platform === 'darwin'
+      ? scanDarwin(worktrees, shells, isFull)
+      : scanPortable(worktrees, shells, isFull);
 
   const terminate: ProcessScanner['terminate'] = async (targets) => {
     const identity = async () => {

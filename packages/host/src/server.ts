@@ -729,6 +729,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
               path,
               {
                 sessions: sessions.filter((record) => isInside(record.repo)).length,
+                terminals: found?.busyTerminals ?? 0,
                 ora: (found?.ora ?? []).map(toCleanupProcess),
                 external: (found?.external ?? []).map(toCleanupProcess),
               },
