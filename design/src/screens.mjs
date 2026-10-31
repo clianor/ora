@@ -2978,6 +2978,14 @@ ${v3Group(c, '기본 제공', '', [
     tools: '모든 도구',
     steps: 30,
   }),
+  row({
+    name: 'reviewer',
+    desc: '변경을 읽고 문제를 찾아 보고한다.',
+    role: 'review',
+    tools: '읽기 도구만',
+    steps: 30,
+    shadow: '같은 이름의 정의 파일이 덮어씀',
+  }),
 ])}
 ${v3Group(c, '전역', '~/.ora/agents/', [
   `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={16} py={14}>${T(c, 13, 18, 400, 'ink3', '아직 전역 정의가 없습니다. 이 폴더에 .md 파일을 두면 모든 프로젝트에서 씁니다.', 'grow={1}')}${button(c, 'ghost', '폴더 열기', { icon: 'folder-open' })}</Frame>`,
