@@ -2721,8 +2721,16 @@ ${row('README 예제는 실제 실행 출력과 대조한 뒤에 고친다.', nu
     paraV2(c, `${icode(c, 'add')}를 덧셈으로 고쳤고, ${icode(c, 'node check.js')}가 통과했습니다.`),
     card,
   ];
+  const groups = V3_GROUPS.map((g, i) =>
+    i
+      ? g
+      : {
+          ...g,
+          worktrees: g.worktrees.map((w, j) => (j ? w : { ...w, sessions: w.sessions.slice(1) })),
+        },
+  );
   return windowV3(c, '54 M3 Memory Feedback · Slate', {
-    side: sidebarV3(c, { groups: V3_GROUPS }),
+    side: sidebarV3(c, { groups }),
     main:
       titleTabsV3(c, {
         tabs: [{ title: 'add 함수 버그 수정', state: 'done' }],
