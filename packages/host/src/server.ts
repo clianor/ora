@@ -36,6 +36,7 @@ import {
   createWorktreeBodySchema,
   reposSettingsSchema,
   cleanupBodySchema,
+  killPortBodySchema,
   prStatusRefreshSchema,
 } from '@ora/protocol';
 import {
@@ -79,6 +80,7 @@ import { createMcpApi } from './mcp-api.ts';
 import { createMemoryApi } from './memory-api.ts';
 import { createSkillsApi } from './skills-api.ts';
 import { createTerminalManager } from './terminal.ts';
+import { createProcessScanner, listWorktreePaths, toCleanupProcess } from './processes.ts';
 import { createPrStatusApi } from './pr-status.ts';
 import { createWorktreeApi } from './worktrees.ts';
 import { createRewindApi } from './rewind.ts';
@@ -686,6 +688,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         await writeFileAtomic(tabsPath, `${JSON.stringify(file, null, 2)}\n`);
       }),
   });
+  const processScanner = createProcessScanner();
   const prStatusApi = createPrStatusApi({
     env: options.env,
     forgetWorktrees: async (paths) => {
@@ -703,19 +706,52 @@ export async function createHost(options: HostOptions): Promise<Host> {
         await writeFileAtomic(tabsPath, `${JSON.stringify(file, null, 2)}\n`);
       });
     },
-    countBusy: async (path) => {
-      const isInside = (folder: string | undefined) =>
-        folder !== undefined && (folder === path || folder.startsWith(path + sep));
+    inspectBusy: async (paths) => {
+      const first = paths[0];
+      if (first === undefined) return new Map();
       const records = await listSessions(options.env, options.configPath);
       const sessions = await Promise.all(
         records.filter((record) => live.has(record.id)).map(withCanonicalRepo),
       );
-      const inside = terminals.list().filter((terminal) => isInside(terminal.cwd));
-      const busy = await Promise.all(inside.map((terminal) => terminals.isBusy(terminal.id)));
-      return {
-        sessions: sessions.filter((record) => isInside(record.repo)).length,
-        terminals: busy.filter(Boolean).length,
-      };
+      const scanned = await processScanner.scan(
+        await listWorktreePaths(first),
+        terminals.shells(),
+        true,
+      );
+      return new Map(
+        await Promise.all(
+          paths.map(async (path) => {
+            const real = await canonicalPath(path);
+            const found = scanned.find((item) => item.path === real);
+            const isInside = (folder: string | undefined) =>
+              folder !== undefined && (folder === path || folder.startsWith(path + sep));
+            return [
+              path,
+              {
+                sessions: sessions.filter((record) => isInside(record.repo)).length,
+                ora: (found?.ora ?? []).map(toCleanupProcess),
+                external: (found?.external ?? []).map(toCleanupProcess),
+              },
+            ] as const;
+          }),
+        ),
+      );
+    },
+    stopProcesses: async (path) => {
+      const found = (
+        await processScanner.scan(await listWorktreePaths(path), terminals.shells(), true)
+      ).find((item) => item.path === path);
+      const remaining = await processScanner.terminate([
+        ...(found?.ora ?? []),
+        ...(found?.inner ?? []),
+      ]);
+      if (remaining.length === 0) {
+        for (const terminal of terminals.list()) {
+          const isUnder = terminal.cwd === path || terminal.cwd.startsWith(path + sep);
+          if (terminal.status === 'running' && isUnder) terminals.kill(terminal.id);
+        }
+      }
+      return remaining.map(toCleanupProcess);
     },
   });
 
@@ -871,6 +907,49 @@ export async function createHost(options: HostOptions): Promise<Host> {
       await assertKnownWorktree(cwd);
       reply(res, 200, await prStatusApi.get(await canonicalPath(cwd), refresh));
       return;
+    }
+    if (segments[1] === 'ports') {
+      if (segments.length === 2) {
+        if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const { cwd } = parseBody(tabsQuerySchema, { cwd: url.searchParams.get('repo') ?? '' });
+        await assertKnownWorktree(cwd);
+        const worktrees = await listWorktreePaths(await canonicalPath(cwd));
+        const scanned = await processScanner.scan(worktrees, terminals.shells(), false);
+        reply(res, 200, {
+          repo: worktrees[0] ?? cwd,
+          worktrees: scanned.map((item) => ({
+            path: item.path,
+            ports: [...item.ora, ...item.external]
+              .flatMap((found) => found.ports)
+              .sort((a, b) => a.port - b.port),
+          })),
+        });
+        return;
+      }
+      if (segments[2] === 'kill' && segments.length === 3) {
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const body = parseBody(killPortBodySchema, await readJson(req));
+        await assertKnownWorktree(body.repo);
+        const worktrees = await listWorktreePaths(await canonicalPath(body.repo));
+        const path = await canonicalPath(body.path);
+        const scanned = await processScanner.scan(worktrees, terminals.shells(), false);
+        const found = scanned.find((item) => item.path === path);
+        const target = [...(found?.ora ?? []), ...(found?.external ?? [])].find(
+          (item) => item.pid === body.pid && item.ports.some((port) => port.port === body.port),
+        );
+        if (target === undefined) {
+          throw new HttpError(409, '그 프로세스는 이 워크트리에서 그 포트를 열고 있지 않습니다.');
+        }
+        const remaining = await processScanner.terminate([target]);
+        if (remaining.length > 0) {
+          throw new HttpError(
+            500,
+            `프로세스를 끝내지 못했습니다: ${target.name} (PID ${String(target.pid)})`,
+          );
+        }
+        reply(res, 200, { ok: true });
+        return;
+      }
     }
     if (segments[1] === 'worktrees') {
       const [, , rawId, action] = segments;

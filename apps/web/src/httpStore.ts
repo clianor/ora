@@ -45,11 +45,14 @@ import {
   worktreeResponseSchema,
   worktreeOptionsResponseSchema,
   prStatusResponseSchema,
+  portsResponseSchema,
+  killPortResultSchema,
   cleanupListResponseSchema,
   cleanupResultSchema,
   reposSettingsResponseSchema,
   type WorktreeRecord,
   type PrStatusResponse,
+  type PortsResponse,
   type ApprovalDecision,
   type CostSettings,
   type McpServerStatus,
@@ -318,6 +321,7 @@ export function createHttpStore(
   let worktrees: WorktreeRecord[] = [];
   let worktreePollTimer: ReturnType<typeof setTimeout> | null = null;
   const prStatuses = new Map<string, PrStatusResponse>();
+  const ports = new Map<string, PortsResponse>();
   let routing: RoutingData | null = null;
   let infoError: string | undefined;
   let snapshot: OraStore;
@@ -430,13 +434,14 @@ export function createHttpStore(
       status: listLoaded,
       errorMessage: listError,
       infoError,
-      sidebar: { repos: buildRepos(records, info?.cwd, worktrees), deviceName: '이 컴퓨터' },
+      sidebar: { repos: buildRepos(records, info?.cwd, worktrees) },
       sessionsWithoutFolder: records
         .filter((record) => record.repo === undefined)
         .map((record) => ({ record, todoTitles: [] })),
       getBranch: (cwd) => branches.get(cwd),
       getWorktreeSetup: (cwd) => worktrees.find((item) => item.path === cwd),
       getPrStatus: (repo) => prStatuses.get(repo),
+      getPorts: (repo) => ports.get(repo),
       getDefaultBranch: (cwd) => defaultBranches.get(cwd),
       getChanges: (cwd) => changes.get(cwd),
       getNewSessionContext: getNewSessionContext,
@@ -998,6 +1003,20 @@ export function createHttpStore(
         `/api/worktrees/options?repo=${encodeURIComponent(repo)}`,
         worktreeOptionsResponseSchema,
       ),
+    refreshPorts: async (repo) => {
+      ports.set(
+        repo,
+        await requestJson(`/api/ports?repo=${encodeURIComponent(repo)}`, portsResponseSchema),
+      );
+      notifySoon();
+    },
+    killPort: async (repo, path, pid, port) => {
+      await requestJson('/api/ports/kill', killPortResultSchema, {
+        method: 'POST',
+        body: { repo, path, pid, port },
+      });
+      await actions.refreshPorts(repo).catch(() => undefined);
+    },
     refreshPrStatus: async (repo, mode) => {
       const status = await requestJson(
         `/api/pr-status?repo=${encodeURIComponent(repo)}&refresh=${mode}`,
@@ -1153,11 +1172,12 @@ export function createHttpStore(
 
   snapshot = {
     status: 'loading',
-    sidebar: { repos: [], deviceName: '이 컴퓨터' },
+    sidebar: { repos: [] },
     sessionsWithoutFolder: [],
     getBranch: () => undefined,
     getWorktreeSetup: () => undefined,
     getPrStatus: () => undefined,
+    getPorts: () => undefined,
     getDefaultBranch: () => undefined,
     getChanges: () => undefined,
     getNewSessionContext: getNewSessionContext,

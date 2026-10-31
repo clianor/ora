@@ -4,6 +4,7 @@ import {
   GitPullRequestClosed,
   Square,
   SquareCheck,
+  SquareTerminal,
   Trash2,
   TriangleAlert,
   X,
@@ -69,7 +70,7 @@ function CandidateRow({
     <label
       htmlFor={id}
       className={cn(
-        'flex items-center gap-2.5 rounded-md px-3 py-[9px]',
+        'flex items-start gap-2.5 rounded-md px-3 py-[9px]',
         isChecked && 'bg-surface',
         isBlocked ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-surface-hover',
       )}
@@ -82,20 +83,22 @@ function CandidateRow({
         disabled={isBlocked}
         onChange={onToggle}
       />
-      <Mark
-        aria-hidden
-        className={cn(
-          'size-4 shrink-0 peer-focus-visible:ring-2 peer-focus-visible:ring-ring',
-          isBlocked ? 'text-foreground-subtle' : 'text-foreground',
-        )}
-      />
-      <Kind
-        aria-hidden
-        className={cn(
-          'size-3.5 shrink-0',
-          isBlocked ? 'text-foreground-subtle' : 'text-foreground-muted',
-        )}
-      />
+      <span className="flex h-[18px] shrink-0 items-center gap-2.5">
+        <Mark
+          aria-hidden
+          className={cn(
+            'size-4 shrink-0 peer-focus-visible:ring-2 peer-focus-visible:ring-ring',
+            isBlocked ? 'text-foreground-subtle' : 'text-foreground',
+          )}
+        />
+        <Kind
+          aria-hidden
+          className={cn(
+            'size-3.5 shrink-0',
+            isBlocked ? 'text-foreground-subtle' : 'text-foreground-muted',
+          )}
+        />
+      </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span
           className={cn(
@@ -112,6 +115,25 @@ function CandidateRow({
           </span>
         ) : (
           <span className="text-xs leading-4 text-foreground-subtle">{note}</span>
+        )}
+        {!isBlocked && candidate.processes.length > 0 && (
+          <span className="flex flex-col gap-[3px] pt-0.5">
+            <span className="text-xs leading-4 font-medium text-foreground-muted">
+              종료할 프로세스 {candidate.processes.length}개
+            </span>
+            {candidate.processes.map((item) => (
+              <span key={item.pid} className="flex items-center gap-1.5">
+                <SquareTerminal aria-hidden className="size-3 shrink-0 text-foreground-subtle" />
+                <span className="font-mono text-xs leading-4 font-medium text-foreground-muted">
+                  {item.name}
+                </span>
+                <span className="font-mono text-xs leading-4 text-foreground-subtle">
+                  PID {item.pid}
+                  {item.port !== undefined && ` · 포트 ${String(item.port)}`}
+                </span>
+              </span>
+            ))}
+          </span>
         )}
       </span>
       <span className="font-mono text-xs leading-4 text-foreground-subtle">
@@ -167,6 +189,9 @@ function DialogBody({ repo }: { repo: string }) {
         .filter((item) => item.group === 'merged' && item.blocked === undefined)
         .map((item) => item.path),
     );
+  const processCount = candidates
+    .filter((item) => selected.has(item.path))
+    .reduce((sum, item) => sum + item.processes.length, 0);
   const merged = candidates.filter((item) => item.group === 'merged');
   const closed = candidates.filter((item) => item.group === 'closed');
   const toggle = (path: string) => {
@@ -237,6 +262,7 @@ function DialogBody({ repo }: { repo: string }) {
       <div className="flex items-center gap-2">
         <span className="flex-1 text-xs leading-4 text-foreground-subtle">
           {selected.size}개 선택
+          {processCount > 0 && ` · 프로세스 ${String(processCount)}개를 먼저 종료합니다`}
         </span>
         <Button
           variant="ghost"
@@ -296,8 +322,9 @@ export function CleanupWorktreesDialog({ repo }: { repo: string }) {
           </button>
         </div>
         <p className="text-[13px] leading-5 text-foreground-muted">
-          워크트리마다 브랜치의 가장 최근 PR을 보고 목록을 만들었습니다. 고른 워크트리의 폴더와 로컬
-          브랜치를 지웁니다. 원격 브랜치와 세션 기록은 그대로 둡니다.
+          워크트리마다 브랜치의 가장 최근 PR을 보고 목록을 만들었습니다. 고른 워크트리에서 Ora
+          터미널이 띄운 프로세스를 먼저 종료한 뒤, 폴더와 로컬 브랜치를 지웁니다. 원격 브랜치와 세션
+          기록은 그대로 둡니다.
         </p>
         <Suspense
           fallback={

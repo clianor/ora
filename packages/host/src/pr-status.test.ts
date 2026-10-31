@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -13,7 +13,10 @@ import { join } from 'node:path';
 import {
   cleanupListResponseSchema,
   cleanupResultSchema,
+  portsResponseSchema,
   prStatusResponseSchema,
+  terminalListResponseSchema,
+  terminalResponseSchema,
 } from '@ora/protocol';
 import { afterEach, expect, test, vi } from 'vitest';
 import { startLocalServer } from './server.ts';
@@ -42,7 +45,7 @@ interface FakePr {
   checks?: 'SUCCESS' | 'FAILURE' | 'PENDING';
 }
 
-async function boot(options: { hasGh: boolean }) {
+async function boot(options: { hasGh: boolean; env?: Record<string, string> }) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'ora-pr-')));
   const repo = join(home, 'repo');
   const bin = join(home, 'bin');
@@ -90,7 +93,12 @@ process.stdout.write(JSON.stringify({ data: { repository } }));
     chmodSync(join(bin, 'gh'), 0o755);
   }
   const server = await startLocalServer({
-    env: { ORA_HOME: home, SHELL: '/bin/sh', PATH: `${bin}:${process.env.PATH ?? ''}` },
+    env: {
+      ORA_HOME: home,
+      SHELL: '/bin/sh',
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      ...options.env,
+    },
     cwd: repo,
     modelScriptPath: join(home, 'unused.json'),
     port: 0,
@@ -228,7 +236,7 @@ test('삭제 창은 마지막 PR 상태로 묶음을 나누고 막는 조건과 
   expect(git(repo, 'branch', '--list', 'ora/lost')).toContain('ora/lost');
   const rest = (await (await call('/api/worktrees')).json()) as { worktrees: { name: string }[] };
   expect(rest.worktrees.map((item) => item.name)).not.toContain('clean');
-});
+}, 30_000);
 
 test('gh가 없으면 PR 상태 없이 이유 한 줄을 알리고 삭제 창은 열리지 않는다', async () => {
   const { repo, call, create } = await boot({ hasGh: false });
@@ -292,40 +300,60 @@ test('목록 크기와 상관없이 오래된 PR을 찾고, 포크 PR은 제외�
   }
 });
 
-test('입력을 기다리는 셸은 삭제를 막지 않고, 명령이 도는 터미널은 막으며, 삭제하면 남은 터미널을 닫고 탭 기록을 지운다', async () => {
+const merged = (number: number, branch: string, path: string): FakePr => ({
+  number,
+  state: 'MERGED',
+  branch,
+  oid: git(path, 'rev-parse', 'HEAD'),
+  createdAt: '2026-10-20T00:00:00Z',
+});
+
+const isAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test('삭제는 Ora 터미널의 포그라운드·백그라운드·셸을 떠난 프로세스를 모두 종료한 뒤 워크트리를 지우고 남은 터미널과 탭 기록을 닫는다', async () => {
   const { repo, call, create, writePrs } = await boot({ hasGh: true });
   const path = await create('busy');
-  writePrs([
-    {
-      number: 9,
-      state: 'MERGED',
-      branch: 'busy',
-      oid: git(path, 'rev-parse', 'HEAD'),
-      createdAt: '2026-10-20T00:00:00Z',
-    },
-  ]);
-  const created = (await (
-    await call('/api/terminals', { method: 'POST', body: { cwd: path, cols: 80, rows: 24 } })
-  ).json()) as { terminal: { id: string } };
-  const id = created.terminal.id;
+  writePrs([merged(9, 'busy', path)]);
+  const open = async () =>
+    terminalResponseSchema.parse(
+      await (
+        await call('/api/terminals', { method: 'POST', body: { cwd: path, cols: 80, rows: 24 } })
+      ).json(),
+    ).terminal.id;
+  const first = await open();
+  const second = await open();
   await call('/api/tabs', {
     method: 'PUT',
-    body: { cwd: path, tabs: { tabs: [{ id: 'tab1', kind: 'terminal', terminalId: id }] } },
+    body: { cwd: path, tabs: { tabs: [{ id: 'tab1', kind: 'terminal', terminalId: first }] } },
   });
-  const blockedNow = async () => {
-    const listed = cleanupListResponseSchema.parse(
-      await (await call(`/api/worktrees/cleanup?repo=${encodeURIComponent(repo)}`)).json(),
-    );
-    return listed.candidates.find((item) => item.path === path)?.blocked;
-  };
+  const input = (id: string, data: string) =>
+    call(`/api/terminals/${id}/input`, { method: 'POST', body: { data } });
+  const candidate = async () =>
+    cleanupListResponseSchema
+      .parse(await (await call(`/api/worktrees/cleanup?repo=${encodeURIComponent(repo)}`)).json())
+      .candidates.find((item) => item.path === path);
 
-  expect(await blockedNow()).toBeUndefined();
+  expect(await candidate()).toMatchObject({ processes: [] });
+  expect((await candidate())?.blocked).toBeUndefined();
 
-  await call(`/api/terminals/${id}/input`, { method: 'POST', body: { data: 'sleep 30\n' } });
-  await expect.poll(blockedNow, { timeout: 10_000 }).toBe('실행 중인 터미널 1개');
+  await input(second, 'nohup sleep 5302 >/dev/null 2>&1 &\n');
+  await expect.poll(async () => (await candidate())?.processes.length, { timeout: 10_000 }).toBe(1);
+  // 셸이 끝나면 sleep의 부모가 launchd(1)로 바뀐다.
+  await input(second, 'exit\n');
+  await input(first, 'sleep 5303 &\n');
+  await input(first, 'sleep 5301\n');
+  await expect.poll(async () => (await candidate())?.processes.length, { timeout: 10_000 }).toBe(3);
 
-  await call(`/api/terminals/${id}/input`, { method: 'POST', body: { data: '\u0003' } });
-  await expect.poll(blockedNow, { timeout: 10_000 }).toBeUndefined();
+  const found = (await candidate())?.processes ?? [];
+  expect(found.map((item) => item.name)).toEqual(['sleep', 'sleep', 'sleep']);
+  expect((await candidate())?.blocked).toBeUndefined();
 
   const removed = cleanupResultSchema.parse(
     await (
@@ -333,16 +361,163 @@ test('입력을 기다리는 셸은 삭제를 막지 않고, 명령이 도는 �
     ).json(),
   );
   expect(removed.removed).toEqual([path]);
-  await expect
-    .poll(async () => {
-      const terminals = (await (await call('/api/terminals')).json()) as {
-        terminals: { id: string; status: string }[];
-      };
-      return terminals.terminals.find((item) => item.id === id)?.status;
-    })
-    .toBe('exited');
+  await expect.poll(() => found.some((item) => isAlive(item.pid)), { timeout: 10_000 }).toBe(false);
+  expect(existsSync(path)).toBe(false);
+  const terminals = terminalListResponseSchema.parse(
+    await (await call('/api/terminals')).json(),
+  ).terminals;
+  expect(terminals.find((item) => item.id === first)?.status).toBe('exited');
   const tabs = (await (await call(`/api/tabs?cwd=${encodeURIComponent(path)}`)).json()) as {
     tabs: { tabs: unknown[] };
   };
   expect(tabs.tabs.tabs).toEqual([]);
+}, 30_000);
+
+const groups: number[] = [];
+afterEach(() => {
+  for (const group of groups.splice(0)) {
+    try {
+      process.kill(-group, 'SIGKILL');
+    } catch {
+      // 이미 끝난 프로세스 그룹이다.
+    }
+  }
 });
+
+/** Ora 밖에서 시작한 것처럼, 작업 폴더만 `cwd`인 node 서버를 띄우고 연 포트를 돌려준다. */
+async function startOutsideServer(cwd: string): Promise<number> {
+  const dir = mkdtempSync(join(tmpdir(), 'ora-srv-'));
+  const script = join(dir, 'srv.js');
+  writeFileSync(
+    script,
+    "const s = require('net').createServer().listen(0, '127.0.0.1', () => { console.log('PORT ' + s.address().port); });",
+  );
+  const child = spawn('sh', ['-c', `"${process.execPath}" "${script}"; true`], {
+    cwd,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  if (child.pid !== undefined) groups.push(child.pid);
+  const { promise, resolve } = Promise.withResolvers<number>();
+  child.stdout.on('data', (chunk: Buffer) => {
+    const port = /PORT (\d+)/.exec(chunk.toString())?.[1];
+    if (port !== undefined) resolve(Number(port));
+  });
+  return promise;
+}
+
+test('Ora 밖에서 시작했고 작업 폴더가 워크트리 안인 프로세스는 삭제를 막고 이름과 포트를 알린다', async () => {
+  const { repo, call, create, writePrs } = await boot({ hasGh: true });
+  const path = await create('outside');
+  writePrs([merged(10, 'outside', path)]);
+  const port = await startOutsideServer(path);
+  const blocked = async () =>
+    cleanupListResponseSchema
+      .parse(await (await call(`/api/worktrees/cleanup?repo=${encodeURIComponent(repo)}`)).json())
+      .candidates.find((item) => item.path === path)?.blocked;
+
+  expect(await blocked()).toBe(`Ora 밖에서 시작한 프로세스 1개 · srv (포트 ${String(port)})`);
+  const refused = cleanupResultSchema.parse(
+    await (
+      await call('/api/worktrees/cleanup', { method: 'POST', body: { repo, paths: [path] } })
+    ).json(),
+  );
+  expect(refused.removed).toEqual([]);
+  expect(existsSync(path)).toBe(true);
+
+  for (const group of groups.splice(0)) process.kill(-group, 'SIGKILL');
+  await expect.poll(blocked, { timeout: 10_000 }).toBeUndefined();
+}, 30_000);
+
+test('라이브 포트는 워크트리별로 Ora 터미널과 Ora 밖 프로세스를 나누어 보이고, 종료는 그 프로세스 하나만 끈다', async () => {
+  const { repo, call, create } = await boot({ hasGh: true });
+  const one = await create('one');
+  const two = await create('two');
+  const outsidePort = await startOutsideServer(one);
+  await startOutsideServer(two);
+  const terminalId = terminalResponseSchema.parse(
+    await (
+      await call('/api/terminals', { method: 'POST', body: { cwd: one, cols: 80, rows: 24 } })
+    ).json(),
+  ).terminal.id;
+  const script = join(mkdtempSync(join(tmpdir(), 'ora-term-')), 'inner.js');
+  writeFileSync(script, "require('net').createServer().listen(0, '127.0.0.1');");
+  await call(`/api/terminals/${terminalId}/input`, {
+    method: 'POST',
+    body: { data: `"${process.execPath}" "${script}"\n` },
+  });
+  const read = async () => {
+    const response = portsResponseSchema.parse(
+      await (await call(`/api/ports?repo=${encodeURIComponent(repo)}`)).json(),
+    );
+    return new Map(response.worktrees.map((item) => [item.path, item.ports]));
+  };
+  await expect.poll(async () => (await read()).get(one)?.length, { timeout: 10_000 }).toBe(2);
+  const before = await read();
+  const outside = before.get(one)?.find((item) => item.port === outsidePort);
+  const inner = before.get(one)?.find((item) => item.port !== outsidePort);
+  const other = before.get(two)?.[0];
+  expect(outside).toMatchObject({ isExternal: true, name: 'srv', address: '127.0.0.1' });
+  expect(inner).toMatchObject({ isExternal: false, name: 'inner' });
+  expect(before.get(two)).toHaveLength(1);
+  if (outside === undefined || inner === undefined || other === undefined) throw new Error('포트');
+
+  const kill = (path: string, item: { pid: number; port: number }) =>
+    call('/api/ports/kill', {
+      method: 'POST',
+      body: { repo, path, pid: item.pid, port: item.port },
+    });
+  expect((await kill(two, inner)).status).toBe(409);
+  expect(isAlive(inner.pid)).toBe(true);
+
+  expect((await kill(one, outside)).status).toBe(200);
+  await expect.poll(async () => (await read()).get(one)?.length, { timeout: 10_000 }).toBe(1);
+  expect((await read()).get(one)?.[0]?.pid).toBe(inner.pid);
+  expect((await read()).get(two)?.[0]?.pid).toBe(other.pid);
+  expect(isAlive(other.pid)).toBe(true);
+}, 30_000);
+
+test('셸 시작 파일이 셸과 같은 프로세스 그룹으로 띄운 프로세스는 종료 목록에 없고 삭제 때 함께 종료된다', async () => {
+  const zdotdir = mkdtempSync(join(tmpdir(), 'ora-zdot-'));
+  writeFileSync(
+    join(zdotdir, '.zshrc'),
+    "setopt no_monitor\n(trap '' HUP; exec sleep 5306) &\nsetopt monitor\n",
+  );
+  const { repo, call, create, writePrs } = await boot({
+    hasGh: true,
+    env: { SHELL: '/bin/zsh', ZDOTDIR: zdotdir },
+  });
+  const path = await create('inner');
+  writePrs([merged(11, 'inner', path)]);
+  const id = terminalResponseSchema.parse(
+    await (
+      await call('/api/terminals', { method: 'POST', body: { cwd: path, cols: 80, rows: 24 } })
+    ).json(),
+  ).terminal.id;
+  const helper = () => {
+    try {
+      return Number(
+        execFileSync('pgrep', ['-f', 'sleep 5306'], { encoding: 'utf8' }).split('\n')[0] ?? 0,
+      );
+    } catch {
+      return 0;
+    }
+  };
+  await expect.poll(helper, { timeout: 10_000 }).toBeGreaterThan(0);
+  const helperPid = helper();
+  await call(`/api/terminals/${id}/input`, { method: 'POST', body: { data: 'sleep 5307 &\n' } });
+  const processes = async () =>
+    cleanupListResponseSchema
+      .parse(await (await call(`/api/worktrees/cleanup?repo=${encodeURIComponent(repo)}`)).json())
+      .candidates.find((item) => item.path === path)?.processes ?? [];
+  await expect.poll(async () => (await processes()).length, { timeout: 10_000 }).toBe(1);
+  expect((await processes()).map((item) => item.pid)).not.toContain(helperPid);
+
+  const removed = cleanupResultSchema.parse(
+    await (
+      await call('/api/worktrees/cleanup', { method: 'POST', body: { repo, paths: [path] } })
+    ).json(),
+  );
+  expect(removed.removed).toEqual([path]);
+  await expect.poll(() => isAlive(helperPid), { timeout: 10_000 }).toBe(false);
+}, 30_000);

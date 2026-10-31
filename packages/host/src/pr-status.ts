@@ -4,6 +4,7 @@ import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
   CleanupCandidate,
+  CleanupProcess,
   CleanupListResponse,
   CleanupResult,
   PrChecks,
@@ -28,10 +29,18 @@ const POLL_MS = 55_000;
 const FOCUS_MS = 5_000;
 const WATCH_DEBOUNCE_MS = 300;
 
+interface WorktreeBusy {
+  sessions: number;
+  ora: CleanupProcess[];
+  external: CleanupProcess[];
+}
+
 export interface PrStatusApiOptions {
   readonly env: NodeJS.ProcessEnv;
-  /** 폴더 아래에서 도는 세션과 터미널의 수다. 삭제를 막는 조건이다. */
-  readonly countBusy: (path: string) => Promise<{ sessions: number; terminals: number }>;
+  /** 워크트리마다 도는 세션과 프로세스를 한 번에 읽는다. `external`이 있거나 세션이 있으면 삭제를 막고, `ora`는 삭제 전에 종료한다. */
+  readonly inspectBusy: (paths: string[]) => Promise<Map<string, WorktreeBusy>>;
+  /** 폴더에 속한 Ora 터미널 프로세스를 종료하고 터미널을 닫는다. 끝나지 않은 프로세스를 돌려준다. */
+  readonly stopProcesses: (path: string) => Promise<CleanupProcess[]>;
   /** 삭제한 worktree 폴더를 `worktrees.json`에서 지운다. */
   readonly forgetWorktrees: (paths: string[]) => Promise<void>;
 }
@@ -241,6 +250,9 @@ async function fetchPrsByBranch(
   return prs;
 }
 
+const describeProcess = (item: CleanupProcess): string =>
+  item.port === undefined ? item.name : `${item.name} (포트 ${String(item.port)})`;
+
 export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
   const { env } = options;
   const caches = new Map<string, RepoCache>();
@@ -390,7 +402,10 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
     return out === undefined ? undefined : Number(out);
   };
 
-  const judge = async (entry: WorktreePrEntry): Promise<CleanupCandidate | undefined> => {
+  const judge = async (
+    entry: WorktreePrEntry,
+    busy: WorktreeBusy,
+  ): Promise<CleanupCandidate | undefined> => {
     const pr = entry.pr;
     if (entry.isMain || entry.isDefault || pr === undefined || entry.branch === undefined) return;
     if (pr.state !== 'MERGED' && pr.state !== 'CLOSED') return;
@@ -399,9 +414,12 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
     const changes = (await gitOrUndefined(env, entry.path, ['status', '--porcelain'])) ?? '';
     const changed = changes === '' ? 0 : changes.split('\n').length;
     if (changed > 0) reasons.push(`커밋하지 않은 변경 ${String(changed)}개`);
-    const busy = await options.countBusy(entry.path);
-    if (busy.sessions > 0) reasons.push(`실행 중인 세션 ${String(busy.sessions)}개`);
-    if (busy.terminals > 0) reasons.push(`실행 중인 터미널 ${String(busy.terminals)}개`);
+    if (busy.sessions > 0) reasons.push(`실행 중인 에이전트 세션 ${String(busy.sessions)}개`);
+    if (busy.external.length > 0) {
+      reasons.push(
+        `Ora 밖에서 시작한 프로세스 ${String(busy.external.length)}개 · ${busy.external.map(describeProcess).join(', ')}`,
+      );
+    }
     const unpushed = await countCommits(entry.path, ['HEAD', '--not', '--remotes']);
     const isOnRemote = unpushed === 0;
     if (pr.state === 'MERGED') {
@@ -422,6 +440,7 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
       url: pr.url,
       ...(at ? { at } : {}),
       isOnRemote,
+      processes: busy.ora,
       ...(reasons.length > 0 ? { blocked: reasons.join(' · ') } : {}),
     };
   };
@@ -432,8 +451,10 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
       throw new UsageError(`PR 상태 없이는 삭제할 수 없습니다. ${status.unavailable}`);
     }
     const candidates: CleanupCandidate[] = [];
+    const busyByPath = await options.inspectBusy(status.worktrees.map((entry) => entry.path));
     for (const entry of status.worktrees) {
-      const candidate = await judge(entry);
+      const busy = busyByPath.get(entry.path) ?? { sessions: 0, ora: [], external: [] };
+      const candidate = await judge(entry, busy);
       if (candidate !== undefined) candidates.push(candidate);
     }
     return { repo: status.repo, candidates };
@@ -455,6 +476,14 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
           result.failed.push({ path: requested, reason: candidate.blocked });
         } else {
           try {
+            const remaining = await options.stopProcesses(candidate.path);
+            if (remaining.length > 0) {
+              result.failed.push({
+                path: requested,
+                reason: `종료하지 못한 프로세스 ${String(remaining.length)}개 · ${remaining.map(describeProcess).join(', ')}`,
+              });
+              continue;
+            }
             await git(env, repo, ['worktree', 'remove', candidate.path]);
             await git(env, repo, ['branch', '-D', candidate.branch]);
             result.removed.push(candidate.path);

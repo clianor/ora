@@ -34,6 +34,7 @@ import type {
   RewindResult,
   PrStatusRefresh,
   PrStatusResponse,
+  PortsResponse,
   CleanupListResponse,
   CleanupResult,
 } from '@ora/protocol';
@@ -92,7 +93,6 @@ export interface RepoNode {
 
 export interface SidebarData {
   repos: RepoNode[];
-  deviceName: string;
 }
 
 /** 새 세션 화면이 보여 주는 작업 폴더 맥락입니다. 서버가 주지 않는 값은 비웁니다. */
@@ -240,6 +240,10 @@ export interface OraActions {
   rerunWorktreeSetup: (id: string) => Promise<void>;
   /** 저장소의 PR 상태를 읽어 저장소에 채웁니다. `force`는 GitHub에서 새로 받고, `focus`는 바뀐 것이 있을 때만 받습니다. */
   refreshPrStatus: (repo: string, mode: PrStatusRefresh) => Promise<void>;
+  /** 저장소 worktree별 라이브 포트를 읽어 저장소에 채웁니다. */
+  refreshPorts: (repo: string) => Promise<void>;
+  /** 포트를 연 프로세스 하나를 끕니다. 서버가 그 PID가 아직 그 worktree에서 그 포트를 쥐고 있는지 다시 확인합니다. */
+  killPort: (repo: string, path: string, pid: number, port: number) => Promise<void>;
   /** 머지된 worktree 삭제 창의 목록입니다. 서버가 PR 상태와 막는 조건을 새로 판정합니다. */
   loadCleanup: (repo: string) => Promise<CleanupListResponse>;
   /** 고른 worktree를 지웁니다. 서버가 막는 조건을 다시 확인하고, 지우지 못한 항목은 이유와 함께 돌려줍니다. */
@@ -330,6 +334,8 @@ export interface OraStore {
   getWorktreeSetup: (cwd: string) => WorktreeRecord | undefined;
   /** 저장소의 PR 상태입니다. 아직 읽지 않았으면 undefined입니다. 키는 저장소 폴더입니다. */
   getPrStatus: (repo: string) => PrStatusResponse | undefined;
+  /** 저장소 worktree별 라이브 포트입니다. 아직 읽지 않았으면 undefined입니다. 키는 저장소 폴더입니다. */
+  getPorts: (repo: string) => PortsResponse | undefined;
   /** 서버가 알려 준 저장소의 기본 브랜치입니다. 찾지 못했으면 undefined입니다. */
   getDefaultBranch: (cwd: string) => string | undefined;
   /** `loadChanges`가 읽은 변경 목록입니다. 읽기 전에는 undefined입니다. */

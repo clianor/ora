@@ -13,4 +13,5 @@ export * from './skills.ts';
 export * from './memory.ts';
 export * from './worktrees.ts';
 export * from './pr-status.ts';
+export * from './ports.ts';
 export * from './rewind.ts';

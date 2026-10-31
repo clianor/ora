@@ -11,6 +11,7 @@ import type {
   WorktreeRecord,
   PrInfo,
   PrStatusResponse,
+  PortsResponse,
   WorktreePrEntry,
   CleanupCandidate,
   CleanupListResponse,
@@ -1522,19 +1523,33 @@ const fixtureCandidate = (
   number,
   url: `https://github.com/oraclian/math-demo/pull/${String(number)}`,
   isOnRemote: true,
+  processes: [],
   ...rest,
 });
 const fixtureCleanup: CleanupListResponse = {
   repo: '~/projects/math-demo',
   candidates: [
-    fixtureCandidate('old-cleanup', 35, 'merged', { at: prAt(48) }),
+    fixtureCandidate('old-cleanup', 35, 'merged', {
+      at: prAt(48),
+      processes: [
+        { pid: 48211, name: 'vite', port: 5173 },
+        { pid: 48230, name: 'node' },
+      ],
+    }),
     fixtureCandidate('fix-typo', 40, 'merged', { at: prAt(3) }),
     fixtureCandidate('hotfix-login', 41, 'merged', {
       at: prAt(30),
       blocked: '커밋하지 않은 변경 3개',
     }),
     fixtureCandidate('api-retry', 44, 'merged', { at: prAt(30), blocked: '머지 뒤 새 커밋 2개' }),
-    fixtureCandidate('docs-tweak', 37, 'merged', { at: prAt(30), blocked: '실행 중인 세션 1개' }),
+    fixtureCandidate('docs-tweak', 37, 'merged', {
+      at: prAt(30),
+      blocked: '실행 중인 에이전트 세션 1개',
+    }),
+    fixtureCandidate('web-preview', 36, 'merged', {
+      at: prAt(30),
+      blocked: 'Ora 밖에서 시작한 프로세스 1개 · next-server (포트 3000)',
+    }),
     fixtureCandidate('try-sqlite', 31, 'closed', { at: prAt(120) }),
     fixtureCandidate('spike-cache', 29, 'closed', {
       at: prAt(120),
@@ -1542,6 +1557,21 @@ const fixtureCleanup: CleanupListResponse = {
       blocked: '원격에 없는 커밋 3개 · 지우면 사라집니다',
     }),
   ],
+};
+const fixturePorts: Record<string, PortsResponse> = {
+  '~/projects/math-demo': {
+    repo: '~/projects/math-demo',
+    worktrees: [
+      {
+        path: '~/projects/math-demo',
+        ports: [
+          { port: 3000, address: '*', pid: 39917, name: 'next-server', isExternal: true },
+          { port: 5173, address: '127.0.0.1', pid: 48211, name: 'vite', isExternal: false },
+          { port: 51565, address: '127.0.0.1', pid: 50102, name: 'agy', isExternal: false },
+        ],
+      },
+    ],
+  },
 };
 const setupScripts: Record<string, string> = {
   't-setup01':
@@ -2081,6 +2111,8 @@ type StatefulActionName =
 const fixtureActions: Omit<OraActions, StatefulActionName> = {
   createSession: () => Promise.resolve(sessionView.record.id),
   sendMessage: () => Promise.resolve(),
+  refreshPorts: () => Promise.resolve(),
+  killPort: () => Promise.resolve(),
   cancelRun: () => Promise.resolve(),
   decideApproval: () => Promise.resolve(),
   answerQuestions: () => Promise.resolve(),
@@ -2596,12 +2628,13 @@ export function createFixtureStore(): OraStoreSource {
 
   snapshot = {
     status: 'ready',
-    sidebar: { repos, deviceName: 'MacBook-Pro' },
+    sidebar: { repos },
     sessionsWithoutFolder: [],
     getBranch: (cwd) => worktreeNames.get(cwd),
     getWorktreeSetup: (cwd) => fixtureWorktrees.find((item) => item.path === cwd),
     getDefaultBranch: (cwd) => (worktreeNames.has(cwd) ? 'main' : undefined),
     getPrStatus: (repo) => fixturePrStatus[repo],
+    getPorts: (repo) => fixturePorts[repo],
     getChanges: (cwd) => fixtureChanges[cwd] ?? (worktreeNames.has(cwd) ? noChanges : undefined),
     getNewSessionContext: (cwd = '~/Desktop/ora') => ({
       path: cwd,

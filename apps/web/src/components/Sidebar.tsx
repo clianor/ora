@@ -1,5 +1,15 @@
-import type { DefaultBranchSync, PrState, PrStatusResponse, SessionStatus } from '@ora/protocol';
+import type {
+  DefaultBranchSync,
+  LivePort,
+  PrState,
+  PrStatusResponse,
+  SessionStatus,
+} from '@ora/protocol';
 import {
+  ExternalLink,
+  Plug,
+  RefreshCw,
+  Square,
   CircleX,
   CornerDownRight,
   FolderGit2,
@@ -14,6 +24,7 @@ import {
   ShieldAlert,
   type LucideIcon,
 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '../lib/cn.ts';
 import { formatShortElapsed, useNow } from '../lib/now.ts';
 import { hashFor, setCleanupWorktrees, setCreateWorktree, setPaletteOpen } from '../lib/route.ts';
@@ -21,7 +32,7 @@ import { runningStatuses, statusLabel } from '../lib/status.ts';
 import type { RepoNode, SidebarData, WorktreeNode } from '../model.ts';
 import { PrChecksIcon, PrStateIcon, describePr, prStateLabel } from './PrParts.tsx';
 import { PrStatusSync } from './PrStatusSync.tsx';
-import { useStore } from '../store.tsx';
+import { runAction, useStore } from '../store.tsx';
 
 const stackIndent = 14;
 
@@ -51,20 +62,26 @@ function WorktreeRow({
   selectedCwd,
   now,
   status,
+  repoPath,
 }: {
   node: WorktreeNode;
   depth: number;
   selectedCwd: string | undefined;
   now: number;
   status: PrStatusResponse | undefined;
+  repoPath: string | undefined;
 }) {
-  const { getBranch, getDefaultBranch } = useStore();
+  const { getBranch, getDefaultBranch, getPorts } = useStore();
   const cwd = node.cwd ?? node.name;
   const isSelected = selectedCwd === cwd;
   const branch = getBranch(cwd);
   const isDefault = branch !== undefined && branch === getDefaultBranch(cwd);
   const active = node.sessions.filter((session) => runningStatuses.has(session.record.status));
   const entry = status?.worktrees.find((item) => item.path === cwd);
+  const ports =
+    repoPath === undefined
+      ? []
+      : (getPorts(repoPath)?.worktrees.find((item) => item.path === cwd)?.ports ?? []);
   const hasBadge =
     node.setup?.status === 'creating' ||
     node.setup?.status === 'setup' ||
@@ -78,7 +95,8 @@ function WorktreeRow({
       aria-current={isSelected ? 'page' : undefined}
       style={{ paddingLeft: 10 + stackIndent * depth }}
       className={cn(
-        'flex h-8 items-center gap-2 rounded-sm pr-2.5 transition-colors duration-(--duration-fast) ease-(--ease-out)',
+        'flex h-8 items-center gap-2 rounded-sm transition-colors duration-(--duration-fast) ease-(--ease-out)',
+        ports.length > 0 ? 'pr-12' : 'pr-2.5',
         !isSelected && 'hover:bg-surface-hover',
       )}
     >
@@ -158,6 +176,15 @@ function WorktreeRow({
       )}
     </a>
   );
+  const rowBlock =
+    ports.length > 0 && repoPath !== undefined ? (
+      <div className="relative">
+        {row}
+        <PortsButton repo={repoPath} path={cwd} name={branch ?? node.name} ports={ports} />
+      </div>
+    ) : (
+      row
+    );
   return (
     <>
       {isSelected ? (
@@ -167,7 +194,7 @@ function WorktreeRow({
             active.length > 0 && 'pb-1',
           )}
         >
-          {row}
+          {rowBlock}
           {active.map((session) => {
             const { Icon: StatusIcon, color } = sessionIcons[session.record.status] ?? {
               Icon: Loader,
@@ -199,7 +226,7 @@ function WorktreeRow({
           })}
         </div>
       ) : (
-        row
+        rowBlock
       )}
       {node.stack.map((child) => (
         <WorktreeRow
@@ -209,6 +236,7 @@ function WorktreeRow({
           selectedCwd={selectedCwd}
           now={now}
           status={status}
+          repoPath={repoPath}
         />
       ))}
     </>
@@ -261,6 +289,7 @@ function RepoGroup({
           selectedCwd={selectedCwd}
           now={now}
           status={status}
+          repoPath={repoPath}
         />
       ))}
       {mergedCount > 0 && repoPath !== undefined && (
@@ -292,6 +321,7 @@ export function Sidebar({ data, selectedCwd, isHistorySelected = false }: Sideba
   return (
     <aside className="flex w-[264px] shrink-0 flex-col gap-4 border-r border-border bg-sidebar px-2 pt-3 pb-3">
       <PrStatusSync />
+      <PortsSync />
       {window.ora !== undefined && <div data-titlebar aria-hidden className="-mb-1 h-6 shrink-0" />}
       <div className="flex flex-col gap-1">
         <button
@@ -335,12 +365,7 @@ export function Sidebar({ data, selectedCwd, isHistorySelected = false }: Sideba
           ))}
         </nav>
       )}
-      <div className="mt-auto flex h-8 items-center gap-2 px-2.5">
-        <span aria-hidden className="size-2 rounded-full bg-success" />
-        <span className="flex-1 text-[13px] leading-[18px] text-foreground-muted">
-          {data.deviceName}
-          <span className="sr-only"> 연결됨</span>
-        </span>
+      <div className="mt-auto flex h-8 items-center justify-end px-2.5">
         <a
           href={
             selectedCwd === undefined
@@ -354,5 +379,189 @@ export function Sidebar({ data, selectedCwd, isHistorySelected = false }: Sideba
         </a>
       </div>
     </aside>
+  );
+}
+
+/**
+ * 저장소마다 라이브 포트를 읽습니다. 창이 앞에 있는 동안 5초마다 읽고, 창에 포커스가 돌아올 때도 읽습니다.
+ * 팝오버가 열려 있는 동안의 2초 간격은 팝오버가 따로 맡습니다.
+ */
+function PortsSync() {
+  const { sidebar, actions } = useStore();
+  const repoKey = sidebar.repos
+    .flatMap((repo) => (repo.path === undefined ? [] : [repo.path]))
+    .join('\n');
+
+  /** 창 포커스와 타이머는 브라우저 창 상태라서 렌더 결과로 계산할 수 없고, 이 저장소에는 구독 훅 라이브러리가 없어 effect로 맞춥니다. */
+  useEffect(() => {
+    const repos = repoKey === '' ? [] : repoKey.split('\n');
+    const refreshAll = () => {
+      if (document.visibilityState === 'hidden') return;
+      for (const repo of repos) runAction(actions.refreshPorts(repo));
+    };
+    refreshAll();
+    const timer = setInterval(refreshAll, 5000);
+    window.addEventListener('focus', refreshAll);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', refreshAll);
+    };
+  }, [actions, repoKey]);
+
+  return null;
+}
+
+/** 워크트리 줄의 플러그 아이콘과 라이브 포트 팝오버입니다. 줄을 누르면 브라우저에서 열고, 종료 단추는 그 프로세스 하나만 끕니다. */
+function PortsButton({
+  repo,
+  path,
+  name,
+  ports,
+}: {
+  repo: string;
+  path: string;
+  name: string;
+  ports: LivePort[];
+}) {
+  const { actions } = useStore();
+  const [top, setTop] = useState<number>();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const isOpen = top !== undefined;
+  const reveal =
+    'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100';
+
+  /** 팝오버가 열려 있는 동안만 2초마다 다시 읽는 타이머라서 렌더 결과로 계산할 수 없고, 이 저장소에는 타이머 훅 라이브러리가 없어 effect로 맞춥니다. */
+  useEffect(() => {
+    if (!isOpen) return;
+    const timer = setInterval(() => {
+      runAction(actions.refreshPorts(repo));
+    }, 2000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [actions, repo, isOpen]);
+
+  const close = () => {
+    setTop(undefined);
+    triggerRef.current?.focus();
+  };
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-label={`${name}의 라이브 포트 ${String(ports.length)}개`}
+        onClick={(event) => {
+          setTop(isOpen ? undefined : event.currentTarget.getBoundingClientRect().top - 4);
+        }}
+        className="absolute top-1/2 right-2 flex -translate-y-1/2 items-center gap-[3px] rounded-sm px-1 text-xs leading-4 font-medium text-foreground-muted hover:bg-surface-hover"
+      >
+        <Plug aria-hidden className="size-[13px]" />
+        <span aria-hidden className="font-mono">
+          {ports.length}
+        </span>
+      </button>
+      {isOpen && (
+        <>
+          <div aria-hidden className="fixed inset-0 z-40" onClick={close} />
+          <div
+            role="dialog"
+            aria-label={`${name}의 라이브 포트`}
+            style={{ top }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return;
+              event.stopPropagation();
+              close();
+            }}
+            className="fixed left-[272px] z-50 flex w-[400px] flex-col gap-1 rounded-xl border border-border-strong bg-popover p-2.5"
+          >
+            <div className="flex h-[30px] items-center gap-2 px-1.5">
+              <GitBranch aria-hidden className="size-3.5 text-foreground-muted" />
+              <span className="min-w-0 flex-1 truncate font-mono text-[13px] leading-[18px] font-semibold text-foreground">
+                {name}
+              </span>
+              <button
+                type="button"
+                autoFocus
+                aria-label="새로고침"
+                onClick={() => {
+                  runAction(actions.refreshPorts(repo));
+                }}
+                className="flex size-6 items-center justify-center rounded-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+              >
+                <RefreshCw aria-hidden className="size-[13px]" />
+              </button>
+            </div>
+            <div className="flex h-[26px] items-center gap-1.5 px-1.5 text-xs leading-4 font-semibold text-foreground-muted">
+              <Plug aria-hidden className="size-[13px]" />
+              라이브 포트 ({ports.length})
+            </div>
+            <ul className="flex flex-col">
+              {ports.map((item) => (
+                <li
+                  key={`${String(item.pid)}-${String(item.port)}-${item.address}`}
+                  className="group flex h-10 items-center gap-2 rounded-md px-2.5 hover:bg-surface-hover focus-within:bg-surface-hover"
+                >
+                  <button
+                    type="button"
+                    aria-label={`포트 ${String(item.port)}를 브라우저에서 열기`}
+                    onClick={() => {
+                      window.open(
+                        `http://localhost:${String(item.port)}`,
+                        '_blank',
+                        'noopener,noreferrer',
+                      );
+                    }}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                  >
+                    <span className="w-[52px] font-mono text-sm leading-5 font-semibold text-foreground">
+                      {item.port}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-px">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate font-mono text-[13px] leading-[18px] font-medium text-foreground">
+                          {item.name}
+                        </span>
+                        {item.isExternal && (
+                          <span className="shrink-0 rounded-[5px] bg-surface-hover px-1.5 text-[11px] leading-[18px] font-medium text-foreground-muted">
+                            Ora 밖에서 시작
+                          </span>
+                        )}
+                      </span>
+                      <span className="truncate font-mono text-xs leading-4 text-foreground-subtle">
+                        {item.address} · PID {item.pid}
+                      </span>
+                    </span>
+                    <ExternalLink
+                      aria-hidden
+                      className={cn('size-3.5 shrink-0 text-foreground-muted', reveal)}
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`포트 ${String(item.port)}의 ${item.name} 종료`}
+                    onClick={() => {
+                      runAction(actions.killPort(repo, path, item.pid, item.port));
+                    }}
+                    className={cn(
+                      'flex h-[26px] shrink-0 items-center gap-[5px] rounded-md bg-danger-subtle px-2 text-xs leading-4 font-semibold text-danger',
+                      reveal,
+                    )}
+                  >
+                    <Square aria-hidden className="size-[11px]" />
+                    종료
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="px-1.5 py-1 text-xs leading-[18px] text-foreground-subtle">
+              줄을 누르면 브라우저에서 엽니다. 종료는 그 프로세스 하나만 끕니다.
+            </p>
+          </div>
+        </>
+      )}
+    </>
   );
 }

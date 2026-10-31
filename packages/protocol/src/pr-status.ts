@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { cleanupProcessSchema } from './ports.ts';
 import { timestampSchema } from './common.ts';
 
 /** PR 상태와 머지된 worktree 삭제의 HTTP API 본문이다 (SPEC 2.12절). */
@@ -76,6 +77,8 @@ export const cleanupCandidateSchema = z.strictObject({
   at: timestampSchema.optional(),
   /** 닫은 PR에서 이 브랜치의 커밋이 원격 어딘가에 남아 있는지다. */
   isOnRemote: z.boolean(),
+  /** 삭제하면 먼저 종료하는 Ora 터미널·세션의 프로세스다. */
+  processes: z.array(cleanupProcessSchema),
   /** 고를 수 없게 막는 이유다. 없으면 고를 수 있다. */
   blocked: z.string().min(1).optional(),
 });

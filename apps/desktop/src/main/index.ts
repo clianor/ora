@@ -233,7 +233,8 @@ function createWindow(): BrowserWindow {
     },
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) shell.openExternal(url).catch(() => undefined);
+    const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?([/?#]|$)/.test(url);
+    if (url.startsWith('https://') || isLocalhost) shell.openExternal(url).catch(() => undefined);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (event, url) => {

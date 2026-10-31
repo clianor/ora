@@ -52,6 +52,7 @@ import { findHarnessFiles, listSearchDirs } from './isolation/harness-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { mergeSkills, readAllSkills } from './isolation/skill-files.ts';
 import { SHELL_PIDS_FILE } from './recovery.ts';
+import { SESSION_ENV } from './processes.ts';
 import { findBaseRef } from './worktrees.ts';
 import { createFileTracker } from './file-history.ts';
 
@@ -427,11 +428,14 @@ export async function executeSession(
     writeFileSync(join(sessionDir, SHELL_PIDS_FILE), [...shellPids].join('\n'));
   };
   const runner = createCommandRunner({
-    env: createChildEnv({
-      isolation,
-      parentEnv: hooks.env,
-      isolationRoot: resolveIsolationRoot(config.paths.isolationRoot, oraHome),
-    }),
+    env: {
+      ...createChildEnv({
+        isolation,
+        parentEnv: hooks.env,
+        isolationRoot: resolveIsolationRoot(config.paths.isolationRoot, oraHome),
+      }),
+      [SESSION_ENV]: '1',
+    },
     onSpawn: (pid) => {
       shellPids.add(pid);
       writeShellPids();

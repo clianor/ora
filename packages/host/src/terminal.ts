@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process';
+import { TERMINAL_ENV } from './processes.ts';
+import type { OraShell } from './processes.ts';
 import { randomBytes } from 'node:crypto';
 import { chmodSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -35,8 +36,8 @@ export interface TerminalManager {
   write(id: string, data: string): void;
   resize(id: string, cols: number, rows: number): void;
   kill(id: string): void;
-  /** 셸이 명령을 돌리는 중이면 true다. 초기 명령이 도는 중이거나 셸의 자식 프로세스가 있으면 돌리는 중이고, 입력만 기다리는 셸은 false다. */
-  isBusy(id: string): Promise<boolean>;
+  /** 터미널마다 셸 PID를 돌려준다. 끝난 터미널과 아직 PTY를 붙이지 않은 터미널은 PID가 없다. */
+  shells(): OraShell[];
   subscribe(id: string, listener: TerminalListener): TerminalSubscription | undefined;
   /** 열린 PTY를 모두 끝내고, 프로세스가 사라질 때까지 기다린다. */
   closeAll(): Promise<void>;
@@ -112,7 +113,7 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
       cwd: entry.info.cwd,
       cols: entry.info.cols,
       rows: entry.info.rows,
-      env: { ...env, TERM: 'xterm-256color' },
+      env: { ...env, TERM: 'xterm-256color', [TERMINAL_ENV]: entry.info.id },
       encoding: null,
     });
     entry.pty = pty;
@@ -190,17 +191,12 @@ export function createTerminalManager(env: NodeJS.ProcessEnv): TerminalManager {
       entry.isKilled = true;
       entry.pty?.kill();
     },
-    async isBusy(id) {
-      const entry = entries.get(id);
-      if (entry === undefined || entry.exitCode !== undefined) return false;
-      if (entry.isRunningCommand) return true;
-      if (entry.pty === undefined) return false;
-      const { promise, resolve } = Promise.withResolvers<boolean>();
-      execFile('pgrep', ['-P', String(entry.pty.pid)], (error, stdout) => {
-        resolve(error === null && stdout.trim() !== '');
-      });
-      return promise;
-    },
+    shells: () =>
+      [...entries.values()].map((entry) => ({
+        id: entry.info.id,
+        cwd: entry.info.cwd,
+        pid: entry.exitCode === undefined ? entry.pty?.pid : undefined,
+      })),
     subscribe(id, listener) {
       const entry = entries.get(id);
       if (entry === undefined) return undefined;
