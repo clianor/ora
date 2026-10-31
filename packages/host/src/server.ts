@@ -81,6 +81,7 @@ import { createMemoryApi } from './memory-api.ts';
 import { createSkillsApi } from './skills-api.ts';
 import { createTerminalManager } from './terminal.ts';
 import { createProcessScanner, listWorktreePaths, toCleanupProcess } from './processes.ts';
+import { readSurvivors } from './recovery.ts';
 import { createPrStatusApi } from './pr-status.ts';
 import { createWorktreeApi } from './worktrees.ts';
 import { createRewindApi } from './rewind.ts';
@@ -183,22 +184,35 @@ class HttpError extends Error {
   }
 }
 
+/** git 읽기 명령의 시간 제한이다. 초과하면 SIGKILL로 끝내고 실패로 처리한다. */
+const GIT_READ_TIMEOUT_MS = 30_000;
+
 /** `cwd`가 git 저장소이고 브랜치 위에 있으면 브랜치 이름을 돌려준다. 저장소가 아니거나 detached HEAD면 `undefined`다. */
 function readBranch(cwd: string): Promise<string | undefined> {
   const { promise, resolve } = Promise.withResolvers<string | undefined>();
-  execFile('git', ['-C', cwd, 'symbolic-ref', '--short', '-q', 'HEAD'], (error, stdout) => {
-    const name = stdout.trim();
-    resolve(error !== null || name === '' ? undefined : name);
-  });
+  execFile(
+    'git',
+    ['-C', cwd, 'symbolic-ref', '--short', '-q', 'HEAD'],
+    { timeout: GIT_READ_TIMEOUT_MS, killSignal: 'SIGKILL' },
+    (error, stdout) => {
+      const name = stdout.trim();
+      resolve(error !== null || name === '' ? undefined : name);
+    },
+  );
   return promise;
 }
 
 /** git 출력 전체를 돌려준다. 명령이 실패하면 `undefined`다. -z 출력의 NUL을 지키려고 trim하지 않는다. */
 function runGit(cwd: string, args: string[]): Promise<string | undefined> {
   const { promise, resolve } = Promise.withResolvers<string | undefined>();
-  execFile('git', ['-C', cwd, ...args], { maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
-    resolve(error === null ? stdout : undefined);
-  });
+  execFile(
+    'git',
+    ['-C', cwd, ...args],
+    { maxBuffer: 16 * 1024 * 1024, timeout: GIT_READ_TIMEOUT_MS, killSignal: 'SIGKILL' },
+    (error, stdout) => {
+      resolve(error === null ? stdout : undefined);
+    },
+  );
   return promise;
 }
 
@@ -688,7 +702,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         await writeFileAtomic(tabsPath, `${JSON.stringify(file, null, 2)}\n`);
       }),
   });
-  const processScanner = createProcessScanner();
+  const processScanner = createProcessScanner({ readSurvivors: () => readSurvivors(sessionsDir) });
   const prStatusApi = createPrStatusApi({
     env: options.env,
     forgetWorktrees: async (paths) => {
@@ -771,15 +785,20 @@ export async function createHost(options: HostOptions): Promise<Host> {
     const worktrees = await Promise.all(
       [...roots].map((root) => {
         const { promise, resolve } = Promise.withResolvers<string[]>();
-        execFile('git', ['-C', root, 'worktree', 'list', '--porcelain'], (error, stdout) => {
-          resolve(
-            error === null
-              ? stdout
-                  .split('\n')
-                  .flatMap((line) => (line.startsWith('worktree ') ? [line.slice(9)] : []))
-              : [],
-          );
-        });
+        execFile(
+          'git',
+          ['-C', root, 'worktree', 'list', '--porcelain'],
+          { timeout: GIT_READ_TIMEOUT_MS, killSignal: 'SIGKILL' },
+          (error, stdout) => {
+            resolve(
+              error === null
+                ? stdout
+                    .split('\n')
+                    .flatMap((line) => (line.startsWith('worktree ') ? [line.slice(9)] : []))
+                : [],
+            );
+          },
+        );
         return promise;
       }),
     );
@@ -788,7 +807,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       const realRoot = await realpath(root).catch(() => undefined);
       if (realRoot !== undefined && (real === realRoot || real.startsWith(realRoot + sep))) return;
     }
-    throw new HttpError(403, `알려진 worktree 밖의 폴더입니다: ${cwd}`);
+    throw new HttpError(403, `알려진 워크트리 밖의 폴더입니다: ${cwd}`);
   };
 
   const streamTerminal = (id: string, res: RouteResponse) => {

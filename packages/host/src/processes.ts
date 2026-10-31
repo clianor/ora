@@ -11,7 +11,8 @@ import type { CleanupProcess, LivePort } from '@ora/protocol';
  *   `ps -E`가 이 값을 읽으므로 부모가 launchd(1)로 바뀐 프로세스도 찾는다.
  * - macOS의 `ps -o sess`는 항상 0이고 SIP 보호 실행 파일(`sleep` 등)은 환경변수가 보이지 않는다. 그런 프로세스는
  *   셸이 살아 있을 때의 부모 사슬로 한 번 알아낸 뒤 `pid`와 시작 시각으로 기억해 둔다.
- * ponytail: 셸이 사라진 뒤에야 처음 보이는 SIP 보호 프로세스는 Ora 밖 프로세스로 센다. 조회 사이 간격이 한도다.
+ * ponytail: 셸이 사라진 뒤에야 처음 보이는 SIP 보호 프로세스는, 같은 프로세스 그룹에 표지가 보이는 프로세스가 없으면 Ora 밖 프로세스로 센다.
+ *   실측(macOS): 셸이 끝나면 tty는 `??`, ppid는 1이 되고 pgid·sess로는 Ora 소유를 가를 근거가 없다. 조회 사이 간격이 한도다.
  */
 
 export const TERMINAL_ENV = 'ORA_TERMINAL_ID';
@@ -186,12 +187,17 @@ export interface ProcessScanner {
   ): Promise<ProcessRef[]>;
 }
 
-export function createProcessScanner(): ProcessScanner {
+export function createProcessScanner(
+  options: { readSurvivors: () => Promise<Set<string>> } = {
+    readSurvivors: () => Promise.resolve(new Set<string>()),
+  },
+): ProcessScanner {
   /** `pid|시작 시각`으로 기억한 Ora 터미널 프로세스와 그 워크트리다. */
   const remembered = new Map<string, string>();
   const keyOf = (entry: Pick<ProcessEntry, 'pid' | 'started'>) => `${entry.pid}|${entry.started}`;
 
   const scanDarwin: ProcessScanner['scan'] = async (worktrees, shells, isFull) => {
+    const survivors = await options.readSurvivors();
     const [table, listeners] = await Promise.all([readTable(), readListeners()]);
     const byPid = new Map(table.map((entry) => [entry.pid, entry]));
     const children = new Map<number, ProcessEntry[]>();
@@ -248,9 +254,10 @@ export function createProcessScanner(): ProcessScanner {
       .filter((entry) => !owned.has(entry.pid))
       .map((entry) => entry.pid);
     const cwds = await readCwds(isFull ? undefined : wantCwd.filter((pid) => listeners.has(pid)));
-    // 세션 셸 도구의 프로세스는 작업 폴더로 워크트리를 정한다.
+    // 세션 셸 도구의 프로세스는 작업 폴더로 워크트리를 정한다. 셸이 끝난 뒤 환경변수가 보이지 않는 프로세스는
+    // 워커가 셸이 끝날 때 적어 둔 생존 기록으로 같은 취급을 받는다.
     for (const entry of table) {
-      if (!entry.isSessionProc || self.has(entry.pid)) continue;
+      if (self.has(entry.pid) || !(entry.isSessionProc || survivors.has(keyOf(entry)))) continue;
       const cwd = cwds.get(entry.pid);
       const root = cwd === undefined ? undefined : owningWorktree(cwd, worktrees);
       if (root !== undefined) owned.set(entry.pid, root);

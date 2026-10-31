@@ -1,5 +1,6 @@
+import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { appendFile, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRecorder, formatKst, parseTranscript, planRecovery } from '@ora/core';
 import type { StopCause } from '@ora/core';
@@ -14,6 +15,49 @@ import { ENGINE_VERSION } from './config.ts';
 
 /** 워커가 실행 중인 셸의 PID를 적는 파일이다. 한 줄에 PID 하나다. */
 export const SHELL_PIDS_FILE = 'shells.pid';
+
+/** 셸이 끝난 뒤에도 살아남은 프로세스를 `pid|시작 시각` 한 줄로 적는 파일이다. */
+const SURVIVORS_FILE = 'survivors.pid';
+
+/**
+ * 세션 셸이 끝난 직후, 그 셸의 프로세스 그룹에 남은 프로세스를 세션 폴더에 적는다. `nohup sleep &`처럼 SIP 보호 실행 파일은
+ * 셸이 끝나면 환경변수 표지를 읽을 수 없으므로, 호스트가 이 기록으로 Ora 프로세스임을 안다.
+ * ponytail: 파일은 줄어들지 않는다. 호스트는 시작 시각이 맞는 줄만 쓰므로 오래된 줄은 무해하다.
+ */
+export async function recordSurvivors(sessionDir: string, shellPid: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  execFile('/bin/ps', ['-axo', 'pid=,pgid=,lstart='], { timeout: 5000 }, (_error, stdout) => {
+    resolve(stdout);
+  });
+  const lines: string[] = [];
+  for (const line of (await promise).split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (match?.[2] === String(shellPid)) {
+      lines.push(`${match[1] ?? ''}|${(match[3] ?? '').replace(/\s+/g, ' ')}`);
+    }
+  }
+  if (lines.length > 0) await appendFile(join(sessionDir, SURVIVORS_FILE), `${lines.join('\n')}\n`);
+}
+
+/** 모든 세션 폴더의 생존 기록을 `pid|시작 시각` 집합으로 읽는다. */
+export async function readSurvivors(sessionsDir: string): Promise<Set<string>> {
+  const keys = new Set<string>();
+  let names: string[];
+  try {
+    names = await readdir(sessionsDir);
+  } catch {
+    return keys;
+  }
+  for (const name of names) {
+    try {
+      const text = await readFile(join(sessionsDir, name, SURVIVORS_FILE), 'utf8');
+      for (const line of text.split('\n')) if (line !== '') keys.add(line);
+    } catch {
+      // 기록이 없는 세션이다.
+    }
+  }
+  return keys;
+}
 
 /**
  * 워커가 남긴 셸 프로세스 그룹을 모두 종료한다. 워커가 SIGKILL을 맞거나 응답하지 않아 호스트가 종료한 뒤에도

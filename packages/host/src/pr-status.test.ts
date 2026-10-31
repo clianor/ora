@@ -46,7 +46,11 @@ interface FakePr {
   checks?: 'SUCCESS' | 'FAILURE' | 'PENDING';
 }
 
-async function boot(options: { hasGh: boolean; env?: Record<string, string> }) {
+async function boot(options: {
+  hasGh: boolean;
+  env?: Record<string, string>;
+  responses?: object[];
+}) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'ora-pr-')));
   const repo = join(home, 'repo');
   const bin = join(home, 'bin');
@@ -60,6 +64,9 @@ async function boot(options: { hasGh: boolean; env?: Record<string, string> }) {
   git(repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   writeFileSync(join(home, 'engine.config.json'), JSON.stringify({ repos: [{ path: repo }] }));
   writeFileSync(join(bin, 'prs.json'), '[]');
+  if (options.responses !== undefined) {
+    writeFileSync(join(home, 'unused.json'), JSON.stringify({ responses: options.responses }));
+  }
   if (options.hasGh) {
     writeFileSync(join(bin, 'calls.log'), '');
     writeFileSync(
@@ -567,3 +574,71 @@ test('macOS가 아니면 프로세스와 포트를 찾지 않고, 자식 프로�
     child.kill('SIGKILL');
   }
 }, 30_000);
+
+// 프로세스 표지 조회가 macOS의 `ps -E`에 기댄다.
+test.skipIf(process.platform !== 'darwin')(
+  '세션 셸 도구가 nohup으로 띄운 프로세스는 그 워크트리의 Ora 프로세스로 잡히고, 포트에 붙고, 삭제 때 종료된다',
+  async () => {
+    const call = (id: string, command: string) => ({
+      content: [
+        {
+          type: 'tool_use',
+          callId: id,
+          tool: 'shell',
+          input: { intent: '백그라운드 실행', command },
+        },
+      ],
+    });
+    const server = `require('net').createServer().listen(0,'127.0.0.1');setTimeout(()=>{},60000)`;
+    const {
+      repo,
+      call: api,
+      create,
+      writePrs,
+    } = await boot({
+      hasGh: true,
+      responses: [
+        call('n1', 'nohup sleep 7002 > /dev/null 2>&1 &'),
+        call('n2', `nohup "${process.execPath}" -e "${server}" > /dev/null 2>&1 &`),
+        { content: [{ type: 'text', text: '마쳤습니다.' }] },
+      ],
+    });
+    const path = await create('nohup');
+    writePrs([merged(12, 'nohup', path)]);
+    const reply = await api('/api/sessions', {
+      method: 'POST',
+      body: { task: '백그라운드로 띄운다', cwd: path, permissionMode: 'bypass-permissions' },
+    });
+    expect(reply.status).toBe(201);
+
+    const processes = async () =>
+      cleanupListResponseSchema
+        .parse(await (await api(`/api/worktrees/cleanup?repo=${encodeURIComponent(repo)}`)).json())
+        .candidates.find((item) => item.path === path);
+    await expect
+      .poll(async () => (await processes())?.processes.map((item) => item.name).sort(), {
+        timeout: 15_000,
+      })
+      .toEqual(['node', 'sleep']);
+    expect((await processes())?.blocked).toBeUndefined();
+
+    const ports = portsResponseSchema.parse(
+      await (await api(`/api/ports?repo=${encodeURIComponent(repo)}`)).json(),
+    );
+    const listening = ports.worktrees.find((item) => item.path === path)?.ports ?? [];
+    expect(listening).toHaveLength(1);
+    expect(listening[0]).toMatchObject({ isExternal: false, name: 'node' });
+
+    const found = (await processes())?.processes ?? [];
+    const removed = cleanupResultSchema.parse(
+      await (
+        await api('/api/worktrees/cleanup', { method: 'POST', body: { repo, paths: [path] } })
+      ).json(),
+    );
+    expect(removed.removed).toEqual([path]);
+    await expect
+      .poll(() => found.some((item) => isAlive(item.pid)), { timeout: 10_000 })
+      .toBe(false);
+  },
+  60_000,
+);

@@ -51,7 +51,7 @@ import { createChildEnv, resolveIsolationRoot } from './isolation/child-env.ts';
 import { findHarnessFiles, listSearchDirs } from './isolation/harness-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
 import { mergeSkills, readAllSkills } from './isolation/skill-files.ts';
-import { SHELL_PIDS_FILE } from './recovery.ts';
+import { SHELL_PIDS_FILE, recordSurvivors } from './recovery.ts';
 import { SESSION_ENV } from './processes.ts';
 import { findBaseRef } from './worktrees.ts';
 import { createFileTracker } from './file-history.ts';
@@ -442,6 +442,7 @@ export async function executeSession(
     },
     onClose: (pid) => {
       shellPids.delete(pid);
+      recordSurvivors(sessionDir, pid).catch(() => undefined);
       writeShellPids();
     },
   });
