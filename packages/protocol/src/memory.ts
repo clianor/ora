@@ -24,7 +24,11 @@ export const memoryItemSchema = z.strictObject({
   lastUsedAt: timestampSchema.optional(),
   /** 출처 없이 저장한 항목이다. 회상할 때 출처 있는 항목보다 낮게 친다. */
   isUnsourced: z.boolean(),
-  /** 전체 패스가 오래 안 쓴 항목으로 표시했다. 표시만 하고 아카이브하지 않는다. */
+  /** 이 메모리를 쓴 세션 가운데 사용자가 "도움 됨"을 고른 수다. `usage.jsonl`에서 센다. */
+  helpfulCount: z.number().int().nonnegative(),
+  /** 반성이 만든 항목이면 근거 세션 수다. 그 밖의 항목에는 없다. */
+  reflectedSessionCount: z.number().int().positive().optional(),
+  /** 오래 안 쓴 후보다. 다음 전체 패스가 아카이브로 옮긴다. */
   isStale: z.boolean(),
 });
 export type MemoryItem = z.infer<typeof memoryItemSchema>;
@@ -37,7 +41,10 @@ export const memoryPassSummarySchema = z.strictObject({
   rewritten: z.number().int().nonnegative(),
   /** 틀리거나 모순이어서 아카이브로 옮긴 항목 수다. 합쳐서 옮긴 항목은 `merged`에 센다. */
   archived: z.number().int().nonnegative(),
-  flagged: z.number().int().nonnegative(),
+  /** 90일 동안 쓰지 않아 아카이브로 옮긴 항목 수다. */
+  decayed: z.number().int().nonnegative(),
+  /** 반성으로 새로 만든 항목 수다. */
+  reflected: z.number().int().nonnegative(),
   /** 응답 형식이 두 번 틀려 건드리지 않은 묶음 수다. */
   skippedBatches: z.number().int().nonnegative(),
   /** `failed`일 때 이유다. */
@@ -60,3 +67,78 @@ export const memoryListResponseSchema = z.strictObject({
 export type MemoryListResponse = z.infer<typeof memoryListResponseSchema>;
 
 export const memoryDeleteResponseSchema = z.strictObject({ deleted: z.literal(true) });
+
+/** `maintenance-log.md`의 한 줄이다. `line`은 파일의 1부터 센 줄 번호이고 변경 취소가 이 번호를 쓴다. */
+export const memoryLogEntrySchema = z.strictObject({
+  line: z.number().int().positive(),
+  at: timestampSchema,
+  operation: z.string().min(1),
+  ids: z.array(z.string()),
+  /** 대상 메모리의 지금 문장이다. 첫 번째 ID로 찾고, 찾지 못하면 없다. */
+  text: z.string().optional(),
+  reason: z.string(),
+  passId: z.string().min(1),
+  /** 뒤따르는 `revert` 줄이 이 줄을 취소했다. */
+  isReverted: z.boolean(),
+  /** `revert` 줄이 취소한 대상 줄 번호다. */
+  revertsLine: z.number().int().positive().optional(),
+});
+export type MemoryLogEntry = z.infer<typeof memoryLogEntrySchema>;
+
+/** 최신 줄이 먼저다. */
+export const memoryLogResponseSchema = z.strictObject({ entries: z.array(memoryLogEntrySchema) });
+export type MemoryLogResponse = z.infer<typeof memoryLogResponseSchema>;
+
+export const memoryRevertBodySchema = z.strictObject({ line: z.number().int().positive() });
+export const memoryRevertResponseSchema = z.strictObject({
+  /** 취소한 사실을 남긴 새 로그 줄 번호다. */
+  line: z.number().int().positive(),
+  operation: z.string().min(1),
+});
+
+export const memoryUsageSessionSchema = z.strictObject({
+  sessionId: z.string().min(1),
+  sessionTitle: z.string().optional(),
+  at: timestampSchema,
+  /** 사용자가 고른 값이다. 고르지 않았거나 해제했으면 `null`이다. */
+  helpful: z.boolean().nullable(),
+});
+
+export const memoryUsageItemSchema = z.strictObject({
+  id: z.string().min(1),
+  text: z.string(),
+  useCount: z.number().int().nonnegative(),
+  helpfulCount: z.number().int().nonnegative(),
+  sessions: z.array(memoryUsageSessionSchema),
+});
+
+/** 설정 › 메모리 › 사용 기록 탭이다. 최근 30일 안에 회상 팩에 넣은 줄만 센다. */
+export const memoryUsageResponseSchema = z.strictObject({
+  windowDays: z.number().int().positive(),
+  injectedCount: z.number().int().nonnegative(),
+  helpfulCount: z.number().int().nonnegative(),
+  unhelpfulCount: z.number().int().nonnegative(),
+  unansweredCount: z.number().int().nonnegative(),
+  items: z.array(memoryUsageItemSchema),
+});
+export type MemoryUsageResponse = z.infer<typeof memoryUsageResponseSchema>;
+
+/** 세션 하나가 회상 팩에 넣은 메모리와, 사용자가 고른 도움 여부다. */
+export const memorySessionFeedbackSchema = z.strictObject({
+  items: z.array(
+    z.strictObject({
+      lessonId: z.string().min(1),
+      text: z.string(),
+      helpful: z.boolean().nullable(),
+    }),
+  ),
+});
+export type MemorySessionFeedback = z.infer<typeof memorySessionFeedbackSchema>;
+
+export const memoryFeedbackBodySchema = z.strictObject({
+  sessionId: z.string().min(1),
+  lessonId: z.string().min(1),
+  /** `null`은 고른 값을 해제한다. */
+  helpful: z.boolean().nullable(),
+});
+export type MemoryFeedbackBody = z.infer<typeof memoryFeedbackBodySchema>;

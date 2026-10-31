@@ -11,6 +11,10 @@ import {
   memoryDeleteResponseSchema,
   memoryListResponseSchema,
   memoryPassSummarySchema,
+  memoryLogResponseSchema,
+  memoryRevertResponseSchema,
+  memorySessionFeedbackSchema,
+  memoryUsageResponseSchema,
   changesResponseSchema,
   branchResponseSchema,
   accountViewSchema,
@@ -767,12 +771,32 @@ export function createHttpStore(
     const query = cwd === undefined ? '' : `?cwd=${encodeURIComponent(cwd)}`;
     try {
       memory = {
+        ...memory,
         status: 'ready',
         list: await requestJson(`/api/memory${query}`, memoryListResponseSchema),
       };
     } catch (error) {
-      memory = { status: 'error', errorMessage: toMessage(error) };
+      memory = { ...memory, status: 'error', errorMessage: toMessage(error) };
     }
+    notifySoon();
+  };
+  const refreshMemoryLog = async (): Promise<void> => {
+    memory = { ...memory, log: await requestJson('/api/memory/log', memoryLogResponseSchema) };
+    notifySoon();
+  };
+  const refreshMemoryUsage = async (): Promise<void> => {
+    memory = {
+      ...memory,
+      usage: await requestJson('/api/memory/usage', memoryUsageResponseSchema),
+    };
+    notifySoon();
+  };
+  const refreshSessionFeedback = async (sessionId: string): Promise<void> => {
+    const feedback = await requestJson(
+      `/api/memory/sessions/${encodeURIComponent(sessionId)}`,
+      memorySessionFeedbackSchema,
+    );
+    memory = { ...memory, feedback: { ...memory.feedback, [sessionId]: feedback } };
     notifySoon();
   };
   /** 만든 worktree의 상태를 읽습니다. 만들거나 초기 명령이 도는 동안은 1초마다 다시 읽습니다. */
@@ -1065,6 +1089,24 @@ export function createHttpStore(
     tidyMemory: async () => {
       await requestJson('/api/memory/tidy', memoryPassSummarySchema, { method: 'POST', body: {} });
       await refreshMemory(memoryCwd);
+      await refreshMemoryLog().catch(() => undefined);
+    },
+    refreshMemoryLog,
+    refreshMemoryUsage,
+    refreshSessionFeedback,
+    revertMemory: async (line) => {
+      await requestJson('/api/memory/revert', memoryRevertResponseSchema, {
+        method: 'POST',
+        body: { line },
+      });
+      await Promise.all([refreshMemory(memoryCwd), refreshMemoryLog()]);
+    },
+    setMemoryFeedback: async (sessionId, lessonId, helpful) => {
+      await requestJson('/api/memory/feedback', okResponseSchema, {
+        method: 'POST',
+        body: { sessionId, lessonId, helpful },
+      });
+      await Promise.all([refreshSessionFeedback(sessionId), refreshMemory(memoryCwd)]);
     },
     addMcpServer: (body) => changeMcpServers('/api/mcp-servers', { method: 'POST', body }),
     setMcpServerEnabled: (name, enabled) =>

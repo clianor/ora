@@ -13,6 +13,9 @@ import type {
   McpServerStatus,
   SkillListResponse,
   MemoryListResponse,
+  MemoryLogResponse,
+  MemorySessionFeedback,
+  MemoryUsageResponse,
   LoginState,
   OraEvent,
   PendingApproval,
@@ -211,6 +214,20 @@ export interface OraActions {
   deleteMemory: (id: string) => Promise<void>;
   /** 지금 메모리를 다듬습니다. 서버가 실행 중이라고 거부하면 그 이유로 거부합니다. */
   tidyMemory: () => Promise<void>;
+  /** 변경 기록 탭의 로그를 서버에서 다시 읽습니다. */
+  refreshMemoryLog: () => Promise<void>;
+  /** 사용 기록 탭의 최근 30일 요약을 서버에서 다시 읽습니다. */
+  refreshMemoryUsage: () => Promise<void>;
+  /** 세션이 회상 팩에 넣은 메모리와 고른 도움 여부를 서버에서 읽습니다. */
+  refreshSessionFeedback: (sessionId: string) => Promise<void>;
+  /** 로그 줄의 변경을 취소합니다. 서버가 이유와 함께 거부하면 그 이유로 거부합니다. */
+  revertMemory: (line: number) => Promise<void>;
+  /** 세션·메모리의 도움 여부를 고릅니다. `null`은 고른 값을 해제합니다. */
+  setMemoryFeedback: (
+    sessionId: string,
+    lessonId: string,
+    helpful: boolean | null,
+  ) => Promise<void>;
   /** 서버를 설정에 더하고 연결합니다. 환경변수는 이름만 보냅니다. 서버가 거부하면 거부합니다. */
   addMcpServer: (body: McpServerAddBody) => Promise<void>;
   /** 서버를 켜거나 끕니다. 끄면 연결을 닫습니다. */
@@ -306,6 +323,12 @@ export interface MemoryData {
   status: 'loading' | 'ready' | 'error';
   errorMessage?: string;
   list?: MemoryListResponse;
+  /** 변경 기록 탭이 그리는 로그다. 탭을 열 때 읽는다. */
+  log?: MemoryLogResponse;
+  /** 사용 기록 탭의 최근 30일 요약이다. 탭을 열 때 읽는다. */
+  usage?: MemoryUsageResponse;
+  /** 세션 ID별로, 그 세션이 회상 팩에 넣은 메모리와 고른 도움 여부다. */
+  feedback?: Record<string, MemorySessionFeedback>;
 }
 
 /**

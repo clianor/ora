@@ -1,4 +1,5 @@
 export { UsageError } from './config.ts';
+export { createMemoryApi } from './memory-api.ts';
 export { listAccounts, loginAccount, logoutAccount } from './accounts.ts';
 export { CancelledBeforeStartError, launchSession, listSessions } from './supervisor.ts';
 export { runEval } from './eval.ts';

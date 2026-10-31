@@ -14,6 +14,7 @@ import {
   loginAccount,
   logoutAccount,
   startLocalServer,
+  createMemoryApi,
   runEval,
 } from '@ora/host';
 import type { LaunchRequest, SessionResult } from '@ora/host';
@@ -27,6 +28,8 @@ const USAGE = `사용법:
   ora serve [--model-script <경로>] [--web-dir <경로>] [--port <번호>] [--config <경로>] [--isolation <none|harness|clean-home>]
   ora login <claude|codex|grok> [--name <계정 이름>] [--api-key-env <환경변수 이름> (API 키 계정을 만든다. 키 값은 저장하지 않는다)] [--device (codex 전용)]
   ora accounts
+  ora memory maintain [--full] [--config <경로>] [--model-script <경로>]
+  ora memory revert <로그 줄 번호> [--config <경로>]
   ora eval <작업 세트 경로> --model <모델>... [--config <경로>] [--out <폴더>] [--model-script <경로>]`;
 
 const EXIT_CODES = { passed: 0, failed: 1, usage: 2, cancelled: 130 } as const;
@@ -114,6 +117,7 @@ async function main(): Promise<number> {
         model: { type: 'string', multiple: true },
         out: { type: 'string' },
         device: { type: 'boolean', default: false },
+        full: { type: 'boolean', default: false },
       },
     });
   } catch (error) {
@@ -225,6 +229,35 @@ async function main(): Promise<number> {
       for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, onStop);
       await closed.promise;
       return EXIT_CODES.passed;
+    }
+
+    if (command === 'memory') {
+      const memory = createMemoryApi({
+        env: process.env,
+        ...(values.config === undefined ? {} : { configPath: values.config }),
+        ...(values['model-script'] === undefined
+          ? {}
+          : { modelScriptPath: values['model-script'] }),
+        hasLiveSession: () => false,
+      });
+      if (argument === 'maintain' && extra.length === 0) {
+        const summary = await memory.maintain(values.full);
+        process.stdout.write(
+          values.json
+            ? `${JSON.stringify(summary)}\n`
+            : `${values.full ? '전체' : '가벼운'} 패스 ${summary.outcome === 'ok' ? '완료' : `실패: ${summary.reason ?? ''}`}: 합침 ${summary.merged}, 고침 ${summary.rewritten}, 보관 ${summary.archived}, 오래 안 씀 ${summary.decayed}, 반성 ${summary.reflected}\n`,
+        );
+        return summary.outcome === 'ok' ? EXIT_CODES.passed : EXIT_CODES.failed;
+      }
+      const line = Number(extra[0]);
+      if (argument === 'revert' && extra.length === 1 && Number.isInteger(line) && line > 0) {
+        const result = await memory.revert(line);
+        process.stdout.write(
+          `변경을 취소했습니다: ${result.operation} 로그 ${line}번 줄 → 새 로그 ${result.line}번 줄\n`,
+        );
+        return EXIT_CODES.passed;
+      }
+      return usageError('memory는 maintain [--full] 또는 revert <로그 줄 번호>를 받습니다.');
     }
 
     if (command === 'eval') {

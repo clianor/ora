@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { formatKst } from '@ora/core';
+import { findSecretPatterns, formatKst } from '@ora/core';
 import type { Clock } from '@ora/core';
 import type { MemoryItem, MemoryListResponse, MemoryPassSummary } from '@ora/protocol';
 
@@ -135,6 +135,10 @@ export interface LessonBlock {
   readonly sessionId?: string;
   /** 저장 시각이다. `저장:` 줄이 없는 옛 항목은 머리의 날짜 0시(KST)다. */
   readonly savedAt: string;
+  /** `복원:` 줄의 시각이다. 변경 취소로 되살린 항목은 이 시각부터 90일을 다시 센다. */
+  readonly restoredAt?: string;
+  /** 반성으로 만든 항목의 근거 세션 ID들이다. */
+  readonly reflectedSessions?: readonly string[];
 }
 
 export function parseLessons(content: string): LessonBlock[] {
@@ -161,6 +165,10 @@ export function parseLessons(content: string): LessonBlock[] {
         ...(field('근거') === undefined ? {} : { source: field('근거') }),
         ...(field('세션') === undefined ? {} : { sessionId: field('세션') }),
         savedAt: field('저장') ?? `${date}T00:00:00+09:00`,
+        ...(field('복원') === undefined ? {} : { restoredAt: field('복원') }),
+        ...(field('반성') === undefined
+          ? {}
+          : { reflectedSessions: (field('반성') ?? '').split(', ').filter((id) => id !== '') }),
       };
     });
 }
@@ -195,16 +203,19 @@ export function isForgetCandidate(
   nowMs: number,
 ): boolean {
   if (block.retention !== 'default' || (usage?.count ?? 0) > 0) return false;
-  return nowMs - Date.parse(block.savedAt) > FORGET_AFTER_DAYS * 86_400_000;
+  const baseMs = Math.max(Date.parse(block.savedAt), Date.parse(block.restoredAt ?? block.savedAt));
+  return nowMs - baseMs > FORGET_AFTER_DAYS * 86_400_000;
 }
 
 const PASS_STATE_FILE = 'maintenance-state.json';
 
 export async function readPassState(memoryDir: string): Promise<MemoryPassSummary | undefined> {
   try {
-    return JSON.parse(
+    const state = JSON.parse(
       await readFile(join(memoryDir, PASS_STATE_FILE), 'utf8'),
-    ) as MemoryPassSummary;
+    ) as Partial<MemoryPassSummary> & { flagged?: number };
+    delete state.flagged;
+    return { decayed: 0, reflected: 0, ...state } as MemoryPassSummary;
   } catch {
     return undefined;
   }
@@ -269,6 +280,11 @@ export async function listMemories(
     ...(await readStagingBlocks(memoryDir)).flatMap((entry) => entry.blocks),
   ];
   const usage = await readUsage(memoryDir);
+  const helpfulCounts = new Map<string, number>();
+  for (const row of await readUsageRows(memoryDir)) {
+    if (row.helpful === true)
+      helpfulCounts.set(row.lessonId, (helpfulCounts.get(row.lessonId) ?? 0) + 1);
+  }
   const nowMs = options.clock.now().getTime();
   const toItem = async (block: LessonBlock, scope: 'project' | 'global'): Promise<MemoryItem> => {
     const used = usage.get(block.id);
@@ -283,6 +299,10 @@ export async function listMemories(
       ...(title === undefined ? {} : { sessionTitle: title }),
       useCount: used?.count ?? 0,
       ...(used === undefined ? {} : { lastUsedAt: formatKst(new Date(used.lastMs)) }),
+      helpfulCount: helpfulCounts.get(block.id) ?? 0,
+      ...(block.reflectedSessions === undefined
+        ? {}
+        : { reflectedSessionCount: block.reflectedSessions.length }),
       isUnsourced: block.isUnsourced,
       isStale: isForgetCandidate(block, used, nowMs),
     };
@@ -351,4 +371,104 @@ export async function deleteMemory(memoryDir: string, clock: Clock, id: string):
     }
     return false;
   });
+}
+
+export interface UsageRow {
+  readonly lessonId: string;
+  readonly sessionId: string;
+  readonly ts: string;
+  readonly ms: number;
+  /** 이 세션·메모리에서 마지막으로 고른 값이다. 고르지 않았거나 해제했으면 `null`이다. */
+  readonly helpful: boolean | null;
+}
+
+/** 회상 팩에 넣은 줄마다, 같은 세션·메모리의 마지막 피드백 줄이 고른 값을 붙여 돌려준다. 피드백 줄은 `injected`가 true가 아닌 줄이다. */
+export async function readUsageRows(memoryDir: string): Promise<UsageRow[]> {
+  const injections: Omit<UsageRow, 'helpful'>[] = [];
+  const choices = new Map<string, boolean | null>();
+  for (const line of (await readIfExists(join(memoryDir, 'usage.jsonl'))).split('\n')) {
+    try {
+      const row = JSON.parse(line) as Record<string, unknown>;
+      const { lessonId, sessionId, ts } = row;
+      if (typeof lessonId !== 'string' || typeof sessionId !== 'string' || typeof ts !== 'string')
+        continue;
+      const ms = Date.parse(ts);
+      if (Number.isNaN(ms)) continue;
+      if (row.injected === true) injections.push({ lessonId, sessionId, ts, ms });
+      else if (row.helpful === true || row.helpful === false || row.helpful === null)
+        choices.set(`${sessionId}\n${lessonId}`, row.helpful);
+    } catch {
+      continue;
+    }
+  }
+  return injections.map((row) => ({
+    ...row,
+    helpful: choices.get(`${row.sessionId}\n${row.lessonId}`) ?? null,
+  }));
+}
+
+const MAX_LESSON_CHARS = 240;
+const TIMESTAMP_LINE = /^\s*(?:\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}|\[?\d{2}:\d{2}:\d{2})/;
+
+function looksLikeRawLog(text: string): boolean {
+  const lines = text.split('\n');
+  const quoted = lines.filter((line) => line.trimStart().startsWith('>')).length;
+  const timestamped = lines.filter((line) => TIMESTAMP_LINE.test(line)).length;
+  return quoted >= 2 || timestamped >= 2;
+}
+
+export function normalizeText(text: string): string {
+  return text.toLowerCase().replace(/[\s\p{P}]+/gu, '');
+}
+
+/** Intake 판단(SPEC 3.2절)의 Refuse와 형식 반려다. 통과하면 `undefined`다. */
+export function checkIntake(
+  text: string,
+  source?: string,
+): { decision: 'refuse' | 'rejected'; reason: string } | undefined {
+  const secrets = findSecretPatterns(`${text}\n${source ?? ''}`);
+  if (secrets.length > 0) {
+    return { decision: 'refuse', reason: `비밀 패턴(${secrets.join(', ')})이 들어 있습니다.` };
+  }
+  if (/^#/m.test(text) || (source !== undefined && /[\r\n]|^#/.test(source))) {
+    return {
+      decision: 'rejected',
+      reason: '텍스트와 출처는 한 줄이어야 하고 #으로 시작할 수 없습니다.',
+    };
+  }
+  if (looksLikeRawLog(text)) {
+    return { decision: 'refuse', reason: '원시 로그나 대화 전문 형태입니다.' };
+  }
+  if (text.length > MAX_LESSON_CHARS || countSentences(text) > 1) {
+    return {
+      decision: 'rejected',
+      reason: `한 사실(${MAX_LESSON_CHARS}자 이내, 한 문장)이어야 합니다. 쪼개서 다시 냅니다.`,
+    };
+  }
+  return undefined;
+}
+
+/** 오늘 날짜의 새 항목 ID를 `count`개 돌려준다. LESSONS.md, archive/, 스테이징 파일에 있는 가장 큰 일련번호 다음부터 센다. */
+export async function reserveIds(
+  memoryDir: string,
+  clock: Clock,
+  count: number,
+): Promise<string[]> {
+  const compact = formatKst(clock.now()).slice(0, 10).replaceAll('-', '');
+  const archived = (await readdir(join(memoryDir, 'archive')).catch(() => [])).join('\n');
+  const staged = (await readStagingBlocks(memoryDir))
+    .flatMap((entry) => entry.blocks)
+    .map((block) => block.id)
+    .join('\n');
+  const taken = `${await readIfExists(join(memoryDir, 'LESSONS.md'))}\n${archived}\n${staged}`;
+  const max = Math.max(
+    0,
+    ...[...taken.matchAll(new RegExp(`L-${compact}-(\\d{3})`, 'g'))].map((match) =>
+      Number(match[1]),
+    ),
+  );
+  return Array.from(
+    { length: count },
+    (_, i) => `L-${compact}-${String(max + i + 1).padStart(3, '0')}`,
+  );
 }

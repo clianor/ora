@@ -17,6 +17,7 @@ import {
 } from './Chat.tsx';
 import { CostStopCard } from './CostStopCard.tsx';
 import { CrashedNotice } from './CrashedNotice.tsx';
+import { MemoryFeedback } from './MemoryFeedback.tsx';
 import { QuestionCard } from './QuestionCard.tsx';
 import { scrollIfRequested } from '../lib/notify.ts';
 import { ModelSwitchToast } from './ModelSwitchToast.tsx';
@@ -200,6 +201,10 @@ export function Workbench({ view, sameFolderRunningCount, draftKey }: WorkbenchP
                   remainingTodos={remainingTodos}
                 />
               )}
+              {isDone &&
+                view.events.some(
+                  (event) => event.type === 'recall' && event.payload.lessonIds.length > 0,
+                ) && <MemoryFeedback sessionId={sessionId} />}
             </ThreadView>
             <div className="flex flex-col items-center pb-3">
               {errorText && (

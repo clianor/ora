@@ -18,6 +18,8 @@ import {
   cancelBodySchema,
   createSessionBodySchema,
   createTerminalBodySchema,
+  memoryFeedbackBodySchema,
+  memoryRevertBodySchema,
   messageBodySchema,
   oraEventSchema,
   resumeSessionBodySchema,
@@ -1091,6 +1093,33 @@ export async function createHost(options: HostOptions): Promise<Host> {
       if (action === 'tidy') {
         if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
         reply(res, 200, await memoryApi.tidy());
+        return;
+      }
+      if (action === 'log' || action === 'usage') {
+        if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        reply(res, 200, action === 'log' ? await memoryApi.log() : await memoryApi.usage());
+        return;
+      }
+      if (action === 'revert') {
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const body = parseBody(memoryRevertBodySchema, await readJson(req));
+        reply(res, 200, await memoryApi.revert(body.line));
+        return;
+      }
+      if (action === 'feedback') {
+        if (method !== 'POST') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const body = parseBody(memoryFeedbackBodySchema, await readJson(req));
+        if (!(await memoryApi.recordFeedback(body))) {
+          throw new HttpError(404, '그 세션이 회상 팩에 넣은 메모리가 아닙니다.');
+        }
+        reply(res, 200, { ok: true });
+        return;
+      }
+      if (action === 'sessions') {
+        if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');
+        const sessionId = sessionIdSchema.safeParse(segments[3]);
+        if (!sessionId.success) throw new HttpError(404, '세션 ID 형식이 틀립니다.');
+        reply(res, 200, await memoryApi.sessionFeedback(sessionId.data));
         return;
       }
       if (method !== 'DELETE') throw new HttpError(405, '허용하지 않는 메서드입니다.');

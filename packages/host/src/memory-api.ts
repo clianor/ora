@@ -4,14 +4,30 @@ import { basename, join } from 'node:path';
 import { createRecorder, formatKst, parseTranscript } from '@ora/core';
 import type { Clock, ModelChainEntry, ModelPort, ModelUsage } from '@ora/core';
 import {
+  MemoryRevertRefused,
   deleteMemory,
   listMemories,
   mergeOrphanStaging,
+  readMemoryLog,
+  readPassState,
+  readSessionFeedback,
+  readUsageReport,
+  recordHelpful,
+  revertMemory,
   runFullPass,
+  runLightPass,
   shouldRunFullPass,
 } from '@ora/memory';
-import type { MemoryAsk } from '@ora/memory';
-import type { MemoryListResponse, MemoryPassSummary, SessionRecord } from '@ora/protocol';
+import type { MemoryAsk, ReflectionSession } from '@ora/memory';
+import type {
+  MemoryFeedbackBody,
+  MemoryListResponse,
+  MemoryLogResponse,
+  MemoryPassSummary,
+  MemorySessionFeedback,
+  MemoryUsageResponse,
+  SessionRecord,
+} from '@ora/protocol';
 import {
   createSessionStorage,
   listSessionRecords,
@@ -48,6 +64,18 @@ export interface MemoryApi {
   mergeStaging(): Promise<number>;
   /** 호스트의 주기 확인이다. 하루가 지났거나 새 메모리가 20개를 넘었고 세션이 없으면 전체 패스를 돌린다. */
   tick(): Promise<void>;
+  /** `maintenance-log.md`를 최신 줄이 먼저인 목록으로 돌려준다. */
+  log(): Promise<MemoryLogResponse>;
+  /** 최근 30일의 회상 팩 사용 요약과 메모리별 사용 세션이다. */
+  usage(): Promise<MemoryUsageResponse>;
+  /** 로그 줄의 변경을 되돌린다. 취소할 수 없으면 이유를 담은 `UsageError`로 거부한다. */
+  revert(line: number): Promise<{ line: number; operation: string }>;
+  /** 세션이 회상 팩에 넣은 메모리와 사용자가 고른 도움 여부다. */
+  sessionFeedback(sessionId: string): Promise<MemorySessionFeedback>;
+  /** 도움 여부를 `usage.jsonl`에 덧붙인다. 그 세션이 넣은 적 없는 메모리면 `false`다. */
+  recordFeedback(body: MemoryFeedbackBody): Promise<boolean>;
+  /** `ora memory maintain`이다. `full`이면 전체 패스(`tidy`), 아니면 모델 없는 가벼운 패스를 돈다. */
+  maintain(full: boolean): Promise<MemoryPassSummary>;
 }
 
 // ponytail: 프로세스가 죽었는지 알 수 없어서, 실행 중으로 남은 세션도 기록을 30분 동안 고치지 않았으면 주인 없는 것으로 본다. 일찍 합쳐도 메모리를 잃지는 않는다.
@@ -60,6 +88,7 @@ const ACTIVE_STATUSES = new Set<SessionRecord['status']>([
 const ORPHAN_AFTER_MS = 30 * 60_000;
 const systemClock: Clock = { now: () => new Date() };
 const RECENT_SESSION_LIMIT = 10;
+const REFLECTION_SESSION_LIMIT = 20;
 const MAX_TASK_CHARS = 200;
 const REPLY_MAX_TOKENS = 4000;
 
@@ -269,6 +298,40 @@ export function createMemoryApi(options: MemoryApiOptions): MemoryApi {
     return lines.join('\n');
   };
 
+  /** 마지막 전체 패스 뒤에 시작한 세션의 사용자 요청을 모은다. 가장 최근 세션 20개까지다. */
+  const describeReflectionSessions = async (
+    sessionsDir: string,
+    sinceMs: number,
+  ): Promise<ReflectionSession[]> => {
+    const records = (await listSessionRecords(sessionsDir))
+      .filter(
+        (record) => record.actor !== 'routine:memory' && Date.parse(record.createdAt) > sinceMs,
+      )
+      .slice(0, REFLECTION_SESSION_LIMIT);
+    const sessions: ReflectionSession[] = [];
+    for (const record of records) {
+      const text = await readTranscriptText(join(sessionsDir, record.id));
+      const requests = (text === undefined ? [] : parseTranscript(text).events).flatMap((event) =>
+        event.type === 'message' && event.payload.role === 'user'
+          ? [
+              event.payload.content
+                .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+                .join(' ')
+                .slice(0, MAX_TASK_CHARS),
+            ]
+          : [],
+      );
+      if (requests.length > 0) {
+        sessions.push({
+          id: record.id,
+          title: record.title,
+          text: requests.slice(0, 5).join(' / '),
+        });
+      }
+    }
+    return sessions;
+  };
+
   const runPass = async (): Promise<MemoryPassSummary> => {
     isTidying = true;
     try {
@@ -279,12 +342,16 @@ export function createMemoryApi(options: MemoryApiOptions): MemoryApi {
         clock: systemClock,
         ask,
         recentSessions: await describeRecentSessions(sessionsDir),
+        reflectionSessions: await describeReflectionSessions(
+          sessionsDir,
+          Date.parse((await readPassState(memoryDir))?.at ?? '1970-01-01T00:00:00Z'),
+        ),
         ...(config.projectId ? { projectId: config.projectId } : {}),
       });
       await close(
         summary.outcome,
         summary.outcome === 'ok'
-          ? `합침 ${summary.merged}, 고침 ${summary.rewritten}, 보관 ${summary.archived}`
+          ? `합침 ${summary.merged}, 고침 ${summary.rewritten}, 보관 ${summary.archived}, 오래 안 씀 ${summary.decayed}, 반성 ${summary.reflected}`
           : (summary.reason ?? '실패'),
       );
       return summary;
@@ -309,6 +376,46 @@ export function createMemoryApi(options: MemoryApiOptions): MemoryApi {
     },
     async remove(id) {
       return deleteMemory((await load()).memoryDir, systemClock, id);
+    },
+    async log() {
+      return { entries: await readMemoryLog((await load()).memoryDir) };
+    },
+    async usage() {
+      const { memoryDir, sessionsDir } = await load();
+      return readUsageReport(
+        memoryDir,
+        systemClock,
+        async (id) => (await readSessionRecordOrWarn(join(sessionsDir, id)))?.title,
+      );
+    },
+    async revert(line) {
+      try {
+        return await revertMemory((await load()).memoryDir, systemClock, line);
+      } catch (error) {
+        if (error instanceof MemoryRevertRefused) throw new UsageError(error.message);
+        throw error;
+      }
+    },
+    async sessionFeedback(sessionId) {
+      return readSessionFeedback((await load()).memoryDir, sessionId);
+    },
+    async recordFeedback(body) {
+      return recordHelpful((await load()).memoryDir, systemClock, body);
+    },
+    async maintain(full) {
+      if (full) return this.tidy();
+      await this.mergeStaging();
+      const merged = await runLightPass((await load()).memoryDir, systemClock);
+      return {
+        at: formatKst(new Date()),
+        outcome: 'ok',
+        merged,
+        rewritten: 0,
+        archived: 0,
+        decayed: 0,
+        reflected: 0,
+        skippedBatches: 0,
+      };
     },
     async mergeStaging() {
       const { memoryDir, sessionsDir } = await load();

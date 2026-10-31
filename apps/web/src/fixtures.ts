@@ -1897,7 +1897,7 @@ const fixtureSkills: SkillsData = {
 const memorySessionId = 's-20261030-mem0e1';
 const makeMemory = createEventFactory(memorySessionId);
 const memorySavedView: SessionView = finishView({
-  record: createRecord(memorySessionId, 'add 함수 버그 수정', 'running', 'math-demo'),
+  record: createRecord(memorySessionId, 'add 함수 버그 수정', 'completed', 'math-demo'),
   events: [
     sessionStart(makeMemory),
     ...createStageEvents(makeMemory, 'learn', stageOrder),
@@ -1909,6 +1909,12 @@ const memorySavedView: SessionView = finishView({
           text: 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.',
         },
       ],
+    }),
+    makeMemory('recall', '14:00', 'engine', {
+      lessonIds: ['L-20261030-001', 'L-20261027-003'],
+      skills: [],
+      candidateSkills: [],
+      tokenCount: 120,
     }),
     makeMemory('message', '14:06', 'model', {
       role: 'assistant',
@@ -1931,6 +1937,16 @@ const memorySavedView: SessionView = finishView({
   statusLine: ['스텝 9/50', '격리 harness'],
 });
 
+const fixtureMemoryNow = Date.now();
+const atKstClock = (daysAgo: number, hour: number, minute: number) =>
+  new Date(
+    new Date(fixtureMemoryNow - daysAgo * 86_400_000).setHours(hour, minute, 0, 0),
+  ).toISOString();
+const reflectedText = '사용자는 수정 뒤에 항상 node check.js 출력을 직접 보여 주기를 원한다.';
+const rewrittenText = '이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.';
+const mergedText = 'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.';
+const fullPassId = 'pass-20261031031200';
+
 const fixtureMemory: MemoryData = {
   status: 'ready',
   list: {
@@ -1940,30 +1956,33 @@ const fixtureMemory: MemoryData = {
         id: 'L-20261030-001',
         text: 'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.',
         scope: 'project',
-        savedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+        savedAt: new Date(fixtureMemoryNow - 2 * 60_000).toISOString(),
         sessionId: memorySessionId,
         sessionTitle: 'add 함수 버그 수정',
         useCount: 3,
+        helpfulCount: 2,
         isUnsourced: false,
         isStale: false,
       },
       {
         id: 'L-20261029-002',
-        text: '이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.',
+        text: rewrittenText,
         scope: 'project',
-        savedAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+        savedAt: new Date(fixtureMemoryNow - 26 * 3_600_000).toISOString(),
         sessionTitle: 'README 예제 출력 갱신',
         useCount: 0,
+        helpfulCount: 0,
         isUnsourced: true,
         isStale: false,
       },
       {
-        id: 'L-20261027-003',
-        text: 'README 예제는 실제 실행 출력과 대조한 뒤에 고친다.',
+        id: 'L-20261031-001',
+        text: reflectedText,
         scope: 'project',
-        savedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(),
-        sessionTitle: '문서 갱신',
-        useCount: 5,
+        savedAt: atKstClock(0, 3, 12),
+        reflectedSessionCount: 3,
+        useCount: 1,
+        helpfulCount: 1,
         isUnsourced: false,
         isStale: false,
       },
@@ -1973,9 +1992,10 @@ const fixtureMemory: MemoryData = {
         id: 'L-20261029-004',
         text: '사용자는 커밋 메시지를 한국어로 쓰기를 원한다.',
         scope: 'global',
-        savedAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+        savedAt: new Date(fixtureMemoryNow - 26 * 3_600_000).toISOString(),
         sessionTitle: 'ora 엔진 작업',
         useCount: 12,
+        helpfulCount: 7,
         isUnsourced: false,
         isStale: false,
       },
@@ -1983,9 +2003,10 @@ const fixtureMemory: MemoryData = {
         id: 'L-20260728-005',
         text: 'node 18에서는 fetch 실험 경고가 나오므로 출력 비교에서 뺀다.',
         scope: 'global',
-        savedAt: new Date(Date.now() - 94 * 86_400_000).toISOString(),
+        savedAt: new Date(fixtureMemoryNow - 94 * 86_400_000).toISOString(),
         sessionTitle: 'notes 작업',
         useCount: 0,
+        helpfulCount: 0,
         isUnsourced: false,
         isStale: true,
       },
@@ -1993,15 +2014,156 @@ const fixtureMemory: MemoryData = {
     deletedIds: [],
     archivedIds: [],
     lastPass: {
-      at: new Date(new Date().setHours(3, 12, 0, 0)).toISOString(),
+      at: atKstClock(0, 3, 12),
       outcome: 'ok',
-      merged: 2,
+      merged: 1,
       rewritten: 1,
-      archived: 1,
-      flagged: 1,
+      archived: 0,
+      decayed: 1,
+      reflected: 1,
       skippedBatches: 0,
     },
     isTidying: false,
+  },
+  log: {
+    entries: [
+      {
+        line: 6,
+        at: atKstClock(0, 9, 41),
+        operation: 'revert',
+        ids: ['L-20261029-002'],
+        text: rewrittenText,
+        reason: '대상 줄 3 · rewrite 취소',
+        passId: 'user',
+        isReverted: false,
+        revertsLine: 3,
+      },
+      {
+        line: 5,
+        at: atKstClock(0, 3, 12),
+        operation: 'decay',
+        ids: ['L-20260620-010'],
+        text: 'notes 저장소의 README 표는 손으로 맞춘다.',
+        reason: '90일 동안 한 번도 쓰지 않아 보관함으로 옮김',
+        passId: fullPassId,
+        isReverted: false,
+      },
+      {
+        line: 4,
+        at: atKstClock(0, 3, 12),
+        operation: 'reflect',
+        ids: ['L-20261031-001'],
+        text: reflectedText,
+        reason:
+          '세션 3개(s-20261028-aaaaaa, s-20261029-bbbbbb, s-20261030-cccccc)에서 반복: 같은 요청을 반복했습니다',
+        passId: fullPassId,
+        isReverted: false,
+      },
+      {
+        line: 3,
+        at: atKstClock(0, 3, 12),
+        operation: 'rewrite',
+        ids: ['L-20261029-002'],
+        text: rewrittenText,
+        reason:
+          '이전 문장: "이 저장소의 테스트는 pnpm check 한 번으로 전부 돌아간다." · 사유: 문장을 짧게 다듬었습니다',
+        passId: fullPassId,
+        isReverted: true,
+      },
+      {
+        line: 2,
+        at: atKstClock(0, 3, 12),
+        operation: 'merge',
+        ids: ['L-20261030-001', 'L-20261030-008', 'L-20261030-009'],
+        text: mergedText,
+        reason: '같은 사실 2개를 하나로 합쳤습니다',
+        passId: fullPassId,
+        isReverted: false,
+      },
+      {
+        line: 1,
+        at: atKstClock(1, 22, 5),
+        operation: 'archive',
+        ids: ['L-20261028-007'],
+        text: 'add 함수는 뺄셈을 한다.',
+        reason: '새 메모리와 모순: add는 두 수를 더한다',
+        passId: 'pass-s-20261030-mem0e1',
+        isReverted: false,
+      },
+    ],
+  },
+  usage: {
+    windowDays: 30,
+    injectedCount: 41,
+    helpfulCount: 17,
+    unhelpfulCount: 4,
+    unansweredCount: 20,
+    items: [
+      {
+        id: 'L-20261030-001',
+        text: mergedText,
+        useCount: 3,
+        helpfulCount: 2,
+        sessions: [
+          {
+            sessionId: memorySessionId,
+            sessionTitle: 'add 함수 버그 수정',
+            at: atKstClock(0, 9, 30),
+            helpful: true,
+          },
+          {
+            sessionId: 's-20261030-aaaaaa',
+            sessionTitle: '음수 입력 테스트 추가',
+            at: atKstClock(1, 15, 0),
+            helpful: true,
+          },
+          {
+            sessionId: 's-20261028-bbbbbb',
+            sessionTitle: 'README 예제 출력 갱신',
+            at: atKstClock(3, 11, 0),
+            helpful: null,
+          },
+        ],
+      },
+      {
+        id: 'L-20261029-004',
+        text: '사용자는 커밋 메시지를 한국어로 쓰기를 원한다.',
+        useCount: 12,
+        helpfulCount: 7,
+        sessions: [
+          {
+            sessionId: 's-20261030-cccccc',
+            sessionTitle: '엔진 슬라이스 2 커밋',
+            at: atKstClock(1, 10, 0),
+            helpful: true,
+          },
+          {
+            sessionId: 's-20261029-dddddd',
+            sessionTitle: 'fetch 어댑터 시간 제한',
+            at: atKstClock(2, 10, 0),
+            helpful: false,
+          },
+          {
+            sessionId: 's-20261027-eeeeee',
+            sessionTitle: '스킬 로더 고치기',
+            at: atKstClock(4, 10, 0),
+            helpful: null,
+          },
+        ],
+      },
+    ],
+  },
+  feedback: {
+    [memorySessionId]: {
+      items: [
+        { lessonId: 'L-20261030-001', text: mergedText, helpful: true },
+        {
+          lessonId: 'L-20261027-003',
+          text: 'README 예제는 실제 실행 출력과 대조한 뒤에 고친다.',
+          helpful: null,
+        },
+      ],
+    },
   },
 };
 
@@ -2086,6 +2248,11 @@ type StatefulActionName =
   | 'refreshMemory'
   | 'deleteMemory'
   | 'tidyMemory'
+  | 'refreshMemoryLog'
+  | 'refreshMemoryUsage'
+  | 'refreshSessionFeedback'
+  | 'revertMemory'
+  | 'setMemoryFeedback'
   | 'refreshMcpServers'
   | 'addMcpServer'
   | 'setMcpServerEnabled'
@@ -2352,12 +2519,15 @@ export function createFixtureStore(): OraStoreSource {
     return Promise.resolve();
   };
   let memory: MemoryData = fixtureMemory;
-  const changeMemory = (list: NonNullable<MemoryData['list']>) => {
-    memory = { status: 'ready', list };
+  const patchMemory = (patch: Partial<MemoryData>) => {
+    memory = { ...memory, status: 'ready', ...patch };
     snapshot = { ...snapshot, memory };
     listeners.forEach((listener) => {
       listener();
     });
+  };
+  const changeMemory = (list: NonNullable<MemoryData['list']>) => {
+    patchMemory({ list });
   };
   let snapshot: OraStore;
 
@@ -2540,8 +2710,55 @@ export function createFixtureStore(): OraStoreSource {
           merged: 0,
           rewritten: 0,
           archived: 0,
-          flagged: 0,
+          decayed: 0,
+          reflected: 0,
           skippedBatches: 0,
+        },
+      });
+      return Promise.resolve();
+    },
+    refreshMemoryLog: () => Promise.resolve(),
+    refreshMemoryUsage: () => Promise.resolve(),
+    refreshSessionFeedback: () => Promise.resolve(),
+    revertMemory: (line) => {
+      const target = memory.log?.entries.find((entry) => entry.line === line);
+      if (memory.log === undefined || target === undefined) return Promise.resolve();
+      if (target.isReverted)
+        return Promise.reject(new Error(`로그 ${String(line)}번 줄은 이미 취소했습니다.`));
+      const next = {
+        line: Math.max(...memory.log.entries.map((entry) => entry.line)) + 1,
+        at: new Date().toISOString(),
+        operation: 'revert',
+        ids: target.ids,
+        ...(target.text === undefined ? {} : { text: target.text }),
+        reason: `대상 줄 ${String(line)} · ${target.operation} 취소`,
+        passId: 'user',
+        isReverted: false,
+        revertsLine: line,
+      };
+      patchMemory({
+        log: {
+          entries: [
+            next,
+            ...memory.log.entries.map((entry) =>
+              entry.line === line ? { ...entry, isReverted: true } : entry,
+            ),
+          ],
+        },
+      });
+      return Promise.resolve();
+    },
+    setMemoryFeedback: (sessionId, lessonId, helpful) => {
+      const current = memory.feedback?.[sessionId];
+      if (current === undefined) return Promise.resolve();
+      patchMemory({
+        feedback: {
+          ...memory.feedback,
+          [sessionId]: {
+            items: current.items.map((item) =>
+              item.lessonId === lessonId ? { ...item, helpful } : item,
+            ),
+          },
         },
       });
       return Promise.resolve();

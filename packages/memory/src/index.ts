@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { findSecretPatterns, formatKst, scoreBm25 } from '@ora/core';
+import { formatKst, scoreBm25 } from '@ora/core';
 import type {
   Clock,
   ConflictJudge,
@@ -13,8 +13,9 @@ import type {
 } from '@ora/core';
 import {
   archiveBlock,
-  countSentences,
+  checkIntake,
   mergeStagingFile,
+  normalizeText,
   parseLessons,
   readIfExists,
   readStagingBlocks,
@@ -31,7 +32,10 @@ export {
   withMemoryLock,
 } from './store.ts';
 export { runFullPass, shouldRunFullPass } from './full-pass.ts';
-export type { FullPassOptions, MemoryAsk } from './full-pass.ts';
+export type { FullPassOptions, MemoryAsk, ReflectionSession } from './full-pass.ts';
+export { runLightPass } from './light-pass.ts';
+export { MemoryRevertRefused, readMemoryLog, revertMemory } from './revert.ts';
+export { readSessionFeedback, readUsageReport, recordHelpful } from './usage.ts';
 
 export interface FileMemoryOptions {
   readonly memoryDir: string;
@@ -39,7 +43,6 @@ export interface FileMemoryOptions {
   readonly clock: Clock;
 }
 
-const MAX_LESSON_CHARS = 240;
 // ponytail: 3.3절이 수치를 정하지 않아 정한 제안값이다. 점수는 BM25에 `RECENCY_WEIGHT × 0.5^(마지막 사용 후 일수 / 반감기)`를 더한다.
 const RECENCY_WEIGHT = 0.3;
 const RECENCY_HALF_LIFE_DAYS = 14;
@@ -66,19 +69,7 @@ function pickConflictCandidates(
     .map(({ id, text: body }) => ({ id, text: body }));
 }
 
-function normalizeText(text: string): string {
-  return text.toLowerCase().replace(/[\s\p{P}]+/gu, '');
-}
 const CHARS_PER_TOKEN = 4;
-const TIMESTAMP_LINE = /^\s*(?:\[?\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}|\[?\d{2}:\d{2}:\d{2})/;
-
-function looksLikeRawLog(text: string): boolean {
-  const lines = text.split('\n');
-  const quoted = lines.filter((line) => line.trimStart().startsWith('>')).length;
-  const timestamped = lines.filter((line) => TIMESTAMP_LINE.test(line)).length;
-  return quoted >= 2 || timestamped >= 2;
-}
-
 /**
  * 스테이징 파일(`staging/<세션 ID>.md`)에 쌓는 기억 저장소다 (SPEC 3.5절). 세션은 LESSONS.md에 직접 쓰지 않고, 세션이 끝날 때 `maintain`이 잠금을 잡고 LESSONS.md에 합친다.
  * 판정 순서는 Refuse, 형식 반려, Remember다. 출처가 없으면 `unsourced` 표시를 붙여 기록한다. 한 사실이 아닌 후보는 기록하지 않는다.
@@ -148,25 +139,8 @@ export function createFileMemory(options: FileMemoryOptions): MemoryPort {
     async propose(candidate: MemoryCandidate, sessionId: string): Promise<MemoryDecision> {
       const text = candidate.text.trim();
       const source = candidate.source?.trim();
-      const secrets = findSecretPatterns(`${text}\n${source ?? ''}`);
-      if (secrets.length > 0) {
-        return { decision: 'refuse', reason: `비밀 패턴(${secrets.join(', ')})이 들어 있습니다.` };
-      }
-      if (/^#/m.test(text) || (source !== undefined && /[\r\n]|^#/.test(source))) {
-        return {
-          decision: 'rejected',
-          reason: '텍스트와 출처는 한 줄이어야 하고 #으로 시작할 수 없습니다.',
-        };
-      }
-      if (looksLikeRawLog(text)) {
-        return { decision: 'refuse', reason: '원시 로그나 대화 전문 형태입니다.' };
-      }
-      if (text.length > MAX_LESSON_CHARS || countSentences(text) > 1) {
-        return {
-          decision: 'rejected',
-          reason: `한 사실(${MAX_LESSON_CHARS}자 이내, 한 문장)이어야 합니다. 쪼개서 다시 냅니다.`,
-        };
-      }
+      const rejection = checkIntake(text, source);
+      if (rejection !== undefined) return rejection;
       const isUnsourced = source === undefined || source === '';
       const { id } = await withMemoryLock(options.memoryDir, async () => {
         const nextLessonId = await nextId();
