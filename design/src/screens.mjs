@@ -2520,6 +2520,219 @@ function m3RewoundScreen() {
   });
 }
 
+/**
+ * 설정 › 메모리의 M3 판. 탭 세 개(메모리, 변경 기록, 사용 기록)를 두고, 고른 탭은 바탕색과 굵은 글자로 함께 보인다.
+ */
+const M3_MEMORY_DESC =
+  'Ora가 작업하면서 알게 된 사실과 선호입니다. 작업이 끝나면 알아서 저장하고, 모델이 하루 한 번 다듬습니다. 다듬은 내용은 변경 기록에서 취소할 수 있습니다.';
+const m3MemoryTabs = (c, active) =>
+  `<Frame w="fill" h="hug" flex="row" items="center" gap={4}>${[
+    ['brain', '메모리', '5'],
+    ['history', '변경 기록', '7'],
+    ['chart-no-axes-column', '사용 기록', ''],
+  ]
+    .map(([icon, label, count], i) => {
+      const on = i === active;
+      return `<Frame w="hug" h={32} flex="row" items="center" gap={6} px={12} rounded={8} ${on ? `bg="${c.hover}"` : ''}>${I(c, icon, on ? 'ink' : 'ink3', 15)}${T(c, 13, 18, on ? 600 : 500, on ? 'ink' : 'ink2', label)}${count ? T(c, 12, 16, 500, 'ink3', count, '', mono) : ''}</Frame>`;
+    })
+    .join('')}</Frame>`;
+const m3MemoryPage = (c, name, tab, body) =>
+  v3SettingsPage(c, name, '메모리', {
+    title: '메모리',
+    desc: M3_MEMORY_DESC,
+    body: `${m3MemoryTabs(c, tab)}\n${body}`,
+  });
+
+/** 메모리 탭. 반성으로 만든 메모리와 오래 안 쓴 메모리를 글자 표지로 보이고, 줄마다 쓴 횟수와 도움 됨 횟수를 둔다. */
+function m3MemoryListScreen() {
+  const c = palette('Slate');
+  const stat = (label, value) =>
+    `<Frame w={72} h="hug" flex="col" gap={2}>${T(c, 12, 16, 400, 'ink3', label)}${T(c, 12, 16, 500, 'ink2', value)}</Frame>`;
+  const item = ({ text, from, used, helped, tag = null, hover = false }) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={12} ${hover ? `bg="${c.hover}"` : ''}>
+<Frame w="fill" h="hug" flex="col" gap={5}>${T(c, 14, 21, 400, 'ink', text, 'w="fill" textAutoResize="height"')}<Frame w="hug" h="hug" flex="row" items="center" gap={8}>${tag ? v3Badge(c, tag[0], tag[1]) : ''}${T(c, 12, 16, 400, 'ink3', from)}</Frame></Frame>
+${stat('쓴 횟수', used)}${stat('도움 됨', helped)}
+${hover ? button(c, 'ghost', '지우기', { icon: 'trash-2' }) : '<Frame w={78} h={30} />'}
+</Frame>`;
+  const tidy = `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={14} py={12} rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'sparkles', 'ink2', 15)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, 'ink', '오늘 03:12에 모델이 메모리를 다듬었습니다')}${T(c, 12, 16, 400, 'ink3', '합침 1 · 문장 고침 1 · 반성 1 · 오래 안 씀 보관 1 · 다음은 내일, 또는 새 메모리 20개가 쌓이면')}</Frame>${button(c, 'secondary', '지금 다듬기')}</Frame>`;
+  return m3MemoryPage(
+    c,
+    '51 M3 Memory List · Slate',
+    0,
+    `${tidy}
+${v3Group(c, '이 프로젝트 · math-demo', '3개', [
+  item({
+    text: 'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.',
+    from: 'add 함수 버그 수정에서 · 2분 전',
+    used: '3회',
+    helped: '2회',
+  }),
+  item({
+    text: '이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.',
+    from: 'README 예제 출력 갱신에서 · 어제',
+    used: '0회',
+    helped: '—',
+    tag: ['출처 없음', 'warn'],
+    hover: true,
+  }),
+  item({
+    text: '사용자는 수정 뒤에 항상 node check.js 출력을 직접 보여 주기를 원한다.',
+    from: '세션 3개에서 · 오늘 03:12',
+    used: '1회',
+    helped: '1회',
+    tag: ['반성으로 만듦', 'ink2'],
+  }),
+])}
+${v3Group(c, '모든 프로젝트', '2개', [
+  item({
+    text: '사용자는 커밋 메시지를 한국어로 쓰기를 원한다.',
+    from: 'ora 엔진 작업에서 · 어제',
+    used: '12회',
+    helped: '7회',
+  }),
+  item({
+    text: 'node 18에서는 fetch 실험 경고가 나오므로 출력 비교에서 뺀다.',
+    from: 'notes 작업에서 · 94일 전 · 다음 다듬기에서 보관합니다',
+    used: '0회',
+    helped: '—',
+    tag: ['오래 안 씀', 'ink2'],
+  }),
+])}`,
+  );
+}
+
+/**
+ * 변경 기록 탭. maintenance-log.md를 패스 단위로 묶어 시간순으로 보인다. 줄마다 연산 표지, 대상 메모리, 사유를 두고,
+ * 마우스를 올린 줄에 "변경 취소"를 보인다. 취소한 줄은 단추 대신 "취소함" 표지를 달고, 취소 자체도 새 줄로 남는다.
+ */
+function m3MemoryLogScreen() {
+  const c = palette('Slate');
+  const row = ({ op, text, why, state = 'idle' }) => {
+    let right = '<Frame w={92} h={30} />';
+    if (state === 'hover') right = button(c, 'secondary', '변경 취소', { icon: 'undo-2' });
+    if (state === 'reverted')
+      right = `<Frame w={92} h={30} flex="row" items="center" justify="end">${v3Badge(c, '취소함', 'ink2')}</Frame>`;
+    return `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={11} ${state === 'hover' ? `bg="${c.hover}"` : ''}>
+<Frame w={84} h="hug" flex="row">${v3Badge(c, op, 'ink')}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={4}>${T(c, 13, 20, 400, state === 'reverted' ? 'ink3' : 'ink', text, 'w="fill" textAutoResize="height"')}${T(c, 12, 16, 400, 'ink3', why, 'w="fill" textAutoResize="height"')}</Frame>
+${right}
+</Frame>`;
+  };
+  return m3MemoryPage(
+    c,
+    '52 M3 Memory Log · Slate',
+    1,
+    `${v3Group(c, '오늘 09:41 · 사용자', '', [
+      row({
+        op: '변경 취소',
+        text: '문장 고침을 취소해 원래 문장으로 되돌렸습니다.',
+        why: '"이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다." · 03:12 패스의 고침',
+      }),
+    ])}
+${v3Group(c, '오늘 03:12 · 전체 패스', '4개 변경', [
+  row({
+    op: '합침',
+    text: 'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.',
+    why: '같은 사실 2개를 하나로 합쳤습니다 · 원래 메모리 2개는 보관함에 있습니다',
+    state: 'hover',
+  }),
+  row({
+    op: '고침',
+    text: '이 저장소의 테스트는 pnpm check 한 번으로 모두 돈다.',
+    why: '문장을 짧게 다듬었습니다',
+    state: 'reverted',
+  }),
+  row({
+    op: '반성',
+    text: '사용자는 수정 뒤에 항상 node check.js 출력을 직접 보여 주기를 원한다.',
+    why: '세션 3개에서 같은 요청을 반복했습니다',
+  }),
+  row({
+    op: '오래 안 씀',
+    text: 'notes 저장소의 README 표는 손으로 맞춘다.',
+    why: '94일 동안 한 번도 쓰지 않아 보관했습니다',
+  }),
+])}
+${v3Group(c, '어제 22:05 · 세션이 끝난 뒤 가벼운 패스', '1개 변경', [
+  row({
+    op: '보관',
+    text: 'add 함수는 뺄셈을 한다.',
+    why: '새 메모리와 모순됩니다: add는 두 수를 더한다',
+  }),
+])}`,
+  );
+}
+
+/** 사용 기록 탭. 메모리마다 회상 팩에 넣은 세션과 그 세션에서 사용자가 고른 도움 여부를 보인다. */
+function m3MemoryUsageScreen() {
+  const c = palette('Slate');
+  const HELP = {
+    yes: ['thumbs-up', '도움 됨', 'ok'],
+    no: ['thumbs-down', '도움 안 됨', 'del'],
+    none: ['minus', '답 없음', 'ink3'],
+  };
+  const row = (session, when, helpful) => {
+    const [icon, label, color] = HELP[helpful];
+    return `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={10}>${I(c, 'message-square', 'ink3', 14)}${T(c, 13, 18, 400, 'ink', session, 'grow={1}')}${T(c, 12, 16, 400, 'ink3', when)}<Frame w={96} h="hug" flex="row" items="center" gap={6}>${I(c, icon, color, 14)}${T(c, 12, 16, 500, color, label)}</Frame></Frame>`;
+  };
+  const summary = `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={14} py={12} rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'chart-no-axes-column', 'ink2', 15)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 500, 'ink', '최근 30일 동안 메모리를 회상 팩에 41번 넣었습니다')}${T(c, 12, 16, 400, 'ink3', '도움 됨 17번(41%) · 도움 안 됨 4번(10%) · 답 없음 20번')}</Frame></Frame>`;
+  return m3MemoryPage(
+    c,
+    '53 M3 Memory Usage · Slate',
+    2,
+    `${summary}
+${v3Group(
+  c,
+  'math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.',
+  '3회 · 도움 됨 2',
+  [
+    row('add 함수 버그 수정', '2분 전', 'yes'),
+    row('음수 입력 테스트 추가', '어제', 'yes'),
+    row('README 예제 출력 갱신', '3일 전', 'none'),
+  ],
+)}
+${v3Group(c, '사용자는 커밋 메시지를 한국어로 쓰기를 원한다.', '12회 · 도움 됨 7', [
+  row('엔진 슬라이스 2 커밋', '어제', 'yes'),
+  row('fetch 어댑터 시간 제한', '2일 전', 'no'),
+  row('스킬 로더 고치기', '4일 전', 'none'),
+])}`,
+  );
+}
+
+/**
+ * 세션이 끝난 뒤의 피드백 줄. 완료 보고 아래에 "이번 작업에 쓴 메모리" 줄을 접힌 채 두고, 펼치면 메모리마다
+ * "도움 됨"·"도움 안 됨"을 고른다. 고른 단추는 테두리와 확인 아이콘으로 함께 보인다. 고르지 않아도 된다.
+ */
+function m3MemoryFeedbackScreen() {
+  const c = palette('Slate');
+  const choice = (icon, label, on) =>
+    `<Frame w="hug" h={28} flex="row" items="center" gap={6} px={10} rounded={7} ${on ? `bg="${c.hover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside"` : ''}>${I(c, on ? 'check' : icon, on ? 'ink' : 'ink2', 14)}${T(c, 12, 16, on ? 600 : 500, on ? 'ink' : 'ink2', label)}</Frame>`;
+  const row = (text, picked) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={12} py={8}>${I(c, 'brain', 'ink3', 14)}${T(c, 13, 19, 400, 'ink', text, 'grow={1} maxLines={1} truncate')}${choice('thumbs-up', '도움 됨', picked === 'yes')}${choice('thumbs-down', '도움 안 됨', picked === 'no')}</Frame>`;
+  const card = `<Frame name="MemoryFeedback" w="fill" h="hug" flex="col" rounded={10} stroke="${c.line}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={36} flex="row" items="center" gap={8} px={12}>${I(c, 'chevron-down', 'ink2', 14)}${T(c, 13, 18, 500, 'ink2', '이번 작업에 쓴 메모리 2개')}${SP}${T(c, 12, 16, 400, 'ink3', '고르지 않아도 됩니다')}</Frame>
+${hr(c)}
+${row('math-demo의 검증 명령은 node check.js이고, 음수 입력도 확인한다.', 'yes')}
+${row('README 예제는 실제 실행 출력과 대조한 뒤에 고친다.', null)}
+</Frame>`;
+  const blocks = [
+    userBoxV2(c, 'math.js의 add가 뺄셈을 하고 있어요. 고치고 테스트까지 돌려 주세요.'),
+    `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'file-pen', verb: '수정', target: 'math.js', result: '+1 −1' })}${toolRowV2(c, { icon: 'square-terminal', verb: '검증', target: 'node check.js', result: 'exit 0', resultColor: 'ok' })}</Frame>`,
+    paraV2(c, `${icode(c, 'add')}를 덧셈으로 고쳤고, ${icode(c, 'node check.js')}가 통과했습니다.`),
+    card,
+  ];
+  return windowV3(c, '54 M3 Memory Feedback · Slate', {
+    side: sidebarV3(c, { groups: V3_GROUPS }),
+    main:
+      titleTabsV3(c, {
+        tabs: [{ title: 'add 함수 버그 수정', state: 'done' }],
+        active: 0,
+        right: v3Right(c),
+      }) + threadV2(c, blocks, { composer: composerV2(c) }),
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -2571,4 +2784,8 @@ export const SCREENS = [
   { file: 'm3-rewind-confirm-slate', jsx: m3RewindConfirmScreen },
   { file: 'm3-rewound-slate', jsx: m3RewoundScreen },
   { file: 'm3-live-ports-slate', jsx: m3PortsScreen },
+  { file: 'm3-memory-list-slate', jsx: m3MemoryListScreen },
+  { file: 'm3-memory-log-slate', jsx: m3MemoryLogScreen },
+  { file: 'm3-memory-usage-slate', jsx: m3MemoryUsageScreen },
+  { file: 'm3-memory-feedback-slate', jsx: m3MemoryFeedbackScreen },
 ];
