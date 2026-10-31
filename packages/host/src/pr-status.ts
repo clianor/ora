@@ -15,11 +15,15 @@ import type {
 } from '@ora/protocol';
 import { UsageError } from './config.ts';
 
-/** 같은 저장소의 PR 수가 이 값을 넘으면 오래된 PR은 목록에서 빠진다. */
-const PR_LIMIT = 500;
-const PR_JSON_FIELDS =
-  'number,url,state,isDraft,headRefName,headRefOid,statusCheckRollup,mergedAt,closedAt,createdAt,isCrossRepository';
-/** 마지막으로 읽은 뒤 이 시간이 지나야 60초 간격 조회가 GitHub 변경 여부를 묻는다. */
+/**
+ * 한 요청에 담는 브랜치 수다. 별칭 50개는 노드 수가 브랜치당 PR 5개까지 합쳐 250개라 GitHub 한도(500,000)와
+ * 요청 한도 비용(1) 안에 들고, 명령행 인자 길이도 몇 KB에 머문다.
+ */
+const BRANCHES_PER_REQUEST = 50;
+const PR_PER_BRANCH = 5;
+const PR_FIELDS =
+  'number url state isDraft headRefOid mergedAt closedAt createdAt isCrossRepository commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }';
+/** 마지막으로 읽은 뒤 이 시간이 지나야 60초 간격 조회가 GitHub에 다시 묻는다. */
 const POLL_MS = 55_000;
 const FOCUS_MS = 5_000;
 const WATCH_DEBOUNCE_MS = 300;
@@ -44,20 +48,18 @@ interface GhPr {
   url: string;
   state: 'OPEN' | 'CLOSED' | 'MERGED';
   isDraft: boolean;
-  headRefName: string;
   headRefOid: string;
-  statusCheckRollup?: { status?: string; conclusion?: string; state?: string }[] | null;
   mergedAt?: string | null;
   closedAt?: string | null;
   createdAt: string;
-  isCrossRepository?: boolean;
+  isCrossRepository: boolean;
+  commits: { nodes: { commit: { statusCheckRollup: { state: string } | null } }[] };
 }
 
 interface RepoCache {
   version: number;
   fetchedAt: number;
   isDirty: boolean;
-  etag: string | undefined;
   status: PrStatusResponse;
   watchers: FSWatcher[];
 }
@@ -145,32 +147,11 @@ function parseGithubRemote(url: string): { owner: string; name: string } | undef
     : { owner: match[1], name: match[2] };
 }
 
-function summarizeChecks(rollup: GhPr['statusCheckRollup']): PrChecks {
-  if (!rollup || rollup.length === 0) return 'none';
-  let isRunning = false;
-  for (const item of rollup) {
-    const result =
-      [item.conclusion, item.state]
-        .filter((value): value is string => value !== undefined && value !== '')
-        .map((value) => value.toUpperCase())
-        .at(0) ?? '';
-    const progress = (item.status ?? '').toUpperCase();
-    if (
-      ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'].includes(
-        result,
-      )
-    ) {
-      return 'fail';
-    }
-    if (
-      (progress !== '' && progress !== 'COMPLETED') ||
-      ['PENDING', 'EXPECTED'].includes(result) ||
-      (result === '' && progress === '')
-    ) {
-      isRunning = true;
-    }
-  }
-  return isRunning ? 'running' : 'pass';
+function summarizeChecks(state: string | undefined): PrChecks {
+  if (state === 'SUCCESS') return 'pass';
+  if (state === 'FAILURE' || state === 'ERROR') return 'fail';
+  if (state === 'PENDING' || state === 'EXPECTED') return 'running';
+  return 'none';
 }
 
 function toPrInfo(pr: GhPr): PrInfo {
@@ -179,7 +160,7 @@ function toPrInfo(pr: GhPr): PrInfo {
     number: pr.number,
     url: pr.url,
     state,
-    checks: summarizeChecks(pr.statusCheckRollup),
+    checks: summarizeChecks(pr.commits.nodes[0]?.commit.statusCheckRollup?.state),
     headRefOid: pr.headRefOid,
     createdAt: pr.createdAt,
     ...(pr.mergedAt ? { mergedAt: pr.mergedAt } : {}),
@@ -187,11 +168,9 @@ function toPrInfo(pr: GhPr): PrInfo {
   };
 }
 
-/** 같은 저장소에서 같은 브랜치를 head로 한 PR 중 가장 최근에 만든 하나다. */
-function pickLatest(prs: GhPr[], branch: string): GhPr | undefined {
-  return prs
-    .filter((pr) => pr.headRefName === branch && pr.isCrossRepository !== true)
-    .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+/** 같은 저장소에서 온 PR 중 가장 최근에 만든 하나를 고른다. 쿼리가 만든 날짜 내림차순으로 돌려준다. */
+function pickLatest(prs: GhPr[]): GhPr | undefined {
+  return prs.find((pr) => !pr.isCrossRepository);
 }
 
 function explainGhFailure(result: RunResult): string {
@@ -201,6 +180,65 @@ function explainGhFailure(result: RunResult): string {
     return 'gh에 로그인하지 않아 PR 상태를 읽지 못했습니다. gh auth login으로 로그인합니다.';
   }
   return `gh가 실패해 PR 상태를 읽지 못했습니다: ${text.split('\n')[0] ?? ''}`.trim();
+}
+
+/**
+ * 브랜치마다 별칭을 하나 두고, 브랜치 이름은 GraphQL 변수로 넘긴다.
+ * 포크의 PR이 같은 이름의 브랜치로 먼저 나오면 같은 저장소 PR을 가리므로 `first`는 1보다 크게 둔다.
+ */
+function buildPrQuery(count: number): string {
+  const variables = Array.from({ length: count }, (_, index) => `$b${String(index)}: String!`).join(
+    ', ',
+  );
+  const aliases = Array.from(
+    { length: count },
+    (_, index) =>
+      `a${String(index)}: pullRequests(headRefName: $b${String(index)}, first: ${String(PR_PER_BRANCH)}, orderBy: {field: CREATED_AT, direction: DESC}, states: [OPEN, CLOSED, MERGED]) { nodes { ${PR_FIELDS} } }`,
+  ).join(' ');
+  return `query($owner: String!, $name: String!, ${variables}) { repository(owner: $owner, name: $name) { ${aliases} } }`;
+}
+
+interface PrQueryResponse {
+  data?: { repository?: Record<string, { nodes: GhPr[] } | undefined> | null };
+}
+
+async function fetchPrsByBranch(
+  env: NodeJS.ProcessEnv,
+  repo: string,
+  remote: { owner: string; name: string },
+  branches: string[],
+): Promise<Map<string, GhPr[]>> {
+  const prs = new Map<string, GhPr[]>();
+  for (let start = 0; start < branches.length; start += BRANCHES_PER_REQUEST) {
+    const chunk = branches.slice(start, start + BRANCHES_PER_REQUEST);
+    const args = [
+      'api',
+      'graphql',
+      '-f',
+      `query=${buildPrQuery(chunk.length)}`,
+      '-f',
+      `owner=${remote.owner}`,
+      '-f',
+      `name=${remote.name}`,
+      ...chunk.flatMap((branch, index) => ['-f', `b${String(index)}=${branch}`]),
+    ];
+    const result = await run('gh', args, repo, env);
+    if (result.code !== 0) throw new Error(explainGhFailure(result));
+    let parsed: PrQueryResponse;
+    try {
+      parsed = JSON.parse(result.stdout) as PrQueryResponse;
+    } catch {
+      throw new Error('gh의 응답을 읽지 못해 PR 상태를 읽지 못했습니다.');
+    }
+    const repository = parsed.data?.repository;
+    if (repository === undefined || repository === null) {
+      throw new Error('GitHub 저장소를 찾지 못해 PR 상태를 읽지 못했습니다.');
+    }
+    for (const [index, branch] of chunk.entries()) {
+      prs.set(branch, repository[`a${String(index)}`]?.nodes ?? []);
+    }
+  }
+  return prs;
 }
 
 export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
@@ -239,12 +277,12 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
   const buildStatus = async (
     repo: string,
     version: number,
-    prs: GhPr[] | undefined,
+    worktrees: GitWorktree[],
+    defaultBranch: string | undefined,
+    prs: Map<string, GhPr[]> | undefined,
     unavailable: string | undefined,
     remote: { owner: string; name: string } | undefined,
   ): Promise<PrStatusResponse> => {
-    const worktrees = await listGitWorktrees(env, repo);
-    const defaultBranch = await readDefaultBranch(env, repo);
     const entries: WorktreePrEntry[] = [];
     for (const [index, item] of worktrees.entries()) {
       const isDefault = item.branch !== undefined && item.branch === defaultBranch;
@@ -266,7 +304,7 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
           entry.sync = { behind, ahead };
         }
       } else if (item.branch !== undefined && prs !== undefined) {
-        const latest = pickLatest(prs, item.branch);
+        const latest = pickLatest(prs.get(item.branch) ?? []);
         if (latest !== undefined) entry.pr = toPrInfo(latest);
         else if (remote !== undefined && defaultBranch !== undefined) {
           entry.createUrl = `https://github.com/${remote.owner}/${remote.name}/compare/${defaultBranch}...${item.branch}?expand=1`;
@@ -277,19 +315,20 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
     return { repo, version, ...(unavailable ? { unavailable } : {}), worktrees: entries };
   };
 
-  /** 열린 PR 전체를 `gh` 호출 한 번으로 읽는다. */
+  /** 로컬 워크트리 브랜치의 PR을 저장소마다 GraphQL 요청 한 번(청크 단위)으로 읽는다. */
   const fetchStatus = async (repo: string, cache: RepoCache | undefined): Promise<RepoCache> => {
     const next: RepoCache = cache ?? {
       version: 0,
       fetchedAt: 0,
       isDirty: false,
-      etag: undefined,
       status: { repo, version: 0, worktrees: [] },
       watchers: [],
     };
     const originUrl = await gitOrUndefined(env, repo, ['remote', 'get-url', 'origin']);
     const remote = originUrl === undefined ? undefined : parseGithubRemote(originUrl);
-    let prs: GhPr[] | undefined;
+    const worktrees = await listGitWorktrees(env, repo);
+    const defaultBranch = await readDefaultBranch(env, repo);
+    let prs: Map<string, GhPr[]> | undefined;
     let unavailable: string | undefined;
     if (remote === undefined) {
       unavailable =
@@ -297,53 +336,34 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
           ? '원격(origin)이 없어 PR 상태를 읽지 못했습니다.'
           : '원격이 GitHub가 아니라 PR 상태를 읽지 못했습니다.';
     } else {
-      const result = await run(
-        'gh',
-        ['pr', 'list', '--state', 'all', '--json', PR_JSON_FIELDS, '--limit', String(PR_LIMIT)],
-        repo,
-        env,
-      );
-      if (result.code !== 0) unavailable = explainGhFailure(result);
-      else {
-        try {
-          prs = JSON.parse(result.stdout) as GhPr[];
-        } catch {
-          unavailable = 'gh의 응답을 읽지 못해 PR 상태를 읽지 못했습니다.';
-        }
+      const branches = [
+        ...new Set(
+          worktrees
+            .map((item) => item.branch)
+            .filter((branch): branch is string => branch !== undefined && branch !== defaultBranch),
+        ),
+      ];
+      try {
+        prs = await fetchPrsByBranch(env, repo, remote, branches);
+      } catch (error) {
+        unavailable = error instanceof Error ? error.message : String(error);
       }
     }
     next.version += 1;
     next.fetchedAt = Date.now();
     next.isDirty = false;
-    next.status = await buildStatus(repo, next.version, prs, unavailable, remote);
-    if (remote !== undefined && unavailable === undefined) {
-      next.etag = await probeEtag(repo, remote, undefined).then((probe) => probe.etag);
-    } else next.etag = undefined;
+    next.status = await buildStatus(
+      repo,
+      next.version,
+      worktrees,
+      defaultBranch,
+      prs,
+      unavailable,
+      remote,
+    );
     caches.set(repo, next);
     await watchRefs(repo, next);
     return next;
-  };
-
-  /**
-   * 조건부 요청으로 PR 목록이 바뀌었는지 묻는다. 304면 GitHub 사용 한도를 쓰지 않는다.
-   * `gh pr list`는 ETag를 보낼 수 없어, 변경 여부만 `gh api -i`로 묻고 바뀌었을 때 `gh pr list`를 한 번 부른다.
-   */
-  const probeEtag = async (
-    repo: string,
-    remote: { owner: string; name: string },
-    etag: string | undefined,
-  ): Promise<{ isChanged: boolean; etag: string | undefined }> => {
-    const args = [
-      'api',
-      '-i',
-      `repos/${remote.owner}/${remote.name}/pulls?state=all&per_page=100`,
-      ...(etag === undefined ? [] : ['-H', `If-None-Match: ${etag}`]),
-    ];
-    const result = await run('gh', args, repo, env);
-    const head = result.stdout.split('\r\n\r\n')[0] ?? result.stdout.split('\n\n')[0] ?? '';
-    if (/^HTTP\/\S+ 304/.test(head)) return { isChanged: false, etag };
-    const found = /^etag:\s*(.+)$/im.exec(head)?.[1]?.trim();
-    return { isChanged: true, etag: found };
   };
 
   const get = async (folder: string, refresh: PrStatusRefresh): Promise<PrStatusResponse> => {
@@ -357,24 +377,8 @@ export function createPrStatusApi(options: PrStatusApiOptions): PrStatusApi {
       if (cache === undefined || refresh === 'force' || cache.isDirty) {
         return (await fetchStatus(repo, cache)).status;
       }
-      const age = Date.now() - cache.fetchedAt;
       const limit = refresh === 'focus' ? FOCUS_MS : POLL_MS;
-      if (refresh === 'read' && age < POLL_MS) return cache.status;
-      if (age < limit) return cache.status;
-      const originUrl = await gitOrUndefined(env, repo, ['remote', 'get-url', 'origin']);
-      const remote = originUrl === undefined ? undefined : parseGithubRemote(originUrl);
-      if (
-        remote === undefined ||
-        cache.status.unavailable !== undefined ||
-        cache.etag === undefined
-      ) {
-        return (await fetchStatus(repo, cache)).status;
-      }
-      const probe = await probeEtag(repo, remote, cache.etag);
-      if (!probe.isChanged) {
-        cache.fetchedAt = Date.now();
-        return cache.status;
-      }
+      if (Date.now() - cache.fetchedAt < limit) return cache.status;
       return (await fetchStatus(repo, cache)).status;
     })().finally(() => inflight.delete(repo));
     inflight.set(repo, task);

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from 'node:fs';
@@ -14,7 +15,7 @@ import {
   cleanupResultSchema,
   prStatusResponseSchema,
 } from '@ora/protocol';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import { startLocalServer } from './server.ts';
 import type { LocalServer } from './server.ts';
 
@@ -37,6 +38,8 @@ interface FakePr {
   oid: string;
   createdAt: string;
   isDraft?: boolean;
+  isFork?: boolean;
+  checks?: 'SUCCESS' | 'FAILURE' | 'PENDING';
 }
 
 async function boot(options: { hasGh: boolean }) {
@@ -57,17 +60,31 @@ async function boot(options: { hasGh: boolean }) {
     writeFileSync(join(bin, 'calls.log'), '');
     writeFileSync(
       join(bin, 'gh'),
-      `#!/bin/sh
-D="$(dirname "$0")"
-echo "$1" >> "$D/calls.log"
-if [ "$1" = api ]; then
-  case "$*" in
-    *If-None-Match*) printf 'HTTP/2.0 304 Not Modified\\r\\n\\r\\n'; exit 1;;
-    *) printf 'HTTP/2.0 200 OK\\r\\nEtag: "v1"\\r\\n\\r\\n[]';;
-  esac
-  exit 0
-fi
-cat "$D/prs.json"
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const dir = __dirname;
+const args = process.argv.slice(2);
+fs.appendFileSync(path.join(dir, 'calls.log'), args[0] + '\\n');
+const fields = {};
+for (let i = 0; i < args.length; i += 1) {
+  if (args[i] === '-f') {
+    const text = args[i + 1];
+    const at = text.indexOf('=');
+    fields[text.slice(0, at)] = text.slice(at + 1);
+  }
+}
+fs.writeFileSync(path.join(dir, 'last-query.json'), JSON.stringify(fields));
+const prs = JSON.parse(fs.readFileSync(path.join(dir, 'prs.json'), 'utf8'));
+const repository = {};
+for (let i = 0; fields['b' + i] !== undefined; i += 1) {
+  const nodes = prs
+    .filter((pr) => pr.headRefName === fields['b' + i])
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 5);
+  repository['a' + i] = { nodes };
+}
+process.stdout.write(JSON.stringify({ data: { repository } }));
 `,
     );
     chmodSync(join(bin, 'gh'), 0o755);
@@ -107,11 +124,13 @@ cat "$D/prs.json"
           isDraft: pr.isDraft ?? false,
           headRefName: `ora/${pr.branch}`,
           headRefOid: pr.oid,
-          statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }],
           mergedAt: pr.state === 'MERGED' ? '2026-10-30T00:00:00Z' : null,
           closedAt: pr.state === 'CLOSED' ? '2026-10-30T00:00:00Z' : null,
           createdAt: pr.createdAt,
-          isCrossRepository: false,
+          isCrossRepository: pr.isFork ?? false,
+          commits: {
+            nodes: [{ commit: { statusCheckRollup: { state: pr.checks ?? 'SUCCESS' } } }],
+          },
         })),
       ),
     );
@@ -180,7 +199,7 @@ test('삭제 창은 마지막 PR 상태로 묶음을 나누고 막는 조건과 
   });
   expect(status.worktrees.find((item) => item.isMain)?.sync).toEqual({ behind: 0, ahead: 0 });
   expect(
-    execFileSync('grep', ['-c', '^pr$', join(bin, 'calls.log')], { encoding: 'utf8' }).trim(),
+    execFileSync('grep', ['-c', '^api$', join(bin, 'calls.log')], { encoding: 'utf8' }).trim(),
   ).toBe('1');
 
   const remove = async (...targets: string[]) =>
@@ -212,7 +231,8 @@ test('삭제 창은 마지막 PR 상태로 묶음을 나누고 막는 조건과 
 });
 
 test('gh가 없으면 PR 상태 없이 이유 한 줄을 알리고 삭제 창은 열리지 않는다', async () => {
-  const { repo, call } = await boot({ hasGh: false });
+  const { repo, call, create } = await boot({ hasGh: false });
+  await create('needs-pr');
   const status = prStatusResponseSchema.parse(
     await (await call(`/api/pr-status?repo=${encodeURIComponent(repo)}`)).json(),
   );
@@ -220,6 +240,56 @@ test('gh가 없으면 PR 상태 없이 이유 한 줄을 알리고 삭제 창은
   expect(status.worktrees.every((item) => item.pr === undefined)).toBe(true);
   const cleanup = await call(`/api/worktrees/cleanup?repo=${encodeURIComponent(repo)}`);
   expect(cleanup.status).toBeGreaterThanOrEqual(400);
+});
+
+test('목록 크기와 상관없이 오래된 PR을 찾고, 포크 PR은 제외하며, 검사 결과만 바뀌어도 다음 60초 조회에 반영한다', async () => {
+  const { repo, bin, call, create, writePrs } = await boot({ hasGh: true });
+  const path = await create('stale');
+  const oid = git(path, 'rev-parse', 'HEAD');
+  const filler: FakePr[] = Array.from({ length: 600 }, (_, index) => ({
+    number: 1000 + index,
+    state: 'MERGED',
+    branch: `other-${String(index)}`,
+    oid,
+    createdAt: '2026-10-25T00:00:00Z',
+  }));
+  const mine = (checks: FakePr['checks']): FakePr[] => [
+    { number: 3, state: 'OPEN', branch: 'stale', oid, createdAt: '2024-01-01T00:00:00Z', checks },
+    {
+      number: 4,
+      state: 'OPEN',
+      branch: 'stale',
+      oid,
+      createdAt: '2026-10-29T00:00:00Z',
+      isFork: true,
+    },
+    ...filler,
+  ];
+  const read = async (refresh: string) =>
+    prStatusResponseSchema
+      .parse(
+        await (
+          await call(`/api/pr-status?repo=${encodeURIComponent(repo)}&refresh=${refresh}`)
+        ).json(),
+      )
+      .worktrees.find((item) => item.path === path)?.pr;
+
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-31T00:00:00Z') });
+  try {
+    writePrs(mine('PENDING'));
+    expect(await read('force')).toMatchObject({ number: 3, checks: 'running' });
+    expect(JSON.parse(readFileSync(join(bin, 'last-query.json'), 'utf8'))).toMatchObject({
+      owner: 'o',
+      name: 'r',
+      b0: expect.any(String) as string,
+    });
+    writePrs(mine('FAILURE'));
+    expect(await read('read')).toMatchObject({ number: 3, checks: 'running' });
+    vi.setSystemTime(new Date('2026-10-31T00:01:00Z'));
+    expect(await read('read')).toMatchObject({ number: 3, checks: 'fail' });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('입력을 기다리는 셸은 삭제를 막지 않고, 명령이 도는 터미널은 막으며, 삭제하면 남은 터미널을 닫고 탭 기록을 지운다', async () => {
