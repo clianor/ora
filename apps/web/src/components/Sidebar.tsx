@@ -277,7 +277,7 @@ function RepoGroup({
             className="flex size-6 items-center justify-center rounded-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
           >
             <Plus aria-hidden className="size-3.5" />
-            <span className="sr-only">{repo.name}에 새 worktree 만들기</span>
+            <span className="sr-only">{repo.name}에 새 워크트리 만들기</span>
           </button>
         )}
       </div>

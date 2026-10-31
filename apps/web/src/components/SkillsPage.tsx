@@ -95,7 +95,7 @@ function ProjectSkills({
 }) {
   if (cwd === undefined) {
     return (
-      <p className="text-[13px] leading-5 text-foreground-muted">worktree를 고르면 보입니다.</p>
+      <p className="text-[13px] leading-5 text-foreground-muted">워크트리를 고르면 보입니다.</p>
     );
   }
   if (skills.length === 0) {

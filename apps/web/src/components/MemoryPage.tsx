@@ -196,7 +196,7 @@ export function MemoryPage({ cwd }: { cwd: string | undefined }) {
             items={list.project}
             empty={
               cwd === undefined
-                ? 'worktree를 고르면 보입니다.'
+                ? '워크트리를 고르면 보입니다.'
                 : '이 프로젝트에 저장한 메모리가 없습니다.'
             }
             now={now}

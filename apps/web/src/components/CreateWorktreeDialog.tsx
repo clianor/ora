@@ -229,7 +229,7 @@ export function CreateWorktreeDialog({ repo }: { repo: string }) {
         <div className="flex items-center gap-2">
           <GitBranchPlus aria-hidden className="size-[18px] text-foreground" />
           <h2 id={titleId} className="text-[17px] leading-6 font-semibold text-foreground">
-            새 worktree
+            새 워크트리
           </h2>
           <span className="ml-auto truncate text-xs leading-4 text-foreground-subtle">
             {repo.split('/').at(-1)}

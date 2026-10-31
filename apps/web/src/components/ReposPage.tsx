@@ -50,7 +50,7 @@ function ReposForm({ initial }: { initial: Repo[] }) {
           })
           .then(() => {
             setMessage({
-              text: '저장했습니다. 다음에 만드는 worktree부터 적용합니다.',
+              text: '저장했습니다. 다음에 만드는 워크트리부터 적용합니다.',
               isError: false,
             });
           })
@@ -79,7 +79,7 @@ function ReposForm({ initial }: { initial: Repo[] }) {
                   {repo.path}
                 </span>
                 <span className="text-xs leading-4 font-normal text-foreground-subtle">
-                  worktree {repo.worktreeCount}개
+                  워크트리 {repo.worktreeCount}개
                 </span>
               </h3>
               <div className="flex gap-3">
@@ -178,7 +178,7 @@ function ReposForm({ initial }: { initial: Repo[] }) {
               </div>
               <div className="flex items-center gap-3">
                 <p className="w-[90px] shrink-0 text-[13px] leading-[18px] font-medium text-foreground-muted">
-                  worktree 폴더
+                  워크트리 폴더
                 </p>
                 <p className="min-w-0 flex-1 truncate font-mono text-xs leading-4 text-foreground-subtle">
                   {repo.folder}/
@@ -208,7 +208,7 @@ export function ReposPage() {
   return (
     <PageShell
       title="저장소"
-      description='새 worktree를 만들 때 쓰는 설정입니다. 초기 명령은 만든 뒤 "초기 명령" 탭에서 위에서부터 차례로 돌고, 하나가 실패하면 멈춥니다.'
+      description='새 워크트리를 만들 때 쓰는 설정입니다. 초기 명령은 만든 뒤 "초기 명령" 탭에서 위에서부터 차례로 돌고, 하나가 실패하면 멈춥니다.'
     >
       <LoadedPage
         data={engineSettings.repos}

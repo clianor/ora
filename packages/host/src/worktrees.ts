@@ -114,7 +114,7 @@ export async function createWorktreeApi(options: WorktreeApiOptions): Promise<Wo
   ): Promise<WorktreeRecord> =>
     mutate((file) => {
       const record = file.worktrees.find((item) => item.id === id);
-      if (record === undefined) throw new UsageError(`worktree를 찾을 수 없습니다: ${id}`);
+      if (record === undefined) throw new UsageError(`워크트리를 찾을 수 없습니다: ${id}`);
       patch(record);
       record.updatedAt = new Date().toISOString();
       return structuredClone(record);
@@ -299,7 +299,7 @@ export async function createWorktreeApi(options: WorktreeApiOptions): Promise<Wo
       };
       await mutate((file) => {
         if (file.worktrees.some((item) => item.repo === info.root && item.name === body.name)) {
-          throw new UsageError(`같은 이름의 worktree가 이미 있습니다: ${body.name}`);
+          throw new UsageError(`같은 이름의 워크트리가 이미 있습니다: ${body.name}`);
         }
         file.worktrees.push(record);
       });
@@ -321,9 +321,9 @@ export async function createWorktreeApi(options: WorktreeApiOptions): Promise<Wo
     },
     async rerun(id) {
       const record = (await readWorktreesFile(oraHome)).worktrees.find((item) => item.id === id);
-      if (record === undefined) throw new UsageError(`worktree를 찾을 수 없습니다: ${id}`);
+      if (record === undefined) throw new UsageError(`워크트리를 찾을 수 없습니다: ${id}`);
       if (record.status !== 'setup-failed') {
-        throw new UsageError('초기 명령이 실패한 worktree만 다시 실행합니다.');
+        throw new UsageError('초기 명령이 실패한 워크트리만 다시 실행합니다.');
       }
       const from = record.commands.findIndex((command) => command.status === 'failed');
       if (from < 0) throw new UsageError('다시 실행할 명령이 없습니다.');

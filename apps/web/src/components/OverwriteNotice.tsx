@@ -14,7 +14,7 @@ function OpenInNewWorktree({ repo }: { repo: string }) {
         setCreateWorktree(repo);
       }}
     >
-      <GitBranchPlus aria-hidden className="size-3.5" />새 worktree에서 열기
+      <GitBranchPlus aria-hidden className="size-3.5" />새 워크트리에서 열기
     </Button>
   );
 }

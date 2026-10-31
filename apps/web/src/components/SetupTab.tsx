@@ -89,7 +89,7 @@ function Banner({ record, onNewSession }: { record: WorktreeRecord; onNewSession
             {record.failure === '서버가 멈춰 끝까지 돌지 못함'
               ? '서버가 멈춰 끝까지 돌지 못했습니다. '
               : ''}
-            worktree는 만들어졌습니다. 원인을 고친 뒤 다시 실행하거나, 그대로 새 탭에서 세션을 열 수
+            워크트리는 만들어졌습니다. 원인을 고친 뒤 다시 실행하거나, 그대로 새 탭에서 세션을 열 수
             있습니다.
           </p>
         </div>
@@ -129,7 +129,7 @@ function Banner({ record, onNewSession }: { record: WorktreeRecord; onNewSession
       className="flex items-center gap-2 bg-surface px-4 py-2.5 text-[13px] leading-[18px] font-semibold text-foreground"
     >
       <Loader aria-hidden className="size-[15px] text-foreground-muted motion-safe:animate-spin" />
-      worktree 생성 중
+      워크트리 생성 중
       <span className="text-xs font-normal text-foreground-subtle">
         초기 명령 {Math.min(done + 1, total)}/{total} · 끝나면 새 탭에서 세션을 열 수 있습니다
       </span>
