@@ -2142,8 +2142,6 @@ function m3SetupScreen(failed = false) {
           'Progress: resolved 212, reused 208, downloaded 0, added 0',
           ' ERR_PNPM_FETCH_404  GET https://registry.npmjs.org/@math-demo%2Futil: Not Found - 404',
           'This error happened while installing a direct dependency of math-demo',
-          '',
-          '초기 명령이 exit 1로 끝났습니다. 남은 명령 1개는 돌리지 않았습니다.',
         ]
       : [
           '$ cp ../.env .env',
@@ -2154,7 +2152,7 @@ function m3SetupScreen(failed = false) {
   )
     .map((l) => {
       let color = l.startsWith('$') ? 'ink' : 'ink2';
-      if (failed && (l.includes('ERR') || l.startsWith('초기'))) color = 'del';
+      if (failed && l.includes('ERR')) color = 'del';
       return T(c, 13, 20, 400, color, l || ' ', 'w="fill" maxLines={1} truncate', mono);
     })
     .join('');
