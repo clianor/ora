@@ -219,9 +219,10 @@ export function sidebarV3(c, { groups }) {
     .join('');
   const badge = (t) =>
     `<Frame w="hug" h={18} flex="row" items="center" px={6} rounded={5} bg="${c.hover}">${T(c, 11, 14, 500, 'ink2', t)}</Frame>`;
-  const sessionRow = ({ state, title, age }) => {
+  // child는 위임으로 만든 하위 세션이다. 부모 세션 줄 아래에 들여 쓰고 꺾인 화살표를 붙인다.
+  const sessionRow = ({ state, title, age, child = false }) => {
     const [icon, col] = SESSION_ICON[state];
-    return `<Frame w="fill" h={30} flex="row" items="center" gap={8} pl={28} pr={10}>${I(c, icon, col, 13)}${T(c, 13, 18, 400, 'ink', title, 'grow={1} maxLines={1} truncate')}${T(c, 12, 16, 400, 'ink3', age)}</Frame>`;
+    return `<Frame w="fill" h={30} flex="row" items="center" gap={8} pl={${child ? 44 : 28}} pr={10}>${child ? I(c, 'corner-down-right', 'ink3', 12) : ''}${I(c, icon, col, 13)}${T(c, 13, 18, 400, child ? 'ink2' : 'ink', title, 'grow={1} maxLines={1} truncate')}${T(c, 12, 16, 400, 'ink3', age)}</Frame>`;
   };
   // PR 상태는 아이콘 모양으로 서로 구분한다. Merged는 GitHub와 같은 영어 글자로도 적어 색에만 기대지 않는다.
   const PR_STATE = {

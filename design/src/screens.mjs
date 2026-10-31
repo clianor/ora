@@ -493,6 +493,7 @@ ${section('엔진', [
   ['gauge', '비용 상한'],
   ['plug', 'MCP'],
   ['sparkles', '스킬'],
+  ['bot', '에이전트'],
   ['brain', '메모리'],
 ])}
 </Frame>`;
@@ -2741,6 +2742,247 @@ ${row('README 예제는 실제 실행 출력과 대조한 뒤에 고친다.', nu
   });
 }
 
+/**
+ * 위임(2.15.1절) 시안에서 함께 쓰는 값. 부모 세션은 결제 API에 환불을 더하는 작업이고, scout와 task 두 하위 세션에 일을 나눠 맡긴다.
+ */
+const M3_DELEGATE_TASK =
+  '결제 API에 부분 환불을 더해 주세요. 기존 결제 테스트와 같은 방식으로 테스트도 붙여 주세요.';
+const m3DelegateGroups = (children) =>
+  V3_GROUPS.map((g, i) =>
+    i
+      ? g
+      : {
+          ...g,
+          worktrees: g.worktrees.map((w, j) =>
+            j
+              ? w
+              : {
+                  ...w,
+                  sessions: [
+                    { state: 'running', title: '결제 API에 환불 추가', age: '6분' },
+                    ...children.map((s) => ({ ...s, child: true })),
+                    ...w.sessions.slice(1),
+                  ],
+                },
+          ),
+        },
+  );
+const AGENT_ICON = { scout: 'telescope', task: 'hammer', reviewer: 'scan-eye' };
+/** 위임 카드의 한 줄. 에이전트 이름, 맡긴 일, 쓰기 범위, 상태 글자를 보이고, 줄 끝에 하위 세션 열기 단추를 둔다. */
+const m3DelegateRow = (c, { agent, intent, scope, state, detail, stop = false }) => {
+  const STATE = {
+    running: ['loader', 'ink2', '실행 중'],
+    approval: ['shield-alert', 'warn', '승인 대기'],
+    done: ['circle-check', 'ok', '끝남'],
+  };
+  const [icon, col, label] = STATE[state];
+  return `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={14} py={11}>
+<Frame w={88} h={24} flex="row" items="center" gap={6} px={8} rounded={6} bg="${c.hover}">${I(c, AGENT_ICON[agent], 'ink2', 13)}${T(c, 12, 16, 600, 'ink', agent, '', mono)}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={3}>${T(c, 13, 19, 500, 'ink', intent, 'w="fill" maxLines={1} truncate')}${T(c, 12, 16, 400, 'ink3', scope, 'w="fill" maxLines={1} truncate', mono)}</Frame>
+<Frame w={150} h="hug" flex="col" gap={2} items="end"><Frame w="hug" h="hug" flex="row" items="center" gap={5}>${I(c, icon, col, 13)}${T(c, 12, 16, 500, col, label)}</Frame>${T(c, 12, 16, 400, 'ink3', detail)}</Frame>
+${stop ? button(c, 'ghost', '중지', { icon: 'square' }) : ''}${button(c, 'secondary', '열기', { icon: 'arrow-up-right' })}
+</Frame>`;
+};
+const m3DelegateCard = (c, title, rows) =>
+  `<Frame name="DelegateCard" w="fill" h="hug" flex="col" rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={38} flex="row" items="center" gap={8} px={14}>${I(c, 'git-fork', 'ink2', 14)}${T(c, 13, 18, 600, 'ink', title)}</Frame>
+${hr(c)}${rows.join(hr(c))}
+</Frame>`;
+const M3_SCOUT_ROW = {
+  agent: 'scout',
+  intent: '기존 결제 테스트의 구조와 픽스처를 조사한다',
+  scope: '읽기 전용',
+  state: 'done',
+  detail: '1분 12초 · 스텝 9',
+};
+const m3DelegateIntro = (c) => [
+  userBoxV2(c, M3_DELEGATE_TASK),
+  paraV2(
+    c,
+    `일을 둘로 나눕니다. ${icode(c, 'scout')}가 기존 테스트 구조를 읽고, ${icode(c, 'task')}가 환불 API와 테스트를 씁니다. 하위 세션이 끝나면 제가 같은 검증 명령을 다시 돌립니다.`,
+  ),
+];
+const m3DelegateWindow = (
+  c,
+  name,
+  { children, blocks, tabState = 'running', composer = composerV2(c, { running: true }) },
+) =>
+  windowV3(c, name, {
+    side: sidebarV3(c, { groups: m3DelegateGroups(children) }),
+    main:
+      titleTabsV3(c, {
+        tabs: [{ title: '결제 API에 환불 추가', state: tabState }],
+        active: 0,
+        right: v3Right(c),
+      }) + threadV2(c, blocks, { composer }),
+    status: statusBarV3(c, V3_STATUS),
+  });
+
+/** 55번 시안은 하위 세션 두 개가 도는 화면이다. 부모 대화에 위임 카드가 있고, 사이드바는 부모 세션 아래에 하위 세션을 들여 쓴다. */
+function m3DelegateRunningScreen() {
+  const c = palette('Slate');
+  return m3DelegateWindow(c, '55 M3 Delegate Running · Slate', {
+    children: [{ state: 'running', title: 'task · 환불 API와 테스트', age: '4분' }],
+    blocks: [
+      ...m3DelegateIntro(c),
+      m3DelegateCard(c, '하위 세션 2개 · 1개 실행 중', [
+        m3DelegateRow(c, M3_SCOUT_ROW),
+        m3DelegateRow(c, {
+          agent: 'task',
+          intent: '환불 API와 테스트를 추가한다',
+          scope: '쓰기 src/refund/, test/refund/',
+          state: 'running',
+          detail: '4분 · 스텝 14/30',
+          stop: true,
+        }),
+      ]),
+    ],
+  });
+}
+
+/** 56번 시안은 하위 세션의 승인 요청을 부모 대화가 받은 화면이다. 어느 하위 세션의 요청인지 카드 머리에 적는다. */
+function m3DelegateApprovalScreen() {
+  const c = palette('Slate');
+  const btn = (label, kind) =>
+    `<Frame w="hug" h={30} flex="row" items="center" gap={6} px={12} rounded={8} ${kind === 'primary' ? `bg="${c.primary}"` : ''} ${kind === 'secondary' ? `stroke="${c.line}" strokeWidth={1} strokeAlign="inside"` : ''}>${T(c, 13, 18, 500, kind === 'primary' ? 'onPrimary' : 'ink2', label)}</Frame>`;
+  const approval = `<Frame name="ChildApproval" w="fill" h="hug" flex="col" rounded={10} bg="${c.raised}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={40} flex="row" items="center" gap={8} px={14}>${I(c, 'shield-check', 'warn', 15)}${T(c, 14, 20, 600, 'ink', '하위 세션이 명령 실행을 묻습니다')}${SP}${T(c, 12, 16, 500, 'warn', '위험도 보통')}</Frame>
+${hr(c)}
+<Frame w="fill" h="hug" flex="col" gap={10} p={14}>
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${I(c, 'corner-down-right', 'ink3', 13)}${T(c, 12, 16, 600, 'ink', 'task', '', mono)}${T(c, 12, 16, 400, 'ink2', '환불 API와 테스트를 추가한다')}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={2} px={12} py={10} rounded={8} bg="${c.sunken}">${T(c, 13, 20, 400, 'ink', '$ pnpm prisma migrate dev --name add_refund', '', mono)}${T(c, 12, 16, 400, 'ink3', 'cwd ~/projects/math-demo', '', mono)}</Frame>
+${T(c, 13, 20, 400, 'ink2', '하위 세션의 권한은 이 세션의 권한 모드 안에서만 정합니다. 허용하면 그 하위 세션에만 적용합니다.', 'w="fill" textAutoResize="height"')}
+<Frame w="fill" h="hug" flex="row" items="center" gap={8}>${SP}${btn('거부', 'ghost')}${btn('이 하위 세션 동안 허용', 'secondary')}${btn('실행', 'primary')}</Frame>
+</Frame>
+</Frame>`;
+  return m3DelegateWindow(c, '56 M3 Delegate Approval · Slate', {
+    children: [{ state: 'approval', title: 'task · 환불 API와 테스트', age: '5분' }],
+    tabState: 'approval',
+    blocks: [
+      ...m3DelegateIntro(c),
+      m3DelegateCard(c, '하위 세션 2개 · 1개 승인 대기', [
+        m3DelegateRow(c, M3_SCOUT_ROW),
+        m3DelegateRow(c, {
+          agent: 'task',
+          intent: '환불 API와 테스트를 추가한다',
+          scope: '쓰기 src/refund/, test/refund/',
+          state: 'approval',
+          detail: '5분 · 스텝 17/30',
+          stop: true,
+        }),
+      ]),
+      approval,
+    ],
+  });
+}
+
+/** 57번 시안은 하위 세션이 끝난 뒤의 화면이다. 하위 세션이 검증을 통과해도, 부모가 같은 검증 명령을 다시 돌려야 할 일을 검증됨으로 바꾼다. */
+function m3DelegateDoneScreen() {
+  const c = palette('Slate');
+  return m3DelegateWindow(c, '57 M3 Delegate Done · Slate', {
+    children: [],
+    tabState: 'done',
+    composer: composerV2(c),
+    blocks: [
+      ...m3DelegateIntro(c),
+      m3DelegateCard(c, '하위 세션 2개 · 모두 끝남', [
+        m3DelegateRow(c, M3_SCOUT_ROW),
+        m3DelegateRow(c, {
+          agent: 'task',
+          intent: '환불 API와 테스트를 추가한다',
+          scope: '파일 4개 · +84 −3',
+          state: 'done',
+          detail: '7분 · 스텝 23',
+        }),
+      ]),
+      `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'square-terminal', verb: '다시 검증', target: 'pnpm test test/refund', result: 'exit 0', resultColor: 'ok' })}${toolRowV2(c, { icon: 'list-checks', verb: '할 일', target: '환불 API와 테스트 · 시도함 → 검증됨', result: '' })}</Frame>`,
+      paraV2(
+        c,
+        `${icode(c, 'task')}가 ${icode(c, 'POST /payments/:id/refunds')}와 테스트 6개를 더했습니다. 하위 세션의 검증 결과를 그대로 쓰지 않고, 같은 명령을 다시 돌려 통과를 확인했습니다.`,
+      ),
+    ],
+  });
+}
+
+/**
+ * 58번 시안은 하위 세션 탭이다. 머리 띠에 부모 세션, 에이전트, 쓰기 범위를 적고 브리프를 첫 메시지로 보인다.
+ * 하위 세션은 브리프로만 일하므로 입력창 대신 안내 줄과 중지 단추를 둔다.
+ */
+function m3DelegateChildScreen() {
+  const c = palette('Slate');
+  const banner = `<Frame name="ChildBanner" w="fill" h="hug" flex="row" items="center" gap={10} px={20} py={10} bg="${c.sunken}">${I(c, 'git-fork', 'ink2', 15)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 600, 'ink', '하위 세션 · task')}${T(c, 12, 16, 400, 'ink3', '부모: 결제 API에 환불 추가 · 쓰기 src/refund/, test/refund/ · 최대 스텝 30')}</Frame>${button(c, 'ghost', '부모 세션으로', { icon: 'arrow-up-left' })}${button(c, 'secondary', '중지', { icon: 'square' })}</Frame>${hr(c)}`;
+  const brief = `<Frame w="fill" h="hug" flex="col" gap={6} px={14} py={11} rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${T(c, 12, 16, 600, 'ink3', '브리프')}${T(c, 14, 22, 400, 'ink', '목표: 결제 API에 부분 환불 엔드포인트와 테스트를 더한다. 쓰기 범위: src/refund/, test/refund/. 검증: pnpm test test/refund. 중단 조건: 결제 모델 스키마를 바꿔야 하면 멈추고 보고한다.', 'w="fill" textAutoResize="height"')}</Frame>`;
+  const note = `<Frame w={720} h="hug" flex="row" items="center" gap={8} px={14} py={12} mb={16} rounded={10} stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'info', 'ink3', 14)}${T(c, 13, 18, 400, 'ink2', '하위 세션은 브리프로만 일합니다. 지시를 바꾸려면 부모 세션에서 말합니다.')}</Frame>`;
+  return windowV3(c, '58 M3 Delegate Child · Slate', {
+    side: sidebarV3(c, {
+      groups: m3DelegateGroups([
+        { state: 'running', title: 'task · 환불 API와 테스트', age: '4분' },
+      ]),
+    }),
+    main:
+      titleTabsV3(c, {
+        tabs: [
+          { title: '결제 API에 환불 추가', state: 'running' },
+          { title: 'task · 환불 API와 테스트', state: 'running' },
+        ],
+        active: 1,
+        right: v3Right(c),
+      }) +
+      banner +
+      `<Frame w="fill" h="fill" flex="col" items="center" pt={24}><Frame w={720} h="hug" flex="col" gap={14}>${brief}<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'file-text', verb: '읽기', target: 'test/payments/charge.test.ts' })}${toolRowV2(c, { icon: 'file-plus', verb: '만들기', target: 'src/refund/route.ts', result: '+41' })}${toolRowV2(c, { icon: 'file-plus', verb: '만들기', target: 'test/refund/refund.test.ts', result: '+38' })}${toolRowV2(c, { icon: 'square-terminal', verb: '실행', target: 'pnpm test test/refund', result: '실행 중' })}</Frame></Frame><Frame w="fill" h="fill" />${note}</Frame>`,
+    status: statusBarV3(c, V3_STATUS),
+  });
+}
+
+/** 59번 시안은 설정 › 에이전트 화면이다. 기본 제공 정의 셋과 프로젝트 정의를 보이고, 정의 편집은 파일을 연다. */
+function m3AgentsScreen() {
+  const c = palette('Slate');
+  const row = ({ name, desc, role, tools, steps, file = false, shadow = null }) =>
+    `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={16} py={12}>${I(c, AGENT_ICON[name] ?? 'bot', 'ink2', 16)}<Frame w="fill" h="hug" flex="col" gap={4}><Frame w="hug" h="hug" flex="row" items="center" gap={8}>${T(c, 14, 20, 600, 'ink', name, '', mono)}${shadow ? v3Badge(c, shadow, 'ink2') : ''}</Frame>${T(c, 12, 18, 400, 'ink2', desc, 'w="fill" textAutoResize="height"')}<Frame w="hug" h="hug" flex="row" items="center" gap={6}>${v3Badge(c, `역할 ${role}`)}${v3Badge(c, tools)}${v3Badge(c, `최대 스텝 ${steps}`)}</Frame></Frame>${file ? button(c, 'ghost', '파일 열기', { icon: 'external-link' }) : ''}</Frame>`;
+  return v3SettingsPage(c, '59 M3 Settings Agents · Slate', '에이전트', {
+    title: '에이전트',
+    desc: '세션이 일을 나눠 맡길 때 쓰는 하위 세션의 정의입니다. 하위 세션은 이 세션이 허용한 권한을 넘지 못하고, 결과는 맡긴 세션이 다시 검증합니다.',
+    body: `${v3Group(c, '이 프로젝트 · math-demo', '.ora/agents/', [
+      row({
+        name: 'db-migrator',
+        desc: '마이그레이션 파일만 쓰고, 적용 전에 dry-run 출력을 보고한다.',
+        role: 'default',
+        tools: '읽기·쓰기·셸',
+        steps: 20,
+        file: true,
+      }),
+      row({
+        name: 'reviewer',
+        desc: '보안과 결제 금액 계산을 먼저 본다.',
+        role: 'review',
+        tools: '읽기 도구만',
+        steps: 15,
+        file: true,
+        shadow: '기본 제공 정의를 덮어씀',
+      }),
+    ])}
+${v3Group(c, '기본 제공', '', [
+  row({
+    name: 'scout',
+    desc: '코드를 읽고 조사해 요약한다.',
+    role: 'fast',
+    tools: '읽기 도구만',
+    steps: 30,
+  }),
+  row({
+    name: 'task',
+    desc: '일반 작업을 맡아 구현하고 검증한다.',
+    role: 'default',
+    tools: '모든 도구',
+    steps: 30,
+  }),
+])}
+${v3Group(c, '전역', '~/.ora/agents/', [
+  `<Frame w="fill" h="hug" flex="row" items="center" gap={10} px={16} py={14}>${T(c, 13, 18, 400, 'ink3', '아직 전역 정의가 없습니다. 이 폴더에 .md 파일을 두면 모든 프로젝트에서 씁니다.', 'grow={1}')}${button(c, 'ghost', '폴더 열기', { icon: 'folder-open' })}</Frame>`,
+])}`,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -2796,4 +3038,9 @@ export const SCREENS = [
   { file: 'm3-memory-log-slate', jsx: m3MemoryLogScreen },
   { file: 'm3-memory-usage-slate', jsx: m3MemoryUsageScreen },
   { file: 'm3-memory-feedback-slate', jsx: m3MemoryFeedbackScreen },
+  { file: 'm3-delegate-running-slate', jsx: m3DelegateRunningScreen },
+  { file: 'm3-delegate-approval-slate', jsx: m3DelegateApprovalScreen },
+  { file: 'm3-delegate-done-slate', jsx: m3DelegateDoneScreen },
+  { file: 'm3-delegate-child-slate', jsx: m3DelegateChildScreen },
+  { file: 'm3-settings-agents-slate', jsx: m3AgentsScreen },
 ];
