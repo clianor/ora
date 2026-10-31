@@ -2747,7 +2747,7 @@ ${row('README 예제는 실제 실행 출력과 대조한 뒤에 고친다.', nu
  */
 const M3_DELEGATE_TASK =
   '결제 API에 부분 환불을 더해 주세요. 기존 결제 테스트와 같은 방식으로 테스트도 붙여 주세요.';
-const m3DelegateGroups = (children) =>
+const m3DelegateGroups = (children, isParentRunning = true) =>
   V3_GROUPS.map((g, i) =>
     i
       ? g
@@ -2759,7 +2759,9 @@ const m3DelegateGroups = (children) =>
               : {
                   ...w,
                   sessions: [
-                    { state: 'running', title: '결제 API에 환불 추가', age: '6분' },
+                    ...(isParentRunning
+                      ? [{ state: 'running', title: '결제 API에 환불 추가', age: '6분' }]
+                      : []),
                     ...children.map((s) => ({ ...s, child: true })),
                     ...w.sessions.slice(1),
                   ],
@@ -2808,7 +2810,7 @@ const m3DelegateWindow = (
   { children, blocks, tabState = 'running', composer = composerV2(c, { running: true }) },
 ) =>
   windowV3(c, name, {
-    side: sidebarV3(c, { groups: m3DelegateGroups(children) }),
+    side: sidebarV3(c, { groups: m3DelegateGroups(children, tabState !== 'done') }),
     main:
       titleTabsV3(c, {
         tabs: [{ title: '결제 API에 환불 추가', state: tabState }],
