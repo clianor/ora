@@ -172,7 +172,7 @@ function readPanelData(events: readonly OraEvent[], todos: readonly Todo[]): Pan
       if (to === 'attempted' && from === 'failed') {
         const count = (repairs.get(todo.id) ?? 0) + 1;
         repairs.set(todo.id, count);
-        push(todo.id, { kind: 'repair', label: `수리 ${count}`, step });
+        push(todo.id, { kind: 'repair', label: `다시 시도 ${count}`, step });
       } else if (to === 'attempted' && from === 'blocked') {
         push(todo.id, { kind: 'unblock', label: '막힘 해제', step });
       } else if (to === 'attempted' && !hasTried) {
