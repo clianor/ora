@@ -2743,10 +2743,10 @@ ${row('README 예제는 실제 실행 출력과 대조한 뒤에 고친다.', nu
 }
 
 /**
- * 위임(2.15.1절) 시안에서 함께 쓰는 값. 부모 세션은 결제 API에 환불을 더하는 작업이고, scout와 task 두 하위 세션에 일을 나눠 맡긴다.
+ * 위임(2.15.1절) 시안에서 함께 쓰는 값. 상위 세션은 결제 API에 환불을 추가하는 작업이고, scout와 task 두 하위 세션에 일을 나눠 맡긴다.
  */
 const M3_DELEGATE_TASK =
-  '결제 API에 부분 환불을 더해 주세요. 기존 결제 테스트와 같은 방식으로 테스트도 붙여 주세요.';
+  '결제 API에 부분 환불을 추가해 주세요. 기존 결제 테스트와 같은 방식으로 테스트도 붙여 주세요.';
 const m3DelegateGroups = (children, isParentRunning = true) =>
   V3_GROUPS.map((g, i) =>
     i
@@ -2900,21 +2900,21 @@ function m3DelegateDoneScreen() {
       `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'square-terminal', verb: '다시 검증', target: 'pnpm test test/refund', result: 'exit 0', resultColor: 'ok' })}${toolRowV2(c, { icon: 'list-checks', verb: '할 일', target: '환불 API와 테스트 · 시도함 → 검증됨', result: '' })}</Frame>`,
       paraV2(
         c,
-        `${icode(c, 'task')}가 ${icode(c, 'POST /payments/:id/refunds')}와 테스트 6개를 더했습니다. 하위 세션의 검증 결과를 그대로 쓰지 않고, 같은 명령을 다시 돌려 통과를 확인했습니다.`,
+        `${icode(c, 'task')}가 ${icode(c, 'POST /payments/:id/refunds')}와 테스트 6개를 추가했습니다. 하위 세션의 검증 결과를 그대로 쓰지 않고, 같은 명령을 다시 돌려 통과를 확인했습니다.`,
       ),
     ],
   });
 }
 
 /**
- * 58번 시안은 하위 세션 탭이다. 머리 띠에 부모 세션, 에이전트, 쓰기 범위를 적고 브리프를 첫 메시지로 보인다.
- * 하위 세션은 브리프로만 일하므로 입력창 대신 안내 줄과 중지 단추를 둔다.
+ * 58번 시안은 하위 세션 탭이다. 머리 띠에 상위 세션, 에이전트, 쓰기 범위를 적고 작업 지시를 첫 메시지로 보인다.
+ * 하위 세션은 작업 지시로만 일하므로 입력창 대신 안내 줄과 중지 단추를 둔다.
  */
 function m3DelegateChildScreen() {
   const c = palette('Slate');
-  const banner = `<Frame name="ChildBanner" w="fill" h="hug" flex="row" items="center" gap={10} px={20} py={10} bg="${c.sunken}">${I(c, 'git-fork', 'ink2', 15)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 600, 'ink', '하위 세션 · task')}${T(c, 12, 16, 400, 'ink3', '부모: 결제 API에 환불 추가 · 쓰기 src/refund/, test/refund/ · 최대 스텝 30')}</Frame>${button(c, 'ghost', '부모 세션으로', { icon: 'arrow-up-left' })}${button(c, 'secondary', '중지', { icon: 'square' })}</Frame>${hr(c)}`;
-  const brief = `<Frame w="fill" h="hug" flex="col" gap={6} px={14} py={11} rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${T(c, 12, 16, 600, 'ink3', '브리프')}${T(c, 14, 22, 400, 'ink', '목표: 결제 API에 부분 환불 엔드포인트와 테스트를 더한다. 쓰기 범위: src/refund/, test/refund/. 검증: pnpm test test/refund. 중단 조건: 결제 모델 스키마를 바꿔야 하면 멈추고 보고한다.', 'w="fill" textAutoResize="height"')}</Frame>`;
-  const note = `<Frame w={720} h="hug" flex="row" items="center" gap={8} px={14} py={12} mb={16} rounded={10} stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'info', 'ink3', 14)}${T(c, 13, 18, 400, 'ink2', '하위 세션은 브리프로만 일합니다. 지시를 바꾸려면 부모 세션에서 말합니다.')}</Frame>`;
+  const banner = `<Frame name="ChildBanner" w="fill" h="hug" flex="row" items="center" gap={10} px={20} py={10} bg="${c.sunken}">${I(c, 'git-fork', 'ink2', 15)}<Frame w="fill" h="hug" flex="col" gap={2}>${T(c, 13, 18, 600, 'ink', '하위 세션 · task')}${T(c, 12, 16, 400, 'ink3', '상위: 결제 API에 환불 추가 · 쓰기 src/refund/, test/refund/ · 최대 스텝 30')}</Frame>${button(c, 'ghost', '상위 세션으로', { icon: 'arrow-up-left' })}${button(c, 'secondary', '중지', { icon: 'square' })}</Frame>${hr(c)}`;
+  const brief = `<Frame w="fill" h="hug" flex="col" gap={6} px={14} py={11} rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${T(c, 12, 16, 600, 'ink3', '작업 지시')}${T(c, 14, 22, 400, 'ink', '목표: 결제 API에 부분 환불 엔드포인트와 테스트를 추가한다. 쓰기 범위: src/refund/, test/refund/. 검증: pnpm test test/refund. 중단 조건: 결제 모델 스키마를 바꿔야 하면 멈추고 보고한다.', 'w="fill" textAutoResize="height"')}</Frame>`;
+  const note = `<Frame w={720} h="hug" flex="row" items="center" gap={8} px={14} py={12} mb={16} rounded={10} stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'info', 'ink3', 14)}${T(c, 13, 18, 400, 'ink2', '하위 세션은 작업 지시로만 일합니다. 지시를 바꾸려면 상위 세션에서 말합니다.')}</Frame>`;
   return windowV3(c, '58 M3 Delegate Child · Slate', {
     side: sidebarV3(c, {
       groups: m3DelegateGroups([
@@ -3037,7 +3037,7 @@ const DAG_N1 = {
   attempt: '시도 1',
 };
 const dagIntro = (c) => [
-  userBoxV2(c, '결제 API와 웹 화면에 부분 환불을 더하고, e2e 테스트까지 붙여 주세요.'),
+  userBoxV2(c, '결제 API와 웹 화면에 부분 환불을 추가하고, e2e 테스트까지 붙여 주세요.'),
   `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'workflow', verb: '그래프 제출', target: '노드 4개', result: '거부됨', resultColor: 'del' })}${T(c, 12, 18, 400, 'ink3', 'n2와 n3의 쓰기 범위가 src/refund/에서 겹칩니다. 범위를 나눠 다시 냅니다.', 'pl={22} w="fill" textAutoResize="height"')}${toolRowV2(c, { icon: 'workflow', verb: '그래프 제출', target: '노드 4개', result: '받아들임', resultColor: 'ok' })}</Frame>`,
 ];
 const dagPanel = (c, todos, current = null) =>
@@ -3055,7 +3055,7 @@ const dagPanel = (c, todos, current = null) =>
         mono,
       ),
     }),
-    objective: '결제 API와 웹 화면에 부분 환불을 더한다',
+    objective: '결제 API와 웹 화면에 부분 환불을 추가한다',
     phases: [
       { name: '1단계', open: true, todos: todos.slice(0, 1) },
       { name: '2단계', open: true, todos: todos.slice(1, 3) },
@@ -3099,7 +3099,7 @@ function m3DagRunningScreen() {
             {
               id: 'n2',
               agent: 'task',
-              title: '환불 API를 더한다',
+              title: '환불 API를 추가한다',
               scope: 'src/refund/',
               state: 'verifying',
               attempt: '시도 1',
@@ -3108,7 +3108,7 @@ function m3DagRunningScreen() {
             {
               id: 'n3',
               agent: 'task',
-              title: '환불 화면을 더한다',
+              title: '환불 화면을 추가한다',
               scope: 'web/refund/',
               state: 'repair',
               attempt: '다시 시도 1/3',
@@ -3119,7 +3119,7 @@ function m3DagRunningScreen() {
             {
               id: 'n4',
               agent: 'task',
-              title: 'e2e 테스트를 더한다',
+              title: 'e2e 테스트를 추가한다',
               scope: 'e2e/refund/',
               state: 'waiting',
               after: '앞 n2, n3',
@@ -3135,14 +3135,14 @@ function m3DagRunningScreen() {
         { id: 'n1', title: 'n1 · 결제 테스트 구조를 조사한다', status: 'verified' },
         {
           id: 'n2',
-          title: 'n2 · 환불 API를 더한다',
+          title: 'n2 · 환불 API를 추가한다',
           status: 'attempted',
           cmd: '$ pnpm test test/refund',
           result: '검증 중',
         },
         {
           id: 'n3',
-          title: 'n3 · 환불 화면을 더한다',
+          title: 'n3 · 환불 화면을 추가한다',
           status: 'attempted',
           cmd: '$ pnpm test web/refund',
           result: '다시 시도 중',
@@ -3152,7 +3152,7 @@ function m3DagRunningScreen() {
             ['repair', '다시 시도 1/3'],
           ],
         },
-        { id: 'n4', title: 'n4 · e2e 테스트를 더한다', status: 'pending' },
+        { id: 'n4', title: 'n4 · e2e 테스트를 추가한다', status: 'pending' },
       ],
       'n3',
     ),
@@ -3177,7 +3177,7 @@ function m3DagFailedScreen() {
             {
               id: 'n2',
               agent: 'task',
-              title: '환불 API를 더한다',
+              title: '환불 API를 추가한다',
               scope: 'src/refund/',
               state: 'verified',
               attempt: '시도 1',
@@ -3186,7 +3186,7 @@ function m3DagFailedScreen() {
             {
               id: 'n3',
               agent: 'task',
-              title: '환불 화면을 더한다',
+              title: '환불 화면을 추가한다',
               scope: 'web/refund/',
               state: 'failed',
               attempt: '다시 시도 3/3',
@@ -3197,7 +3197,7 @@ function m3DagFailedScreen() {
             {
               id: 'n4',
               agent: 'task',
-              title: 'e2e 테스트를 더한다',
+              title: 'e2e 테스트를 추가한다',
               scope: 'e2e/refund/',
               state: 'blocked',
               after: '앞 n2, n3',
@@ -3215,7 +3215,7 @@ function m3DagFailedScreen() {
       { id: 'n1', title: 'n1 · 결제 테스트 구조를 조사한다', status: 'verified' },
       {
         id: 'n2',
-        title: 'n2 · 환불 API를 더한다',
+        title: 'n2 · 환불 API를 추가한다',
         status: 'verified',
         cmd: '$ pnpm test test/refund',
         result: 'exit 0',
@@ -3223,7 +3223,7 @@ function m3DagFailedScreen() {
       },
       {
         id: 'n3',
-        title: 'n3 · 환불 화면을 더한다',
+        title: 'n3 · 환불 화면을 추가한다',
         status: 'failed',
         cmd: '$ pnpm test web/refund',
         result: 'exit 1',
@@ -3235,7 +3235,7 @@ function m3DagFailedScreen() {
       },
       {
         id: 'n4',
-        title: 'n4 · e2e 테스트를 더한다',
+        title: 'n4 · e2e 테스트를 추가한다',
         status: 'blocked',
         reason: '앞선 노드 n3이 실패했습니다.',
       },
@@ -3261,7 +3261,7 @@ function m3DagDoneScreen() {
             {
               id: 'n2',
               agent: 'task',
-              title: '환불 API를 더한다',
+              title: '환불 API를 추가한다',
               scope: 'src/refund/',
               state: 'verified',
               attempt: '시도 1',
@@ -3270,7 +3270,7 @@ function m3DagDoneScreen() {
             {
               id: 'n3',
               agent: 'task',
-              title: '환불 화면을 더한다',
+              title: '환불 화면을 추가한다',
               scope: 'web/refund/',
               state: 'verified',
               attempt: '다시 시도 2회',
@@ -3281,7 +3281,7 @@ function m3DagDoneScreen() {
             {
               id: 'n4',
               agent: 'task',
-              title: 'e2e 테스트를 더한다',
+              title: 'e2e 테스트를 추가한다',
               scope: 'e2e/refund/',
               state: 'verified',
               attempt: '시도 1',
@@ -3300,7 +3300,7 @@ function m3DagDoneScreen() {
       { id: 'n1', title: 'n1 · 결제 테스트 구조를 조사한다', status: 'verified' },
       {
         id: 'n2',
-        title: 'n2 · 환불 API를 더한다',
+        title: 'n2 · 환불 API를 추가한다',
         status: 'verified',
         cmd: '$ pnpm test test/refund',
         result: 'exit 0',
@@ -3308,7 +3308,7 @@ function m3DagDoneScreen() {
       },
       {
         id: 'n3',
-        title: 'n3 · 환불 화면을 더한다',
+        title: 'n3 · 환불 화면을 추가한다',
         status: 'verified',
         cmd: '$ pnpm test web/refund',
         result: 'exit 0',
@@ -3320,7 +3320,7 @@ function m3DagDoneScreen() {
       },
       {
         id: 'n4',
-        title: 'n4 · e2e 테스트를 더한다',
+        title: 'n4 · e2e 테스트를 추가한다',
         status: 'verified',
         cmd: '$ pnpm e2e refund',
         result: 'exit 0',
@@ -3343,7 +3343,7 @@ const BOARD_STATE = {
 };
 const BOARD_LANES = [
   ['builder', 'hammer', '구현'],
-  ['verifier', 'shield-check', '검사'],
+  ['verifier', 'shield-check', '검증'],
   ['reviewer', 'scan-eye', '검토'],
   ['docs', 'book-open', '문서'],
   ['qa', 'flask-conical', '테스트'],
@@ -3356,7 +3356,7 @@ const boardCard = (
   return `<Frame w="fill" h="hug" flex="col" gap={6} p={10} rounded={8} bg="${c.window}" stroke="${picked ? c.borderStrong : c.line}" strokeWidth={1} strokeAlign="inside">
 <Frame w="fill" h="hug" flex="row" items="center" gap={5}>${I(c, icon, col, 12)}${T(c, 12, 16, 500, col, label)}${SP}${session ? T(c, 11, 14, 400, 'ink3', session) : ''}</Frame>
 ${T(c, 13, 18, 500, 'ink', title, 'w="fill" maxLines={2} textAutoResize="height"')}
-${parent ? `<Frame w="fill" h="hug" flex="row" items="center" gap={4}>${I(c, 'corner-down-right', 'ink3', 11)}${T(c, 11, 14, 400, 'ink3', `부모: ${parent}`, 'w="fill" maxLines={1} truncate')}</Frame>` : ''}
+${parent ? `<Frame w="fill" h="hug" flex="row" items="center" gap={4}>${I(c, 'corner-down-right', 'ink3', 11)}${T(c, 11, 14, 400, 'ink3', `상위: ${parent}`, 'w="fill" maxLines={1} truncate')}</Frame>` : ''}
 ${scope ? T(c, 11, 14, 400, 'ink3', scope, 'w="fill" maxLines={1} truncate', mono) : ''}
 ${note ? T(c, 11, 15, 400, 'ink2', note, 'w="fill" textAutoResize="height"') : ''}
 ${actions ? `<Frame w="fill" h="hug" flex="row" wrap={true} items="center" gap={6}>${actions}</Frame>` : ''}
@@ -3396,14 +3396,14 @@ ${(cards[lane] ?? []).join('')}
 const boardCards = (c, { verifierPicked = false } = {}) => ({
   builder: [
     boardCard(c, {
-      title: '환불 API를 더한다',
+      title: '환불 API를 추가한다',
       state: 'done',
       scope: 'src/refund/',
       session: 'main · 1시간 전',
       actions: `${smallButton(c, '검증 카드 만들기', { icon: 'shield-check' })}${smallButton(c, '검토 카드 만들기', { icon: 'scan-eye' })}`,
     }),
     boardCard(c, {
-      title: '환불 화면을 더한다',
+      title: '환불 화면을 추가한다',
       state: 'running',
       scope: 'web/refund/',
       session: 'ora/refund-ui · 4분',
@@ -3412,19 +3412,19 @@ const boardCards = (c, { verifierPicked = false } = {}) => ({
   ],
   verifier: [
     boardCard(c, {
-      title: '환불 API 검사',
+      title: '환불 API 검증',
       state: 'idle',
-      parent: '환불 API를 더한다',
+      parent: '환불 API를 추가한다',
       scope: '$ pnpm test test/refund',
       picked: verifierPicked,
       actions: smallButton(c, '시작', { icon: 'play', primary: true }),
     }),
     boardCard(c, {
-      title: '환불 화면 검사',
+      title: '환불 화면 검증',
       state: 'idle',
-      parent: '환불 화면을 더한다',
+      parent: '환불 화면을 추가한다',
       scope: '$ pnpm test web/refund',
-      note: '부모 카드가 실행 중이라 시작할 수 없습니다.',
+      note: '상위 카드의 세션이 실행 중이라 시작할 수 없습니다.',
       actions: smallButton(c, '시작', { icon: 'play', disabled: true }),
     }),
   ],
@@ -3432,7 +3432,7 @@ const boardCards = (c, { verifierPicked = false } = {}) => ({
     boardCard(c, {
       title: '환불 API 검토',
       state: 'running',
-      parent: '환불 API를 더한다',
+      parent: '환불 API를 추가한다',
       session: 'main · 2분',
       actions: smallButton(c, '세션 열기', { icon: 'arrow-up-right' }),
     }),
@@ -3447,7 +3447,7 @@ const boardCards = (c, { verifierPicked = false } = {}) => ({
   ],
   qa: [
     boardCard(c, {
-      title: '환불 금액 경계값 테스트를 더한다',
+      title: '환불 금액 경계값 테스트를 추가한다',
       state: 'approval',
       scope: 'e2e/refund/',
       session: 'ora/refund-qa · 1분',
@@ -3480,11 +3480,11 @@ function m3BoardCreateScreen() {
 <Frame w="fill" h={48} flex="row" items="center" gap={8} px={18}>${T(c, 15, 20, 600, 'ink', '카드 만들기')}${SP}${I(c, 'x', 'ink3', 15)}</Frame>
 ${hr(c)}
 <Frame w="fill" h="hug" flex="col" gap={14} p={18}>
-${field('제목', input('환불 API 검사'))}
-${field('레인', lanes, '레인 이름과 같은 에이전트 정의로 세션을 엽니다.')}
-${field('부모 카드', `<Frame w="fill" h={34} flex="row" items="center" gap={8} px={10} rounded={7} bg="${c.window}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'hammer', 'ink2', 13)}${T(c, 13, 18, 400, 'ink', '환불 API를 더한다', 'grow={1}')}${T(c, 12, 16, 400, 'ink3', 'builder · 끝남')}${I(c, 'chevrons-up-down', 'ink3', 13)}</Frame>`, '검사·검토 카드에는 부모 카드가 있어야 합니다.')}
-${field('검증 명령', input('pnpm test test/refund', { mono: true }), '부모 카드의 검증 명령을 가져왔습니다.')}
-${field('쓰기 범위', input('검사 카드는 파일을 쓰지 않습니다', { muted: true }))}
+${field('제목', input('환불 API 검증'))}
+${field('담당', lanes, '담당 이름과 같은 에이전트 정의로 세션을 엽니다.')}
+${field('상위 카드', `<Frame w="fill" h={34} flex="row" items="center" gap={8} px={10} rounded={7} bg="${c.window}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'hammer', 'ink2', 13)}${T(c, 13, 18, 400, 'ink', '환불 API를 추가한다', 'grow={1}')}${T(c, 12, 16, 400, 'ink3', 'builder · 끝남')}${I(c, 'chevrons-up-down', 'ink3', 13)}</Frame>`, '검증·검토 카드에는 상위 카드가 있어야 합니다.')}
+${field('검증 명령', input('pnpm test test/refund', { mono: true }), '상위 카드의 검증 명령을 가져왔습니다.')}
+${field('쓰기 범위', input('검증 카드는 파일을 쓰지 않습니다', { muted: true }))}
 ${field('설명', input('음수 금액과 결제 금액보다 큰 환불을 거부하는지 확인한다.', { h: 64 }))}
 </Frame>
 ${hr(c)}
@@ -3497,14 +3497,14 @@ ${hr(c)}
   });
 }
 
-/** 65번 시안은 카드의 "시작"을 누른 뒤 워크트리를 고르는 팝오버다. 고른 워크트리에서 카드 내용을 브리프로 삼아 세션을 연다. */
+/** 65번 시안은 카드의 "시작"을 누른 뒤 워크트리를 고르는 팝오버다. 고른 워크트리에서 카드 내용을 작업 지시로 삼아 세션을 연다. */
 function m3BoardStartScreen() {
   const c = palette('Slate');
   const option = (name, meta, on) =>
     `<Frame w="fill" h={36} flex="row" items="center" gap={8} px={10} rounded={7} ${on ? `bg="${c.hover}"` : ''}>${I(c, on ? 'circle-dot' : 'circle', on ? 'ink' : 'ink3', 14)}${I(c, 'git-branch', 'ink3', 13)}${T(c, 13, 18, on ? 500 : 400, 'ink', name, 'grow={1}')}${T(c, 12, 16, 400, 'ink3', meta)}</Frame>`;
   const pop = `<Frame name="StartPopover" position="absolute" x={540} y={250} w={330} h="hug" flex="col" gap={6} p={10} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
 ${T(c, 13, 18, 600, 'ink', '어느 워크트리에서 시작할까요?', 'px={4} pt={2}')}
-${T(c, 12, 16, 400, 'ink3', 'verifier 정의로 세션을 열고, 카드 내용을 브리프로 줍니다.', 'px={4} w="fill" textAutoResize="height"')}
+${T(c, 12, 16, 400, 'ink3', 'verifier 정의로 세션을 열고, 카드 내용을 작업 지시로 넘깁니다.', 'px={4} w="fill" textAutoResize="height"')}
 <Frame w="fill" h="hug" flex="col" gap={2} pt={4}>${option('main', '기본 · 실행 1', true)}${option('ora/refund-ui', '실행 1', false)}${option('ora/refund-qa', '승인 대기', false)}${option('docs/readme-pnpm', '', false)}</Frame>
 <Frame w="fill" h="hug" flex="row" items="center" gap={6} pt={4}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '시작')}</Frame>
 </Frame>`;
