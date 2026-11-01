@@ -2993,6 +2993,343 @@ ${v3Group(c, '전역', '~/.ora/agents/', [
   });
 }
 
+/**
+ * DAG 실행(2.15절) 시안에서 함께 쓰는 값. 결제 환불을 노드 넷으로 나눈다. n1은 조사, n2와 n3은 n1 뒤에 함께 돌고,
+ * n4는 n2와 n3이 모두 검증된 뒤에 돈다. 상태는 아이콘과 글자로 함께 보여 색에만 기대지 않는다.
+ */
+const DAG_STATE = {
+  verified: ['circle-check', 'ok', '검증됨'],
+  running: ['loader', 'ink2', '실행 중'],
+  verifying: ['shield-check', 'ink2', '검증 중'],
+  repair: ['wrench', 'warn', '수리 중'],
+  waiting: ['circle', 'ink3', '대기'],
+  failed: ['circle-x', 'del', '실패'],
+  blocked: ['octagon-pause', 'warn', '막힘'],
+};
+const dagNode = (c, { id, agent, title, scope, state, attempt = '', after = '' }) => {
+  const [icon, col, label] = DAG_STATE[state];
+  const strong = state === 'failed' || state === 'repair' || state === 'blocked';
+  return `<Frame w="fill" h="hug" flex="col" gap={6} p={10} rounded={8} bg="${c.window}" stroke="${strong ? c.borderStrong : c.line}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center" gap={6}>${T(c, 11, 14, 600, 'ink3', id, '', mono)}<Frame w="hug" h={20} flex="row" items="center" gap={4} px={6} rounded={5} bg="${c.hover}">${I(c, AGENT_ICON[agent], 'ink2', 11)}${T(c, 11, 14, 600, 'ink', agent, '', mono)}</Frame>${SP}${after ? T(c, 11, 14, 400, 'ink3', after) : ''}</Frame>
+${T(c, 13, 18, 500, 'ink', title, 'w="fill" maxLines={2} textAutoResize="height"')}
+${T(c, 11, 14, 400, 'ink3', scope, 'w="fill" maxLines={1} truncate', mono)}
+<Frame w="fill" h="hug" flex="row" items="center" gap={5}>${I(c, icon, col, 12)}${T(c, 12, 16, 500, col, label)}${SP}${attempt ? T(c, 11, 14, 400, 'ink3', attempt) : ''}</Frame>
+</Frame>`;
+};
+/** 그래프 카드. 노드를 의존 단계별 열로 놓고, 열 사이에 화살표를 둔다. 노드를 누르면 그 노드의 하위 세션 탭이 열린다. */
+const dagCard = (c, { title, columns, footer = '' }) => {
+  const col = (nodes, i) =>
+    `<Frame w="fill" h="hug" flex="col" gap={8}>${T(c, 11, 14, 500, 'ink3', `${i + 1}단계`)}${nodes.map((n) => dagNode(c, n)).join('')}</Frame>`;
+  const arrow = `<Frame w={14} h="fill" flex="col" items="center" justify="center">${I(c, 'chevron-right', 'ink3', 14)}</Frame>`;
+  return `<Frame name="GraphCard" w="fill" h="hug" flex="col" rounded={10} bg="${c.raised}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={38} flex="row" items="center" gap={8} px={14}>${I(c, 'workflow', 'ink2', 14)}${T(c, 13, 18, 600, 'ink', title)}</Frame>
+${hr(c)}
+<Frame w="fill" h="hug" flex="row" items="start" gap={6} p={12}>${columns.map(col).join(arrow)}</Frame>
+${footer ? `${hr(c)}${footer}` : ''}
+</Frame>`;
+};
+const DAG_N1 = {
+  id: 'n1',
+  agent: 'scout',
+  title: '결제 테스트 구조를 조사한다',
+  scope: '읽기 전용',
+  state: 'verified',
+  attempt: '시도 1',
+};
+const dagIntro = (c) => [
+  userBoxV2(c, '결제 API와 웹 화면에 부분 환불을 더하고, e2e 테스트까지 붙여 주세요.'),
+  `<Frame w="fill" h="hug" flex="col" gap={2}>${toolRowV2(c, { icon: 'workflow', verb: '그래프 제출', target: '노드 4개', result: '거부됨', resultColor: 'del' })}${T(c, 12, 18, 400, 'ink3', 'n2와 n3의 쓰기 범위가 src/refund/에서 겹칩니다. 범위를 나눠 다시 냅니다.', 'pl={22} w="fill" textAutoResize="height"')}${toolRowV2(c, { icon: 'workflow', verb: '그래프 제출', target: '노드 4개', result: '받아들임', resultColor: 'ok' })}</Frame>`,
+];
+const dagPanel = (c, todos, current = null) =>
+  v3Panel(c, {
+    head: panelHeadV2(c, {
+      titleRow: true,
+      right: T(
+        c,
+        13,
+        18,
+        500,
+        'ink2',
+        `검증 ${todos.filter((t) => t.status === 'verified').length}/${todos.length}`,
+        'pr={8}',
+        mono,
+      ),
+    }),
+    objective: '결제 API와 웹 화면에 부분 환불을 더한다',
+    phases: [
+      { name: '1단계', open: true, todos: todos.slice(0, 1) },
+      { name: '2단계', open: true, todos: todos.slice(1, 3) },
+      { name: '3단계', open: true, todos: todos.slice(3) },
+    ],
+    current,
+  });
+const dagWindow = (
+  c,
+  name,
+  { children, blocks, panel, tabState = 'running', composer = composerV2(c, { running: true }) },
+) =>
+  windowV3(c, name, {
+    side: sidebarV3(c, { groups: m3DelegateGroups(children, tabState !== 'done') }),
+    main:
+      titleTabsV3(c, {
+        tabs: [{ title: '결제 API에 환불 추가', state: tabState }],
+        active: 0,
+        right: v3Right(c),
+      }) + threadV2(c, blocks, { composer }),
+    panel,
+    status: statusBarV3(c, V3_STATUS),
+  });
+
+/**
+ * 60번 시안은 DAG가 도는 화면이다. 첫 그래프는 쓰기 범위가 겹쳐 엔진이 거부했고, 다시 낸 그래프가 돈다.
+ * n2는 엔진이 검증 명령을 돌리는 중이고, n3은 첫 검증에 실패해 수리 1/3을 도는 중이다. n4는 앞선 노드를 기다린다.
+ */
+function m3DagRunningScreen() {
+  const c = palette('Slate');
+  const diag = `<Frame w="fill" h="hug" flex="row" items="start" gap={8} px={14} py={10}>${I(c, 'wrench', 'warn', 13)}<Frame w="fill" h="hug" flex="col" gap={3}>${T(c, 12, 16, 600, 'ink', 'n3 첫 검증 실패 · 수리 노드에 넘긴 진단')}${T(c, 12, 18, 400, 'ink2', 'pnpm test web/refund · RefundForm.test.tsx: 금액이 음수일 때 오류 문구가 없습니다 (기대 "0보다 큰 금액을 넣습니다")', 'w="fill" textAutoResize="height"', mono)}</Frame></Frame>`;
+  return dagWindow(c, '60 M3 Graph Running · Slate', {
+    children: [{ state: 'running', title: 'n3 · 환불 화면 (수리 1/3)', age: '2분' }],
+    blocks: [
+      ...dagIntro(c),
+      dagCard(c, {
+        title: '그래프 · 노드 4개 · 1개 검증됨',
+        columns: [
+          [DAG_N1],
+          [
+            {
+              id: 'n2',
+              agent: 'task',
+              title: '환불 API를 더한다',
+              scope: 'src/refund/',
+              state: 'verifying',
+              attempt: '시도 1',
+              after: '앞 n1',
+            },
+            {
+              id: 'n3',
+              agent: 'task',
+              title: '환불 화면을 더한다',
+              scope: 'web/refund/',
+              state: 'repair',
+              attempt: '수리 1/3',
+              after: '앞 n1',
+            },
+          ],
+          [
+            {
+              id: 'n4',
+              agent: 'task',
+              title: 'e2e 테스트를 더한다',
+              scope: 'e2e/refund/',
+              state: 'waiting',
+              after: '앞 n2, n3',
+            },
+          ],
+        ],
+        footer: diag,
+      }),
+    ],
+    panel: dagPanel(
+      c,
+      [
+        { id: 'n1', title: 'n1 · 결제 테스트 구조를 조사한다', status: 'verified' },
+        {
+          id: 'n2',
+          title: 'n2 · 환불 API를 더한다',
+          status: 'attempted',
+          cmd: '$ pnpm test test/refund',
+          result: '검증 중',
+        },
+        {
+          id: 'n3',
+          title: 'n3 · 환불 화면을 더한다',
+          status: 'attempted',
+          cmd: '$ pnpm test web/refund',
+          result: '수리 중',
+          resultColor: 'warn',
+          flow: [
+            ['fail', '검증 실패 · 첫 시도'],
+            ['repair', '수리 1/3'],
+          ],
+        },
+        { id: 'n4', title: 'n4 · e2e 테스트를 더한다', status: 'pending' },
+      ],
+      'n3',
+    ),
+  });
+}
+
+/** 61번 시안은 노드가 수리 3회 뒤에도 실패한 화면이다. 그 뒤의 n4는 막힘이 되고, 부모는 실패를 그대로 보고한다. */
+function m3DagFailedScreen() {
+  const c = palette('Slate');
+  const diag = `<Frame w="fill" h="hug" flex="row" items="start" gap={8} px={14} py={10}>${I(c, 'circle-x', 'del', 13)}<Frame w="fill" h="hug" flex="col" gap={3}>${T(c, 12, 16, 600, 'ink', 'n3 · 수리 3회 뒤에도 검증 실패')}${T(c, 12, 18, 400, 'ink2', 'pnpm test web/refund · RefundForm.test.tsx: 환불 금액이 결제 금액보다 클 때 제출 단추가 꺼지지 않습니다', 'w="fill" textAutoResize="height"', mono)}</Frame></Frame>`;
+  return dagWindow(c, '61 M3 Graph Failed · Slate', {
+    children: [],
+    tabState: 'failed',
+    composer: composerV2(c),
+    blocks: [
+      ...dagIntro(c),
+      dagCard(c, {
+        title: '그래프 · 노드 4개 · 2개 검증됨 · 1개 실패',
+        columns: [
+          [DAG_N1],
+          [
+            {
+              id: 'n2',
+              agent: 'task',
+              title: '환불 API를 더한다',
+              scope: 'src/refund/',
+              state: 'verified',
+              attempt: '시도 1',
+              after: '앞 n1',
+            },
+            {
+              id: 'n3',
+              agent: 'task',
+              title: '환불 화면을 더한다',
+              scope: 'web/refund/',
+              state: 'failed',
+              attempt: '수리 3/3',
+              after: '앞 n1',
+            },
+          ],
+          [
+            {
+              id: 'n4',
+              agent: 'task',
+              title: 'e2e 테스트를 더한다',
+              scope: 'e2e/refund/',
+              state: 'blocked',
+              after: '앞 n2, n3',
+            },
+          ],
+        ],
+        footer: diag,
+      }),
+      paraV2(
+        c,
+        `환불 API(n2)는 검증을 통과했습니다. 환불 화면(n3)은 수리 3회 뒤에도 금액 상한 검사가 통과하지 않아 실패로 남겼고, 그 뒤의 e2e 테스트(n4)는 실행하지 않았습니다. ${icode(c, 'web/refund/RefundForm.tsx')}의 상한 규칙을 정해 주시면 n3부터 다시 돌립니다.`,
+      ),
+    ],
+    panel: dagPanel(c, [
+      { id: 'n1', title: 'n1 · 결제 테스트 구조를 조사한다', status: 'verified' },
+      {
+        id: 'n2',
+        title: 'n2 · 환불 API를 더한다',
+        status: 'verified',
+        cmd: '$ pnpm test test/refund',
+        result: 'exit 0',
+        resultColor: 'ok',
+      },
+      {
+        id: 'n3',
+        title: 'n3 · 환불 화면을 더한다',
+        status: 'failed',
+        cmd: '$ pnpm test web/refund',
+        result: 'exit 1',
+        resultColor: 'del',
+        flow: [
+          ['repair', '수리 3/3'],
+          ['fail', '마지막 수리 뒤 검증 실패'],
+        ],
+      },
+      {
+        id: 'n4',
+        title: 'n4 · e2e 테스트를 더한다',
+        status: 'blocked',
+        reason: '앞선 노드 n3이 실패했습니다.',
+      },
+    ]),
+  });
+}
+
+/** 62번 시안은 모든 노드가 검증된 화면이다. 카드 아래 줄에 계보(노드 수, 시도 수, 기준 커밋)를 남긴다. */
+function m3DagDoneScreen() {
+  const c = palette('Slate');
+  const lineage = `<Frame w="fill" h={36} flex="row" items="center" gap={8} px={14}>${I(c, 'git-commit-horizontal', 'ink3', 13)}${T(c, 12, 16, 400, 'ink2', '계보 · 노드 4개 · 시도 6회 · 기준 커밋', '')}${T(c, 12, 16, 500, 'ink', '3f9a2c1', '', mono)}${SP}${T(c, 12, 16, 400, 'ink3', '파일 9개 · +212 −14')}</Frame>`;
+  return dagWindow(c, '62 M3 Graph Done · Slate', {
+    children: [],
+    tabState: 'done',
+    composer: composerV2(c),
+    blocks: [
+      ...dagIntro(c),
+      dagCard(c, {
+        title: '그래프 · 노드 4개 · 모두 검증됨',
+        columns: [
+          [DAG_N1],
+          [
+            {
+              id: 'n2',
+              agent: 'task',
+              title: '환불 API를 더한다',
+              scope: 'src/refund/',
+              state: 'verified',
+              attempt: '시도 1',
+              after: '앞 n1',
+            },
+            {
+              id: 'n3',
+              agent: 'task',
+              title: '환불 화면을 더한다',
+              scope: 'web/refund/',
+              state: 'verified',
+              attempt: '수리 2회',
+              after: '앞 n1',
+            },
+          ],
+          [
+            {
+              id: 'n4',
+              agent: 'task',
+              title: 'e2e 테스트를 더한다',
+              scope: 'e2e/refund/',
+              state: 'verified',
+              attempt: '시도 1',
+              after: '앞 n2, n3',
+            },
+          ],
+        ],
+        footer: lineage,
+      }),
+      paraV2(
+        c,
+        `노드 4개가 모두 검증을 통과했습니다. 환불 화면(n3)은 첫 두 번의 검증에서 음수 금액과 금액 상한 검사가 실패해 수리를 두 번 거쳤습니다. 검증은 노드마다 제가 직접 돌렸고, 하위 세션의 보고는 쓰지 않았습니다.`,
+      ),
+    ],
+    panel: dagPanel(c, [
+      { id: 'n1', title: 'n1 · 결제 테스트 구조를 조사한다', status: 'verified' },
+      {
+        id: 'n2',
+        title: 'n2 · 환불 API를 더한다',
+        status: 'verified',
+        cmd: '$ pnpm test test/refund',
+        result: 'exit 0',
+        resultColor: 'ok',
+      },
+      {
+        id: 'n3',
+        title: 'n3 · 환불 화면을 더한다',
+        status: 'verified',
+        cmd: '$ pnpm test web/refund',
+        result: 'exit 0',
+        resultColor: 'ok',
+        flow: [
+          ['repair', '수리 2회'],
+          ['pass', '두 번째 수리 뒤 통과'],
+        ],
+      },
+      {
+        id: 'n4',
+        title: 'n4 · e2e 테스트를 더한다',
+        status: 'verified',
+        cmd: '$ pnpm e2e refund',
+        result: 'exit 0',
+        resultColor: 'ok',
+      },
+    ]),
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -3053,4 +3390,7 @@ export const SCREENS = [
   { file: 'm3-delegate-done-slate', jsx: m3DelegateDoneScreen },
   { file: 'm3-delegate-child-slate', jsx: m3DelegateChildScreen },
   { file: 'm3-settings-agents-slate', jsx: m3AgentsScreen },
+  { file: 'm3-graph-running-slate', jsx: m3DagRunningScreen },
+  { file: 'm3-graph-failed-slate', jsx: m3DagFailedScreen },
+  { file: 'm3-graph-done-slate', jsx: m3DagDoneScreen },
 ];
