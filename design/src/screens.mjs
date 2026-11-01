@@ -3505,7 +3505,7 @@ function m3BoardStartScreen() {
   const pop = `<Frame name="StartPopover" position="absolute" x={540} y={250} w={330} h="hug" flex="col" gap={6} p={10} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
 ${T(c, 13, 18, 600, 'ink', '어느 워크트리에서 시작할까요?', 'px={4} pt={2}')}
 ${T(c, 12, 16, 400, 'ink3', 'verifier 정의로 세션을 열고, 카드 내용을 브리프로 줍니다.', 'px={4} w="fill" textAutoResize="height"')}
-<Frame w="fill" h="hug" flex="col" gap={2} pt={4}>${option('main', '기본', true)}${option('ora/refund-ui', '실행 1', false)}${option('docs/readme-pnpm', '', false)}</Frame>
+<Frame w="fill" h="hug" flex="col" gap={2} pt={4}>${option('main', '기본 · 실행 1', true)}${option('ora/refund-ui', '실행 1', false)}${option('ora/refund-qa', '승인 대기', false)}${option('docs/readme-pnpm', '', false)}</Frame>
 <Frame w="fill" h="hug" flex="row" items="center" gap={6} pt={4}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '시작')}</Frame>
 </Frame>`;
   return boardWindow(c, '65 M3 Board Start · Slate', {
