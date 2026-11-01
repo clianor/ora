@@ -19,6 +19,13 @@ import {
 } from './interaction.ts';
 import { skillRefSchema } from './skills.ts';
 import { evidenceSchema, todoSchema, todoStatusSchema } from './todo.ts';
+import {
+  graphEndPayloadSchema,
+  graphNodePayloadSchema,
+  graphPlanPayloadSchema,
+  graphRunPayloadSchema,
+  nodeLineagePayloadSchema,
+} from './graph.ts';
 
 const jsonObjectSchema = z.record(z.string(), z.unknown());
 
@@ -318,6 +325,15 @@ export const oraEventSchema = z.discriminatedUnion('type', [
       cost: z.number().nonnegative(),
     }),
   ),
+  // `graph.plan`이 받아들인 그래프다. 노드는 부모 todo가 된다. 거부한 그래프는 이벤트 없이 tool_result에만 이유를 적는다.
+  defineEvent('graph_plan', graphPlanPayloadSchema),
+  // 그래프 실행 하나를 시작한 기록이다. 실패 뒤 다시 돌리면 `isRerun`이 true인 새 실행을 시작한다.
+  defineEvent('graph_run', graphRunPayloadSchema),
+  // 노드 상태 변경이다. `delegate_start`·`delegate_end`는 노드의 시도마다 함께 남는다.
+  defineEvent('graph_node', graphNodePayloadSchema),
+  // 시도마다 엔진이 검증한 뒤 남기는 계보다. 기준 커밋, 시도 번호, 하위 세션 ID, 검증 증거를 담는다.
+  defineEvent('node_lineage', nodeLineagePayloadSchema),
+  defineEvent('graph_end', graphEndPayloadSchema),
   // 변경 주체는 envelope의 actor다. rejected가 있으면 to는 요청된 상태이고 todo는 거부 전 스냅샷이다.
   // `current`는 이 변경 뒤에 작업 중인 todo의 ID다. 표시가 바뀐 변경에만 적고(null은 작업 중인 todo 없음), 재개는 마지막 값을 되살린다.
   defineEvent(

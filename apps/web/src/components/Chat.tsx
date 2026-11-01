@@ -35,6 +35,7 @@ import { CacheStat } from './CacheStat.tsx';
 import { CompactionMark } from './CompactionMark.tsx';
 import { ReviewNote } from './ReviewCard.tsx';
 import { DelegateCard, ReverifyNote } from './DelegateCard.tsx';
+import { GraphCard, GraphSubmitRow } from './GraphCard.tsx';
 import { MemorySavedNote } from './MemorySavedNote.tsx';
 import { ContextStat } from './ContextStat.tsx';
 import { ToolLine } from './ToolLine.tsx';
@@ -205,6 +206,8 @@ function AssistantMessage() {
               review: ReviewNote,
               memory: MemorySavedNote,
               delegate: DelegateCard,
+              graph: GraphCard,
+              'graph-submit': GraphSubmitRow,
               reverify: ReverifyNote,
             },
             Fallback: WarningNote,

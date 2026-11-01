@@ -3,6 +3,7 @@ import type {
   Actor,
   ContentBlock,
   EventOf,
+  GraphNodeSpec,
   OraEvent,
   SessionStatus,
   Stage,
@@ -233,6 +234,13 @@ export interface ResumePlan {
   readonly modelUsage: readonly { readonly model: string; readonly usage: ModelUsage }[];
   /** 비용 경고를 이미 한 번 남겼는지다. */
   readonly costWarned: boolean;
+  /** 마지막 그래프 실행이 실패로 끝났으면 있다. 사용자가 메시지를 보내 재개하면 엔진이 verified가 아닌 노드만 다시 실행한다. */
+  readonly graph?: {
+    readonly callId: string;
+    readonly nodes: readonly GraphNodeSpec[];
+    /** 지금까지 시작한 실행 수다. 다시 돌린 실행의 번호는 이 값에 1을 더한다. */
+    readonly runs: number;
+  };
 }
 
 const BATCH_EVENT_TYPES: readonly OraEvent['type'][] = [
@@ -417,6 +425,23 @@ export function planResume(
       event.type === 'verification' && todos.get(event.payload.todoId)?.evidence !== undefined,
   );
 
+  const lastGraphPlan = events.findLast(
+    (event): event is EventOf<'graph_plan'> => event.type === 'graph_plan',
+  );
+  const lastGraphEnd = events.findLast(
+    (event): event is EventOf<'graph_end'> => event.type === 'graph_end',
+  );
+  const graphFailed =
+    lastGraphPlan !== undefined && lastGraphEnd?.payload.status === 'failed'
+      ? {
+          callId: lastGraphPlan.payload.callId,
+          nodes: lastGraphPlan.payload.nodes,
+          runs: events.filter(
+            (event) =>
+              event.type === 'graph_run' && event.payload.callId === lastGraphPlan.payload.callId,
+          ).length,
+        }
+      : undefined;
   return {
     task: firstText?.type === 'text' ? firstText.text : '',
     fromStatus: lastEnd.payload.status,
@@ -429,6 +454,7 @@ export function planResume(
     history,
     ...(trim === undefined ? {} : { trim }),
     repair,
+    ...(graphFailed === undefined ? {} : { graph: graphFailed }),
     ...(resumePoint === undefined ? {} : { resumePointTodoId: resumePoint.payload.todoId }),
     lastSeq: allEvents.at(-1)?.seq ?? 0,
     afterRewind,

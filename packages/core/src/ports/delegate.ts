@@ -38,6 +38,8 @@ export interface DelegateRequest {
   readonly ledger: { spent: number };
   readonly signal: AbortSignal;
   readonly softStop: AbortSignal;
+  /** 참이면 동시 세션 상한에 자리가 없을 때 거부하지 않고 자리가 날 때까지 기다린다. */
+  readonly waitForSlot?: boolean;
   /** 부모 세션의 승인 포트다. 하위 세션의 승인 요청이 이 포트로 올라간다. */
   readonly approval?: ApprovalPort;
   /** 하위 세션을 만든 직후, 첫 모델 요청 전에 부른다. */
@@ -68,4 +70,8 @@ export type DelegateOutcome =
 /** 하위 세션을 만들고 끝날 때까지 돌린다. 구현은 호스트가 넣는다. */
 export interface DelegatePort {
   run(request: DelegateRequest): Promise<DelegateOutcome>;
+  /** 쓸 수 있는 에이전트 정의 이름이다. `graph.plan`이 없는 에이전트를 거부하는 데 쓴다. */
+  listAgentNames(cwd: string): Promise<string[]>;
+  /** `cwd`의 HEAD 커밋 해시다. git 저장소가 아니거나 커밋이 없으면 `null`이다. */
+  readHeadCommit(cwd: string): Promise<string | null>;
 }

@@ -1,8 +1,10 @@
+import { MAX_GRAPH_NODE_RETRIES } from '@ora/protocol';
 import type {
   DefaultBranchSync,
   LivePort,
   PrState,
   PrStatusResponse,
+  SessionRecord,
   SessionStatus,
 } from '@ora/protocol';
 import {
@@ -55,6 +57,17 @@ function describeSync(sync: DefaultBranchSync): string {
 }
 
 const isFinished = (state: PrState): boolean => state === 'MERGED' || state === 'CLOSED';
+
+/** 그래프 노드의 하위 세션은 위임 호출 ID가 `<그래프 호출>.r<실행 번호>.<노드 ID>.<시도 번호>`다. 이 줄은 노드 ID를 앞에 붙이고 다시 시도 횟수를 덧붙인다. */
+function getRowTitle(record: SessionRecord): string {
+  const match = /\.r\d+\.([A-Za-z][\w-]*)\.(\d+)$/.exec(record.delegatedBy?.callId ?? '');
+  if (match === null) return record.title;
+  const attempt = Number(match[2]);
+  const intent = record.title.split(' · ').slice(1).join(' · ') || record.title;
+  const retry =
+    attempt > 1 ? ` (다시 시도 ${String(attempt - 1)}/${String(MAX_GRAPH_NODE_RETRIES)})` : '';
+  return `${match[1] ?? ''} · ${intent}${retry}`;
+}
 
 function WorktreeRow({
   node,
@@ -241,7 +254,7 @@ function WorktreeRow({
                       )}
                     />
                     <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-foreground">
-                      {session.record.title}
+                      {getRowTitle(session.record)}
                     </span>
                     <span className="text-xs leading-4 text-foreground-subtle">
                       {formatShortElapsed(session.record.createdAt, now)}

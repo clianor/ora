@@ -1,4 +1,7 @@
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import { runSession } from '@ora/core';
 import type { DelegatePort, EngineDeps, EngineSettings } from '@ora/core';
 import type { OraEvent } from '@ora/protocol';
@@ -6,6 +9,9 @@ import { createSessionStorage } from '@ora/store';
 import type { Config } from './config.ts';
 import { intersectTools, mergeAgents, readAllAgents } from './isolation/agent-files.ts';
 import { createSessionId, tryAcquireSlot } from './supervisor.ts';
+
+const SLOT_POLL_MS = 100;
+const execFileAsync = promisify(execFile);
 
 export interface DelegatePortOptions {
   /** 부모 세션의 엔진 의존성이다. 하위 세션이 도구, 모델, 작업 공간을 그대로 쓴다. */
@@ -35,7 +41,25 @@ function formatBrief(brief: Parameters<DelegatePort['run']>[0]['brief']): string
 /** 하위 세션을 같은 워커 프로세스 안에서 `runSession`으로 돌린다. 부모의 대화 이력은 넘기지 않고 브리프만 넘긴다 (SPEC 2.15.1절). */
 export function createDelegatePort(options: DelegatePortOptions): DelegatePort {
   const { config, oraHome } = options;
+  let isParentSlotLent = false;
   return {
+    async listAgentNames(cwd) {
+      const agents = mergeAgents(
+        await readAllAgents({
+          projectDir: join(cwd, '.ora', 'agents'),
+          globalDir: join(oraHome, 'agents'),
+        }),
+      );
+      return agents.map((agent) => agent.name);
+    },
+    async readHeadCommit(cwd) {
+      try {
+        const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd });
+        return stdout.trim() || null;
+      } catch {
+        return null;
+      }
+    },
     async run(request) {
       const deps = options.parentDeps();
       const agents = mergeAgents(
@@ -54,10 +78,33 @@ export function createDelegatePort(options: DelegatePortOptions): DelegatePort {
         definition,
         deps.tools.filter((tool) => request.parentToolNames.includes(tool.name)),
       );
-      const release = await tryAcquireSlot(
-        join(oraHome, 'slots'),
-        config.limits.maxConcurrentSessions,
-      );
+      let release: (() => Promise<void>) | undefined;
+      if (request.waitForSlot === true) {
+        // 그래프가 도는 동안 부모 턴은 기다리기만 하므로, 부모의 슬롯을 노드 하나에 빌려 준다.
+        // 부모는 슬롯 파일을 계속 쥐고 있으니 다른 세션은 그 자리를 못 쓰고, 노드가 끝나면 빌려 준 표시만 거둔다.
+        const signal = AbortSignal.any([request.signal, request.softStop]);
+        try {
+          while (release === undefined) {
+            if (!isParentSlotLent) {
+              isParentSlotLent = true;
+              release = () => {
+                isParentSlotLent = false;
+                return Promise.resolve();
+              };
+            } else {
+              release = await tryAcquireSlot(
+                join(oraHome, 'slots'),
+                config.limits.maxConcurrentSessions,
+              );
+              if (release === undefined) await sleep(SLOT_POLL_MS, undefined, { signal });
+            }
+          }
+        } catch {
+          return { error: '자리를 기다리는 동안 취소했습니다.' };
+        }
+      } else {
+        release = await tryAcquireSlot(join(oraHome, 'slots'), config.limits.maxConcurrentSessions);
+      }
       if (release === undefined) {
         return {
           error: `동시 세션 상한(limits.maxConcurrentSessions ${config.limits.maxConcurrentSessions})에 닿아 하위 세션을 시작하지 못했습니다. 실행 중인 세션이 끝난 뒤 다시 위임합니다.`,

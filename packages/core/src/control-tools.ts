@@ -1,4 +1,4 @@
-import { questionSchema, stageSchema, todoStatusSchema } from '@ora/protocol';
+import { graphNodeSpecSchema, questionSchema, stageSchema, todoStatusSchema } from '@ora/protocol';
 import { z } from 'zod';
 import type { ToolSpec } from './ports/model.ts';
 import type { Tool } from './ports/tool.ts';
@@ -62,6 +62,9 @@ export const agentDelegateSchema = z.object({
     stopCondition: z.string().min(1),
   }),
 });
+export const graphPlanSchema = z.object({
+  nodes: z.array(graphNodeSpecSchema).min(1).max(30),
+});
 
 const CONTROL_TOOLS = {
   'todo.update': {
@@ -90,6 +93,11 @@ const CONTROL_TOOLS = {
   'memory.propose': {
     description: 'Learn 단계에서 교훈 후보를 낸다. 엔진 규칙이 기록 여부를 판정한다.',
     schema: memoryProposeSchema,
+  },
+  'graph.plan': {
+    description:
+      '작업을 노드 그래프로 제출한다. 엔진이 앞선 노드가 verified인 노드부터 하위 세션으로 실행하고 검증 명령을 직접 돌린다. 고리, 없는 노드·에이전트, 겹치는 쓰기 범위는 거부한다. writeScope를 비우면 읽기 전용이다. 그래프가 끝나면 결과를 돌려준다.',
+    schema: graphPlanSchema,
   },
   'agent.delegate': {
     description:

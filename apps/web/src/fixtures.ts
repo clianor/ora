@@ -19,6 +19,7 @@ import type {
 import type {
   Actor,
   EventOf,
+  GraphNodeState,
   OraEvent,
   OraEventType,
   PendingApproval,
@@ -1092,6 +1093,329 @@ const delegateViews: SessionView[] = [delegateRunning, delegateApproval, delegat
   ],
 );
 
+// 그래프 시안(#/session/graph-running, graph-failed, graph-done)입니다. 60~62번 시안과 같은 노드 넷입니다.
+type GraphKind = 'running' | 'failed' | 'done';
+
+const graphSpecs = [
+  {
+    id: 'n1',
+    agent: 'scout',
+    content: '결제 테스트 구조를 조사한다',
+    short: '결제 테스트 구조',
+    scope: [] as string[],
+    verify: 'pnpm test --listTests',
+    after: [] as string[],
+  },
+  {
+    id: 'n2',
+    agent: 'task',
+    content: '환불 API를 더한다',
+    short: '환불 API',
+    scope: ['src/refund/'],
+    verify: 'pnpm test test/refund',
+    after: ['n1'],
+  },
+  {
+    id: 'n3',
+    agent: 'task',
+    content: '환불 화면을 더한다',
+    short: '환불 화면',
+    scope: ['web/refund/'],
+    verify: 'pnpm test web/refund',
+    after: ['n1'],
+  },
+  {
+    id: 'n4',
+    agent: 'task',
+    content: 'e2e 테스트를 더한다',
+    short: 'e2e 테스트',
+    scope: ['e2e/refund/'],
+    verify: 'pnpm e2e refund',
+    after: ['n2', 'n3'],
+  },
+];
+const graphLevel: Record<string, number> = { n1: 1, n2: 2, n3: 2, n4: 3 };
+const graphBaseCommit = '3f9a2c1d5e6b7a8c9d0e1f2a3b4c5d6e7f8a9b0c';
+
+function createGraphViews(kind: GraphKind): SessionView[] {
+  const letter = kind[0] ?? 'r';
+  const parentId = `s-20261030-${letter}grph0`;
+  const childId = (id: string) => `s-20261030-${letter}grph${id.slice(1)}`;
+  const make = createDelegateFactory(parentId);
+  const states = {
+    running: {
+      n1: { state: 'verified', attempt: 1 },
+      n2: { state: 'verifying', attempt: 1 },
+      n3: { state: 'running', attempt: 2 },
+      n4: { state: 'queued', attempt: 0 },
+    },
+    failed: {
+      n1: { state: 'verified', attempt: 1 },
+      n2: { state: 'verified', attempt: 1 },
+      n3: { state: 'failed', attempt: 4 },
+      n4: { state: 'blocked', attempt: 0 },
+    },
+    done: {
+      n1: { state: 'verified', attempt: 1 },
+      n2: { state: 'verified', attempt: 1 },
+      n3: { state: 'verified', attempt: 3 },
+      n4: { state: 'verified', attempt: 1 },
+    },
+  }[kind] as Record<string, { state: GraphNodeState; attempt: number }>;
+  const diagnostic =
+    kind === 'running'
+      ? 'pnpm test web/refund · RefundForm.test.tsx: 금액이 음수일 때 오류 문구가 없습니다 (기대 "0보다 큰 금액을 넣습니다")'
+      : '환불 금액이 결제 금액보다 클 때 제출 단추가 꺼지지 않습니다';
+  const todoOf = (spec: (typeof graphSpecs)[number]): Todo => {
+    const runtime = states[spec.id] ?? { state: 'queued' as GraphNodeState, attempt: 0 };
+    const statusMap: Record<GraphNodeState, TodoStatus> = {
+      queued: 'pending',
+      running: 'attempted',
+      verifying: 'attempted',
+      verified: 'verified',
+      failed: 'failed',
+      blocked: 'blocked',
+    };
+    const status = statusMap[runtime.state];
+    const hasEvidence = runtime.state === 'verified' || runtime.state === 'failed';
+    return {
+      id: spec.id,
+      content: `${spec.id} · ${spec.content}`,
+      status,
+      attempts: runtime.attempt,
+      writeScope: spec.scope,
+      phase: `${String(graphLevel[spec.id])}단계`,
+      verify: { command: spec.verify, origin: 'model' },
+      ...(status === 'blocked' ? { blockedReason: '앞선 노드 n3이 실패했습니다.' } : {}),
+      ...(hasEvidence
+        ? {
+            evidence: {
+              command: spec.verify,
+              exitCode: runtime.state === 'verified' ? 0 : 1,
+              summary: runtime.state === 'verified' ? 'ok' : diagnostic,
+              origin: 'model' as const,
+              ranAt: minutesAgo(0.5),
+              scopeDigest: 'sha256:abc',
+            },
+          }
+        : {}),
+      updatedAt: minutesAgo(0.5),
+    };
+  };
+  /** 엔진이 남기는 순서대로 시도, 검증 실패, 다시 시도, 검증 통과 또는 막힘 이벤트를 만든다. */
+  const graphNodeTransitions = (
+    spec: (typeof graphSpecs)[number],
+    runtime: { state: GraphNodeState; attempt: number },
+  ): OraEvent[] => {
+    const final = todoOf(spec);
+    const step = (from: TodoStatus, to: TodoStatus): OraEvent =>
+      make('todo_update', 1, 'engine', {
+        todoId: spec.id,
+        from,
+        to,
+        todo: { ...final, status: to },
+      });
+    const verification = (isPass: boolean): OraEvent =>
+      make('verification', 1, 'engine', {
+        todoId: spec.id,
+        evidence: {
+          command: spec.verify,
+          exitCode: isPass ? 0 : 1,
+          summary: isPass ? 'ok' : diagnostic,
+          origin: 'model',
+          ranAt: minutesAgo(1),
+          scopeDigest: 'sha256:abc',
+        },
+      });
+    if (runtime.state === 'blocked') return [step('pending', 'blocked')];
+    if (runtime.attempt === 0) return [];
+    const failures = runtime.state === 'failed' ? runtime.attempt : runtime.attempt - 1;
+    const events: OraEvent[] = [step('pending', 'attempted')];
+    for (let index = 1; index <= failures; index += 1) {
+      events.push(verification(false), step('attempted', 'failed'));
+      if (index < runtime.attempt) events.push(step('failed', 'attempted'));
+    }
+    if (runtime.state === 'verified')
+      events.push(verification(true), step('attempted', 'verified'));
+    return events;
+  };
+  const todos = graphSpecs.map(todoOf);
+  const planNodes = graphSpecs.map((spec) => ({
+    id: spec.id,
+    intent: `${spec.id}가 필요하다`,
+    content: spec.content,
+    writeScope: spec.scope,
+    agent: spec.agent,
+    verifyCommand: spec.verify,
+    after: spec.after,
+  }));
+  const userText = '결제 API와 웹 화면에 부분 환불을 더하고, e2e 테스트까지 붙여 주세요.';
+  const finalText = {
+    running: undefined,
+    failed:
+      '환불 API(n2)는 검증을 통과했습니다. 환불 화면(n3)은 세 번 다시 시도해도 금액 상한 검사가 통과하지 않아 실패로 남겼고, 그 뒤의 e2e 테스트(n4)는 실행하지 않았습니다. `web/refund/RefundForm.tsx`의 상한 규칙을 정해 주시면 n3부터 다시 돌립니다.',
+    done: '노드 4개가 모두 검증을 통과했습니다. 환불 화면(n3)은 첫 두 번의 검증에서 음수 금액과 금액 상한 검사가 실패해 두 번 다시 시도했습니다. 검증은 노드마다 제가 직접 돌렸고, 하위 세션의 보고는 쓰지 않았습니다.',
+  }[kind];
+  const attempts = graphSpecs.reduce((sum, spec) => sum + (states[spec.id]?.attempt ?? 0), 0);
+  const events: OraEvent[] = [
+    make('session_start', 9, 'engine', {
+      configSummary: {},
+      isolation: 'harness',
+      permissionMode: 'always-ask',
+      instructionFiles: [],
+      promptHash: 'p-demo',
+    }),
+    make('message', 9, 'user', {
+      role: 'user',
+      content: [{ type: 'text', text: userText }],
+      instructions: [userText],
+    }),
+    make('tool_call', 8.5, 'model', {
+      callId: 'g0',
+      tool: 'graph.plan',
+      args: {
+        intent: '작업을 노드로 나눈다',
+        nodes: planNodes.map((node) => ({
+          ...node,
+          writeScope: node.id === 'n3' ? ['src/refund/'] : node.writeScope,
+        })),
+      },
+    }),
+    make('tool_result', 8.5, 'tool', {
+      callId: 'g0',
+      status: 'error',
+      summary: '거부됨\n- n2와 n3의 쓰기 범위가 src/refund/에서 겹칩니다. 범위를 나눠 다시 냅니다.',
+      durationMs: 5,
+    }),
+    make('tool_call', 8, 'model', {
+      callId: 'g1',
+      tool: 'graph.plan',
+      args: { intent: '쓰기 범위를 나눠 다시 낸다', nodes: planNodes },
+    }),
+    make('graph_plan', 8, 'engine', { callId: 'g1', nodes: planNodes }),
+    ...todos.map((todo) =>
+      make('todo_update', 8, 'engine', {
+        todoId: todo.id,
+        to: 'pending',
+        todo: {
+          ...todo,
+          status: 'pending',
+          attempts: 0,
+          evidence: undefined,
+          blockedReason: undefined,
+        },
+      }),
+    ),
+    make('objective', 8, 'engine', { text: '결제 API와 웹 화면에 부분 환불을 더한다' }),
+    make('graph_run', 8, 'engine', {
+      runId: 'g1',
+      callId: 'g1',
+      baseCommit: graphBaseCommit,
+      isRerun: false,
+    }),
+    ...graphSpecs.flatMap((spec) => {
+      const runtime = states[spec.id] ?? { state: 'queued' as GraphNodeState, attempt: 0 };
+      return [
+        make('graph_node', 1, 'engine', {
+          runId: 'g1',
+          nodeId: spec.id,
+          state: runtime.state,
+          attempt: runtime.attempt,
+          ...(runtime.attempt > 0 ? { childSessionId: childId(spec.id) } : {}),
+          ...(runtime.state === 'failed' || (runtime.state === 'running' && runtime.attempt > 1)
+            ? { diagnostic }
+            : {}),
+          ...(runtime.state === 'blocked' ? { reason: '앞선 노드 n3이 실패했습니다.' } : {}),
+        }),
+        ...graphNodeTransitions(spec, runtime),
+      ];
+    }),
+    ...(kind === 'running'
+      ? []
+      : [
+          make('graph_end', 0.6, 'engine', {
+            runId: 'g1',
+            status: kind === 'done' ? 'verified' : 'failed',
+            baseCommit: graphBaseCommit,
+            nodes: graphSpecs.map((spec) => ({
+              id: spec.id,
+              state: states[spec.id]?.state ?? 'queued',
+              attempts: states[spec.id]?.attempt ?? 0,
+            })),
+            attempts,
+            changedFiles: Array.from({ length: 9 }, (_, index) => `src/file${String(index)}.ts`),
+            added: 212,
+            deleted: 14,
+          }),
+          make('tool_result', 0.6, 'tool', {
+            callId: 'g1',
+            status: 'ok',
+            summary: '받아들임',
+            durationMs: 480_000,
+          }),
+        ]),
+    ...(finalText === undefined
+      ? []
+      : [
+          make('message', 0.4, 'model', {
+            role: 'assistant',
+            content: [{ type: 'text', text: finalText }],
+          }),
+        ]),
+  ];
+  let parentStatus: SessionStatus = 'running';
+  if (kind === 'failed') parentStatus = 'failed';
+  else if (kind === 'done') parentStatus = 'completed';
+  const parent = finishView({
+    record: {
+      ...createRecord(parentId, delegateTitle, parentStatus, 'math-demo'),
+      createdAt: minutesAgo(9),
+      updatedAt: minutesAgo(0.2),
+    },
+    events,
+    todos,
+    repoLabel: 'math-demo · main',
+    diff: kind === 'done' ? { add: 212, del: 14 } : null,
+    statusLine: [],
+  });
+  const children = graphSpecs.flatMap((spec) => {
+    const runtime = states[spec.id];
+    if (runtime === undefined || runtime.attempt === 0) return [];
+    const isLive = runtime.state === 'running';
+    return [
+      finishView({
+        record: {
+          ...createRecord(
+            childId(spec.id),
+            `${spec.agent} · ${spec.short}`,
+            isLive ? 'running' : 'completed',
+            'math-demo',
+          ),
+          createdAt: minutesAgo(3),
+          updatedAt: minutesAgo(0.2),
+          delegatedBy: {
+            sessionId: parentId,
+            callId: `g1.r1.${spec.id}.${String(runtime.attempt)}`,
+            agent: spec.agent,
+            writeScope: spec.scope,
+            maxSteps: 30,
+          },
+        },
+        events: [],
+        todos: [],
+        repoLabel: 'math-demo · main',
+        diff: null,
+        statusLine: [],
+      }),
+    ];
+  });
+  return [parent, ...children];
+}
+
+const graphViews: SessionView[] = (['running', 'failed', 'done'] as const).flatMap(
+  createGraphViews,
+);
+
 function createSession(
   record: SessionRecord,
   detail?: string,
@@ -1133,6 +1457,7 @@ const rawRepos: RepoNode[] = [
           sessionView.todos.map((t) => t.content),
         ),
         ...delegateViews.map((view) => createSession(view.record)),
+        ...graphViews.map((view) => createSession(view.record)),
       ]),
       createWorktree(
         'docs/readme-pnpm',
@@ -2637,6 +2962,7 @@ const detailedViews = new Map<string, SessionView>(
     reviewView,
     reviewSkippedView,
     ...delegateViews,
+    ...graphViews,
   ].map((view) => [view.record.id, view]),
 );
 
@@ -2663,6 +2989,9 @@ const devAliases = new Map<string, string>([
   ['delegate-approval', delegateApproval.parentId],
   ['delegate-done', delegateDone.parentId],
   ['delegate-child', delegateRunning.taskId],
+  ['graph-running', 's-20261030-rgrph0'],
+  ['graph-failed', 's-20261030-fgrph0'],
+  ['graph-done', 's-20261030-dgrph0'],
 ]);
 
 /** 이벤트가 없는 세션은 제목과 상태만 있는 빈 화면으로 보여 줍니다. */

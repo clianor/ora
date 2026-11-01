@@ -6,6 +6,8 @@ import type {
   EndReason,
   CompactionReplay,
   Evidence,
+  GraphNodeSpec,
+  GraphNodeState,
   Isolation,
   PermissionMode,
   ReviewFinding,
@@ -17,10 +19,12 @@ import type {
   ToolTier,
 } from '@ora/protocol';
 import { z } from 'zod';
+import { MAX_GRAPH_NODE_RETRIES } from '@ora/protocol';
 import {
   agentDelegateSchema,
   askUserSchema,
   buildToolSpecs,
+  graphPlanSchema,
   isControlTool,
   memoryProposeSchema,
   stageAdvanceSchema,
@@ -28,6 +32,7 @@ import {
   verifyRunSchema,
   verifyWaiveSchema,
 } from './control-tools.ts';
+import { capDiagnostic, computeLevels, validateGraph } from './graph.ts';
 import { assessRisk, decidePermission } from './permission.ts';
 import { findHarnessCliCall } from './harness-cli.ts';
 import { addedLines, findStubs, judgeGate } from './gate.ts';
@@ -415,7 +420,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     ...(canVerify ? [] : ['verify.run', 'verify.waive']),
     ...(deps.delegate === undefined ||
     (delegation?.depth ?? 0) >= (settings.maxDelegationDepth ?? 1)
-      ? ['agent.delegate']
+      ? ['agent.delegate', 'graph.plan']
       : []),
   ]);
   const specs = buildToolSpecs(deps.tools, hiddenTools);
@@ -1028,23 +1033,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     return undefined;
   };
 
-  const runVerify = async (
-    data: z.infer<typeof verifyRunSchema>,
-    callId: string,
-  ): Promise<ControlOutput> => {
-    const todo = todos.get(data.todoId);
-    if (todo === undefined) return { status: 'error', text: `todo ${data.todoId}가 없습니다.` };
-    if (todo.verify === undefined) {
-      return { status: 'error', text: 'verify 명령이 없습니다. todo.update로 먼저 선언합니다.' };
-    }
-    if (todo.status !== 'attempted' && todo.status !== 'claimed_verified') {
-      return {
-        status: 'error',
-        text: `${todo.status} 상태에서는 검증하지 않습니다. todo.update로 attempted로 바꾼 뒤 실행합니다.`,
-      };
-    }
+  /** 검증 명령을 돌리고 완성 무결성 게이트를 거쳐 증거를 `verification` 이벤트로 남긴다. `verify.run`과 그래프 노드 검증이 함께 쓴다. */
+  const verifyCommand = async (todo: Todo, command: string, callId: string) => {
     const result = await runner.run({
-      command: todo.verify.command,
+      command,
       cwd: input.cwd,
       timeoutMs: settings.shellTimeoutMs,
       signal,
@@ -1067,21 +1059,21 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         if (before === undefined) unchecked.push(shown);
         else stubs.push(...findStubs(shown, before ?? '', after));
       }
-      gate = judgeGate({ command: todo.verify.command, output, stubs, unchecked });
+      gate = judgeGate({ command, output, stubs, unchecked });
     }
     const passed = exitedClean && gate?.passed !== false;
     const origin = classifyOrigin({
-      command: todo.verify.command,
+      command,
       cwd: input.cwd,
       instructions,
       baselines: await store.readBaselines(),
       ...(startFiles === undefined ? {} : { start: startFiles }),
-      current: NODE_TEST.test(todo.verify.command)
+      current: NODE_TEST.test(command)
         ? await workspace.snapshotFiles()
-        : await workspace.statFiles(commandCandidates(todo.verify.command, input.cwd)),
+        : await workspace.statFiles(commandCandidates(command, input.cwd)),
     });
     const evidence: Evidence = {
-      command: todo.verify.command,
+      command,
       ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
       summary: summarizeOutput(output, SUMMARY_MAX_CHARS),
       origin,
@@ -1107,6 +1099,26 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             }),
       },
     });
+    return { result, scrubbedOutput, outputRef, gate, passed, origin, evidence };
+  };
+
+  const runVerify = async (
+    data: z.infer<typeof verifyRunSchema>,
+    callId: string,
+  ): Promise<ControlOutput> => {
+    const todo = todos.get(data.todoId);
+    if (todo === undefined) return { status: 'error', text: `todo ${data.todoId}가 없습니다.` };
+    if (todo.verify === undefined) {
+      return { status: 'error', text: 'verify 명령이 없습니다. todo.update로 먼저 선언합니다.' };
+    }
+    if (todo.status !== 'attempted' && todo.status !== 'claimed_verified') {
+      return {
+        status: 'error',
+        text: `${todo.status} 상태에서는 검증하지 않습니다. todo.update로 attempted로 바꾼 뒤 실행합니다.`,
+      };
+    }
+    const { result, scrubbedOutput, outputRef, gate, passed, origin, evidence } =
+      await verifyCommand(todo, todo.verify.command, callId);
     const review =
       passed && settings.reviewEnabled === true ? await reviewTodo(todo, evidence) : undefined;
     const hasMajor = review?.findings.some((finding) => finding.severity === 'major') === true;
@@ -1329,6 +1341,322 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     };
   };
 
+  interface GraphNodeResult {
+    readonly state: GraphNodeState;
+    readonly attempts: number;
+    readonly childIds: readonly string[];
+    readonly diagnostic?: string;
+    readonly reason?: string;
+  }
+
+  let todoSaveChain: Promise<void> = Promise.resolve();
+  const saveTodosInOrder = () => {
+    todoSaveChain = todoSaveChain.then(saveTodos);
+    return todoSaveChain;
+  };
+
+  const patchNodeTodo = async (id: string, patch: Partial<Todo>) => {
+    const before = todos.get(id);
+    if (before === undefined) return;
+    const next: Todo = { ...before, ...patch, updatedAt: now() };
+    if (patch.blockedReason === undefined) delete next.blockedReason;
+    todos.set(id, next);
+    await emit('engine', {
+      type: 'todo_update',
+      payload: {
+        todoId: id,
+        from: before.status,
+        to: next.status,
+        todo: next,
+        ...(reconcileCurrent() ?? {}),
+      },
+    });
+    await saveTodosInOrder();
+  };
+
+  /**
+   * 그래프의 노드를 앞선 노드가 모두 verified가 된 순서로 하위 세션에서 돌리고, 끝날 때마다 엔진이 검증 명령을 직접 돌린다.
+   * 검증이 실패하면 진단을 붙여 `task` 정의로 최대 `MAX_GRAPH_NODE_RETRIES`번 다시 시도한다. 이미 verified인 노드는 건너뛴다.
+   */
+  const runGraph = async (
+    specs: readonly GraphNodeSpec[],
+    run: { callId: string; number: number; isRerun: boolean },
+  ): Promise<{ status: 'verified' | 'failed'; text: string }> => {
+    const port = deps.delegate;
+    if (port === undefined) return { status: 'failed', text: '이 세션은 위임할 수 없습니다.' };
+    const runId = run.number === 1 ? run.callId : `${run.callId}#${run.number}`;
+    const baseCommit = await port.readHeadCommit(input.cwd);
+    await emit('engine', {
+      type: 'graph_run',
+      payload: { runId, callId: run.callId, baseCommit, isRerun: run.isRerun },
+    });
+    const byId = new Map(specs.map((spec) => [spec.id, spec]));
+    const totals = { changed: new Set<string>(), added: 0, deleted: 0 };
+    const emitNode = (
+      nodeId: string,
+      state: GraphNodeState,
+      attempt: number,
+      extra: { childSessionId?: string; diagnostic?: string; reason?: string } = {},
+    ) =>
+      emit('engine', {
+        type: 'graph_node',
+        payload: { runId, nodeId, state, attempt, ...extra },
+      });
+    const maxAttempts = 1 + MAX_GRAPH_NODE_RETRIES;
+    const isStopped = () => signal.aborted || softStop.aborted;
+
+    const runNode = async (spec: GraphNodeSpec): Promise<GraphNodeResult> => {
+      const childIds: string[] = [];
+      let diagnostic: string | undefined;
+      let attempt = 0;
+      while (attempt < maxAttempts) {
+        if (isStopped()) break;
+        attempt += 1;
+        const attemptCallId = `${run.callId}.r${run.number}.${spec.id}.${attempt}`;
+        await emitNode(spec.id, 'queued', attempt, diagnostic === undefined ? {} : { diagnostic });
+        const goal =
+          diagnostic === undefined
+            ? spec.content
+            : `${spec.content}\n\n앞선 시도는 엔진 검증을 통과하지 못했습니다. 진단:\n${diagnostic}`;
+        const attemptAgent = attempt === 1 ? spec.agent : 'task';
+        const outcome = await port.run({
+          callId: attemptCallId,
+          agent: attemptAgent,
+          intent: spec.intent,
+          brief: {
+            goal,
+            writeScope: spec.writeScope,
+            verifyCommand: spec.verifyCommand,
+            stopCondition: '검증 명령이 통과하면 멈추고 보고한다',
+          },
+          parentSessionId: input.sessionId,
+          permissionMode: settings.permissionMode,
+          parentToolNames: deps.tools
+            .map((tool) => tool.name)
+            .filter((name) => settings.toolPolicies[name] !== 'deny'),
+          depth: delegation?.depth ?? 0,
+          cwd: input.cwd,
+          ledger,
+          signal,
+          softStop,
+          waitForSlot: true,
+          ...(deps.approval === undefined ? {} : { approval: deps.approval }),
+          onStart: async (info) => {
+            childIds.push(info.sessionId);
+            await emit('engine', {
+              type: 'delegate_start',
+              payload: {
+                callId: attemptCallId,
+                agent: attemptAgent,
+                childSessionId: info.sessionId,
+                permissionMode: settings.permissionMode,
+                tools: [...info.tools],
+                brief: spec.content.slice(0, 200),
+                writeScope: [...spec.writeScope],
+                maxSteps: info.maxSteps,
+                todoId: spec.id,
+              },
+            });
+            await patchNodeTodo(spec.id, { status: 'attempted', attempts: attempt });
+            await emitNode(spec.id, 'running', attempt, {
+              childSessionId: info.sessionId,
+              ...(diagnostic === undefined ? {} : { diagnostic }),
+            });
+          },
+        });
+        if ('error' in outcome) {
+          diagnostic = capDiagnostic(outcome.error);
+          if (attempt >= maxAttempts) break;
+          continue;
+        }
+        await emit('engine', {
+          type: 'delegate_end',
+          payload: {
+            callId: attemptCallId,
+            childSessionId: outcome.sessionId,
+            status: outcome.status,
+            endReason: outcome.endReason,
+            evidence: outcome.todos.map((todo) => `${todo.id} [${todo.status}]`).join('\n'),
+            changedFiles: [...outcome.changedFiles],
+            steps: outcome.steps,
+            added: outcome.added,
+            deleted: outcome.deleted,
+            cost: outcome.cost,
+          },
+        });
+        for (const file of outcome.changedFiles) totals.changed.add(file);
+        totals.added += outcome.added;
+        totals.deleted += outcome.deleted;
+        if (outcome.endReason === 'user_cancel' || isStopped()) break;
+
+        await emitNode(spec.id, 'verifying', attempt, { childSessionId: outcome.sessionId });
+        const before = todos.get(spec.id);
+        if (before === undefined) break;
+        const verified = await verifyCommand(before, spec.verifyCommand, attemptCallId);
+        const { evidence } = verified;
+        await emit('engine', {
+          type: 'node_lineage',
+          payload: {
+            runId,
+            nodeId: spec.id,
+            attempt,
+            childSessionId: outcome.sessionId,
+            baseCommit,
+            verdict: verified.passed ? 'passed' : 'failed',
+            evidence: {
+              command: evidence.command,
+              ...(evidence.exitCode === undefined ? {} : { exitCode: evidence.exitCode }),
+              summary: evidence.summary,
+              ranAt: evidence.ranAt,
+              scopeDigest: evidence.scopeDigest,
+              ...(evidence.outputRef === undefined ? {} : { outputRef: evidence.outputRef }),
+              ...(evidence.gateFindings === undefined
+                ? {}
+                : { gateFindings: evidence.gateFindings }),
+            },
+          },
+        });
+        if (verified.passed) {
+          await patchNodeTodo(spec.id, {
+            status: 'verified',
+            evidence,
+            verify: { command: spec.verifyCommand, origin: verified.origin },
+          });
+          await emitNode(spec.id, 'verified', attempt, { childSessionId: outcome.sessionId });
+          return { state: 'verified', attempts: attempt, childIds };
+        }
+        diagnostic = capDiagnostic([...(evidence.gateFindings ?? []), evidence.summary].join('\n'));
+        await patchNodeTodo(spec.id, { status: 'failed', evidence });
+      }
+      const last = diagnostic ?? '실행을 끝까지 마치지 못했습니다.';
+      if (todos.get(spec.id)?.status !== 'failed')
+        await patchNodeTodo(spec.id, { status: 'failed' });
+      const lastChild = childIds.at(-1);
+      await emitNode(spec.id, 'failed', attempt, {
+        ...(lastChild === undefined ? {} : { childSessionId: lastChild }),
+        diagnostic: last,
+      });
+      return { state: 'failed', attempts: attempt, childIds, diagnostic: last };
+    };
+
+    const results = new Map<string, Promise<GraphNodeResult>>();
+    const launch = async (id: string): Promise<GraphNodeResult> => {
+      const spec = byId.get(id);
+      if (spec === undefined) return { state: 'failed', attempts: 0, childIds: [] };
+      if (todos.get(id)?.status === 'verified') {
+        await emitNode(id, 'verified', 0);
+        return { state: 'verified', attempts: 0, childIds: [] };
+      }
+      const afterResults = await Promise.all(spec.after.map(start));
+      const badIndex = afterResults.findIndex((result) => result.state !== 'verified');
+      if (badIndex >= 0) {
+        const badId = spec.after[badIndex];
+        const reason = `앞선 노드 ${badId}이 ${afterResults[badIndex]?.state === 'failed' ? '실패했습니다' : '막혔습니다'}.`;
+        await patchNodeTodo(id, { status: 'blocked', blockedReason: reason });
+        await emitNode(id, 'blocked', 0, { reason });
+        return { state: 'blocked', attempts: 0, childIds: [], reason };
+      }
+      return runNode(spec);
+    };
+    const start = (id: string): Promise<GraphNodeResult> => {
+      let pending = results.get(id);
+      if (pending === undefined) {
+        pending = launch(id);
+        results.set(id, pending);
+      }
+      return pending;
+    };
+    const settled = await Promise.all(specs.map((spec) => start(spec.id)));
+
+    const attempts = settled.reduce((sum, result) => sum + result.attempts, 0);
+    const status = settled.every((result) => result.state === 'verified') ? 'verified' : 'failed';
+    const changedFiles = [...totals.changed].sort();
+    await emit('engine', {
+      type: 'graph_end',
+      payload: {
+        runId,
+        status,
+        baseCommit,
+        nodes: specs.map((spec, index) => ({
+          id: spec.id,
+          state: settled[index]?.state ?? 'failed',
+          attempts: settled[index]?.attempts ?? 0,
+        })),
+        attempts,
+        changedFiles,
+        added: totals.added,
+        deleted: totals.deleted,
+      },
+    });
+    const lines = specs.flatMap((spec, index) => {
+      const result = settled[index];
+      if (result === undefined) return [];
+      const head = `- ${spec.id} [${result.state}] 시도 ${result.attempts}회 (다시 시도 ${Math.max(0, result.attempts - 1)}회)${result.childIds.length === 0 ? '' : ` 하위 세션 ${result.childIds.join(', ')}`}`;
+      const detail = result.reason ?? result.diagnostic;
+      return [detail === undefined ? head : `${head}\n  진단: ${detail.split('\n').join('\n  ')}`];
+    });
+    const text = [
+      `그래프 ${status === 'verified' ? '모두 검증됨' : '실패'} · 노드 ${specs.length}개 · 시도 ${attempts}회 · 기준 커밋 ${baseCommit?.slice(0, 7) ?? '없음'} · 파일 ${changedFiles.length}개 +${totals.added} −${totals.deleted}`,
+      ...lines,
+      '검증은 엔진이 노드마다 직접 돌렸고 하위 세션의 보고는 쓰지 않았습니다. 계보는 node_lineage 이벤트에 있습니다.',
+      ...(status === 'failed'
+        ? ['사용자가 메시지를 보내면 failed·blocked 노드만 다시 실행합니다.']
+        : []),
+    ].join('\n');
+    return { status, text };
+  };
+
+  /** 그래프를 검사해 거부하거나, 받아들여 노드를 부모 todo로 만들고 끝까지 실행한다. */
+  const runGraphPlan = async (
+    data: z.infer<typeof graphPlanSchema>,
+    call: ToolCall,
+  ): Promise<ControlOutput> => {
+    const port = deps.delegate;
+    if (port === undefined) return { status: 'error', text: '이 세션은 위임할 수 없습니다.' };
+    const reasons = validateGraph(
+      data.nodes,
+      await port.listAgentNames(input.cwd),
+      new Set(todos.keys()),
+    );
+    if (reasons.length > 0) {
+      return {
+        status: 'error',
+        text: `거부됨\n${reasons.map((reason) => `- ${reason}`).join('\n')}`,
+      };
+    }
+    await emit('engine', {
+      type: 'graph_plan',
+      payload: { callId: call.callId, nodes: data.nodes },
+    });
+    const requestText = typeof call.input.intent === 'string' ? call.input.intent.trim() : '';
+    if (objective === '' && requestText !== '' && !requestText.includes('\n')) {
+      objective = requestText.slice(0, 200);
+      await emit('engine', { type: 'objective', payload: { text: objective } });
+    }
+    const levels = computeLevels(data.nodes);
+    for (const node of data.nodes) {
+      const todo: Todo = {
+        id: node.id,
+        content: `${node.id} · ${node.content}`,
+        status: 'pending',
+        attempts: 0,
+        writeScope: [...node.writeScope],
+        phase: `${levels.get(node.id) ?? 1}단계`,
+        verify: { command: node.verifyCommand, origin: 'model' },
+        updatedAt: now(),
+      };
+      todos.set(node.id, todo);
+      ensurePhase(phaseOrder, phaseOf(todo));
+      await emit('engine', {
+        type: 'todo_update',
+        payload: { todoId: node.id, to: 'pending', todo, ...(reconcileCurrent() ?? {}) },
+      });
+    }
+    await saveTodosInOrder();
+    const outcome = await runGraph(data.nodes, { callId: call.callId, number: 1, isRerun: false });
+    return { status: 'ok', text: `받아들임\n${outcome.text}` };
+  };
+
   /** 하위 세션에 일을 맡기고 결과를 돌려준다. 하위 세션의 증거는 인정하지 않고, 연결한 부모 todo는 attempted로만 바꾼다 (SPEC 2.15.1절). */
   const runDelegate = async (
     data: z.infer<typeof agentDelegateSchema>,
@@ -1476,6 +1804,10 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       case 'agent.delegate': {
         const parsed = agentDelegateSchema.safeParse(args);
         return parsed.success ? runDelegate(parsed.data, call) : invalid(parsed.error);
+      }
+      case 'graph.plan': {
+        const parsed = graphPlanSchema.safeParse(args);
+        return parsed.success ? runGraphPlan(parsed.data, call) : invalid(parsed.error);
       }
       default: {
         const parsed = askUserSchema.safeParse(args);
@@ -2409,6 +2741,20 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
         ],
         resume.steer === undefined ? [] : [scrubText(resume.steer).text],
       );
+      if (plan.graph !== undefined && deps.delegate !== undefined) {
+        const { graph } = plan;
+        if (graph.nodes.some((node) => todos.get(node.id)?.status !== 'verified')) {
+          const rerun = await runGraph(graph.nodes, {
+            callId: graph.callId,
+            number: graph.runs + 1,
+            isRerun: true,
+          });
+          await invalidateStaleEvidence();
+          await pushUser('engine', [
+            { type: 'text', text: `실패했던 그래프를 다시 실행했습니다.\n${rerun.text}` },
+          ]);
+        }
+      }
     }
     // 진전은 todo 상태 전진, 수리 시도 증가, 새 todo 추가, 새 검증 증거, 오류 없이 끝난 도구 호출 중 하나다.
     const snapshotProgress = () =>

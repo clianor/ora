@@ -945,6 +945,7 @@ function readModelInputs(
 ): {
   system: string;
   tools: string[];
+  toolTokens: Record<string, number>;
   messages: unknown[];
   maxOutputTokens: number | null;
 }[] {
@@ -956,6 +957,7 @@ function readModelInputs(
         JSON.parse(line) as {
           system: string;
           tools: string[];
+          toolTokens: Record<string, number>;
           messages: unknown[];
           maxOutputTokens: number | null;
         },
@@ -1578,6 +1580,11 @@ test(
   '남은 자리가 너무 작으면 압축 요청을 보내지 않고 그 방식을 건너뛴다',
   async () => {
     const project = createProject();
+    // 창 크기에 딱 맞춘 시나리오라, 엔진이 도구 명세에 쓰는 추정기로 잰 graph.plan 명세의 토큰을 창에 더한다.
+    const probe = createProject();
+    await startCompactionRun(probe, [finalReport]).done;
+    const graphToolTokens = readModelInputs(probe, 'first')[0]?.toolTokens['graph.plan'] ?? 0;
+    expect(graphToolTokens).toBeGreaterThan(0);
     await startCompactionRun(
       project,
       [
@@ -1588,6 +1595,7 @@ test(
       ],
       { methodOrder: ['handoff', 'summary'] },
       'lorem ipsum '.repeat(3000),
+      COMPACTION_WINDOW + graphToolTokens,
     ).done;
 
     const { events, session } = readSession(project);

@@ -2,6 +2,7 @@ import {
   dropRewoundEvents,
   stageSchema,
   type EventOf,
+  type GraphNodeState,
   type OraEvent,
   type Stage,
   type TodoStatus,
@@ -134,6 +135,123 @@ export interface ReverifyData {
   to?: TodoStatus;
 }
 
+/** `graph.plan` 호출 줄입니다. 거부하면 이유를 줄 아래에 보입니다. */
+export interface GraphSubmitData {
+  nodeCount: number;
+  state: 'running' | 'accepted' | 'rejected';
+  reason?: string;
+}
+
+/** 그래프 카드의 노드 하나입니다. 화면 상태는 `GraphNodeState`와 시도 번호로 정합니다. */
+export interface GraphNodeView {
+  id: string;
+  agent: string;
+  title: string;
+  scope: string[];
+  after: string[];
+  state: GraphNodeState;
+  /** 시도 번호입니다. 2 이상이면 다시 시도입니다. 아직 시작하지 않았으면 0입니다. */
+  attempt: number;
+  childSessionId?: string;
+}
+
+export interface GraphCardData {
+  /** 의존 단계마다 노드를 모은 열입니다. */
+  columns: GraphNodeView[][];
+  verifiedCount: number;
+  failedCount: number;
+  nodeCount: number;
+  /** 카드 아래 줄입니다. 다시 시도에 넘긴 진단, 최종 실패 진단, 끝난 뒤의 계보 중 하나입니다. */
+  footer?:
+    | { kind: 'retry' | 'failed'; nodeId: string; attempt: number; text: string }
+    | {
+        kind: 'lineage';
+        attempts: number;
+        baseCommit: string | null;
+        fileCount: number;
+        added: number;
+        deleted: number;
+      };
+}
+
+interface GraphRuntime {
+  plan: EventOf<'graph_plan'>;
+  nodes: Map<
+    string,
+    { state: GraphNodeState; attempt: number; childSessionId?: string; diagnostic?: string }
+  >;
+  baseCommit: string | null | undefined;
+  end?: EventOf<'graph_end'>['payload'];
+}
+
+function toGraphCard(graph: GraphRuntime): GraphCardData {
+  const specs = graph.plan.payload.nodes;
+  const levels = new Map<string, number>();
+  const levelOf = (id: string): number => {
+    const known = levels.get(id);
+    if (known !== undefined) return known;
+    const spec = specs.find((item) => item.id === id);
+    const level = 1 + Math.max(0, ...(spec?.after ?? []).map(levelOf));
+    levels.set(id, level);
+    return level;
+  };
+  const views: GraphNodeView[] = specs.map((spec) => {
+    const runtime = graph.nodes.get(spec.id);
+    return {
+      id: spec.id,
+      agent: spec.agent,
+      title: spec.content,
+      scope: spec.writeScope,
+      after: spec.after,
+      state: runtime?.state ?? 'queued',
+      attempt: runtime?.attempt ?? 0,
+      ...(runtime?.childSessionId === undefined ? {} : { childSessionId: runtime.childSessionId }),
+    };
+  });
+  const columns: GraphNodeView[][] = [];
+  for (const view of views) (columns[levelOf(view.id) - 1] ??= []).push(view);
+  const verifiedCount = views.filter((view) => view.state === 'verified').length;
+  const failed = views.find((view) => view.state === 'failed');
+  const retrying = views.find(
+    (view) =>
+      view.attempt > 1 &&
+      (view.state === 'queued' || view.state === 'running' || view.state === 'verifying'),
+  );
+  let footer: GraphCardData['footer'];
+  const textOf = (id: string) => graph.nodes.get(id)?.diagnostic ?? '';
+  if (failed !== undefined) {
+    footer = {
+      kind: 'failed',
+      nodeId: failed.id,
+      attempt: failed.attempt,
+      text: textOf(failed.id),
+    };
+  } else if (retrying !== undefined) {
+    footer = {
+      kind: 'retry',
+      nodeId: retrying.id,
+      attempt: retrying.attempt,
+      text: textOf(retrying.id),
+    };
+  } else if (graph.end?.status === 'verified') {
+    footer = {
+      kind: 'lineage',
+      attempts: graph.end.attempts,
+      baseCommit: graph.end.baseCommit,
+      fileCount: graph.end.changedFiles.length,
+      added: graph.end.added,
+      deleted: graph.end.deleted,
+    };
+  }
+  return {
+    columns,
+    verifiedCount,
+    failedCount: views.filter((view) => view.state === 'failed').length,
+    nodeCount: views.length,
+    ...(footer === undefined ? {} : { footer }),
+  };
+}
+
 /** 질문 하나의 답을 짧은 글로 만듭니다. */
 function formatAnswer(
   question: string,
@@ -245,6 +363,35 @@ export function buildThread(
       delegateEnds.set(event.payload.callId, event);
       const todoId = delegateStarts.get(event.payload.callId)?.payload.todoId;
       if (todoId !== undefined) reverifyAfter.add(todoId);
+    }
+  }
+  const runToCall = new Map<string, string>();
+  const graphs = new Map<string, GraphRuntime>();
+  for (const event of events) {
+    if (event.type === 'graph_plan') {
+      graphs.set(event.payload.callId, { plan: event, nodes: new Map(), baseCommit: undefined });
+    } else if (event.type === 'graph_run') {
+      runToCall.set(event.payload.runId, event.payload.callId);
+      const graph = graphs.get(event.payload.callId);
+      if (graph !== undefined) graph.baseCommit = event.payload.baseCommit;
+    } else if (event.type === 'graph_node' || event.type === 'graph_end') {
+      const graph = graphs.get(runToCall.get(event.payload.runId) ?? '');
+      if (graph === undefined) continue;
+      if (event.type === 'graph_end') graph.end = event.payload;
+      else {
+        const { nodeId, state, attempt, childSessionId, diagnostic } = event.payload;
+        const before = graph.nodes.get(nodeId);
+        const childSession = childSessionId ?? before?.childSessionId;
+        const keptDiagnostic = diagnostic ?? before?.diagnostic;
+        graph.nodes.set(nodeId, {
+          state,
+          attempt: attempt === 0 && state === 'verified' ? (before?.attempt ?? 0) : attempt,
+          ...(childSession === undefined ? {} : { childSessionId: childSession }),
+          ...(state === 'verified' || keptDiagnostic === undefined
+            ? {}
+            : { diagnostic: keptDiagnostic }),
+        });
+      }
     }
   }
   let delegateGroup: { part: MessageContent[number]; items: DelegateItem[] } | undefined;
@@ -396,6 +543,29 @@ export function buildThread(
           delegateGroup = { part, items };
           assistantContent.push(part);
         }
+      } else if (tool === 'graph.plan') {
+        const result = results.get(callId);
+        const graph = graphs.get(callId);
+        let submit: GraphSubmitData = {
+          nodeCount: graph?.plan.payload.nodes.length ?? 0,
+          state: graph === undefined ? 'running' : 'accepted',
+        };
+        if (result !== undefined) {
+          const lines = result.summary.split('\n');
+          const reason = lines
+            .slice(lines[0] === '거부됨' ? 1 : 0)
+            .map((line) => line.replace(/^- /, ''))
+            .join(' ');
+          submit =
+            result.status === 'ok'
+              ? { nodeCount: submit.nodeCount, state: 'accepted' }
+              : { nodeCount: submit.nodeCount, state: 'rejected', reason };
+        }
+        if (submit.nodeCount === 0 && Array.isArray(args.nodes))
+          submit.nodeCount = args.nodes.length;
+        assistantContent.push({ type: 'data-graph-submit', data: submit });
+        if (graph !== undefined)
+          assistantContent.push({ type: 'data-graph', data: toGraphCard(graph) });
       } else if (tool === 'verify.run' && reverifyAfter.has(String(args.todoId))) {
         const todoId = String(args.todoId);
         const command = verifyCommands.get(todoId) ?? '';

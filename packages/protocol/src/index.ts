@@ -2,6 +2,7 @@ export * from './accounts.ts';
 export * from './agents.ts';
 export * from './common.ts';
 export * from './event.ts';
+export * from './graph.ts';
 export * from './interaction.ts';
 export * from './server.ts';
 export * from './session.ts';

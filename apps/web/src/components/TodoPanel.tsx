@@ -705,11 +705,9 @@ export function TodoPanelBody({ record, events, todos }: TodoPanelProps) {
   const currentTodo = isRunning ? todos.find((todo) => todo.id === data.current) : undefined;
   const currentId = currentTodo?.id ?? null;
   const currentPhase = currentTodo ? getPhaseName(currentTodo) : undefined;
-  const firstUnfinished = phases.find((phase) => !isPhaseDone(phase))?.name;
-  const defaultOpen = currentPhase ?? firstUnfinished;
   const anchor = currentPhase ?? '';
   const picked = choice.anchor === anchor ? choice.open : {};
-  const isOpen = (name: string): boolean => picked[name] ?? name === defaultOpen;
+  const isOpen = (phase: Phase): boolean => picked[phase.name] ?? !isPhaseDone(phase);
 
   const { verified, denominator } = getVerifiedProgress(todos);
   const abandoned = todos.length - denominator;
@@ -758,9 +756,9 @@ export function TodoPanelBody({ record, events, todos }: TodoPanelProps) {
             phase={phase}
             criterion={data.criteria.get(phase.name)}
             steps={data.steps.get(phase.name) ?? 0}
-            isOpen={isOpen(phase.name)}
+            isOpen={isOpen(phase)}
             onToggle={() => {
-              setChoice({ anchor, open: { ...picked, [phase.name]: !isOpen(phase.name) } });
+              setChoice({ anchor, open: { ...picked, [phase.name]: !isOpen(phase) } });
             }}
             currentId={currentId}
             isAwaitingApproval={record.status === 'awaiting_approval'}

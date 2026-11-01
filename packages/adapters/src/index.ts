@@ -1,5 +1,5 @@
 import { appendFile, readFile } from 'node:fs/promises';
-import { ModelLimitError, ModelServerError } from '@ora/core';
+import { ModelLimitError, ModelServerError, estimateTokens } from '@ora/core';
 import type { ModelCompactResult, ModelPort, ModelRequest, ModelStreamEvent } from '@ora/core';
 import { contentBlockSchema } from '@ora/protocol';
 import { z } from 'zod';
@@ -90,6 +90,9 @@ export async function loadScriptedModel(
           system: request.system,
           messages: request.messages,
           tools: request.tools.map((tool) => tool.name),
+          toolTokens: Object.fromEntries(
+            request.tools.map((tool) => [tool.name, estimateTokens(tool)]),
+          ),
           maxOutputTokens: request.maxOutputTokens ?? null,
         };
         await appendFile(inputLogPath, `${JSON.stringify(record)}\n`, 'utf8');
