@@ -3069,7 +3069,7 @@ const dagWindow = (
   { children, blocks, panel, tabState = 'running', composer = composerV2(c, { running: true }) },
 ) =>
   windowV3(c, name, {
-    side: sidebarV3(c, { groups: m3DelegateGroups(children, tabState !== 'done') }),
+    side: sidebarV3(c, { groups: m3DelegateGroups(children, tabState === 'running') }),
     main:
       titleTabsV3(c, {
         tabs: [{ title: '결제 API에 환불 추가', state: tabState }],
