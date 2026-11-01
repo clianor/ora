@@ -678,7 +678,7 @@ function phasesScreen() {
           flow: [
             ['try', '시도 · 스텝 4'],
             ['fail', '검증 실패 · exit 1 · 스텝 5'],
-            ['repair', '수리 1 · 스텝 6'],
+            ['repair', '다시 시도 1 · 스텝 6'],
             ['pass', '검증 통과 · exit 0 · 스텝 7'],
           ],
         },
@@ -740,7 +740,7 @@ function phaseStatesScreen() {
         flow: [
           ['more', '이전 4개 보기'],
           ['fail', '검증 실패 · exit 1 · 스텝 15'],
-          ['repair', '수리 3 · 스텝 16'],
+          ['repair', '다시 시도 3 · 스텝 16'],
           ['fail', '검증 실패 · exit 1 · 스텝 17'],
           ['block', '막힘 · 스텝 17'],
         ],
@@ -3001,7 +3001,7 @@ const DAG_STATE = {
   verified: ['circle-check', 'ok', '검증됨'],
   running: ['loader', 'ink2', '실행 중'],
   verifying: ['shield-check', 'ink2', '검증 중'],
-  repair: ['wrench', 'warn', '수리 중'],
+  repair: ['wrench', 'warn', '다시 시도 중'],
   waiting: ['circle', 'ink3', '대기'],
   failed: ['circle-x', 'del', '실패'],
   blocked: ['octagon-pause', 'warn', '막힘'],
@@ -3082,13 +3082,13 @@ const dagWindow = (
 
 /**
  * 60번 시안은 DAG가 도는 화면이다. 첫 그래프는 쓰기 범위가 겹쳐 엔진이 거부했고, 다시 낸 그래프가 돈다.
- * n2는 엔진이 검증 명령을 돌리는 중이고, n3은 첫 검증에 실패해 수리 1/3을 도는 중이다. n4는 앞선 노드를 기다린다.
+ * n2는 엔진이 검증 명령을 돌리는 중이고, n3은 첫 검증에 실패해 다시 시도 1/3을 도는 중이다. n4는 앞선 노드를 기다린다.
  */
 function m3DagRunningScreen() {
   const c = palette('Slate');
-  const diag = `<Frame w="fill" h="hug" flex="row" items="start" gap={8} px={14} py={10}>${I(c, 'wrench', 'warn', 13)}<Frame w="fill" h="hug" flex="col" gap={3}>${T(c, 12, 16, 600, 'ink', 'n3 첫 검증 실패 · 수리 노드에 넘긴 진단')}${T(c, 12, 18, 400, 'ink2', 'pnpm test web/refund · RefundForm.test.tsx: 금액이 음수일 때 오류 문구가 없습니다 (기대 "0보다 큰 금액을 넣습니다")', 'w="fill" textAutoResize="height"', mono)}</Frame></Frame>`;
+  const diag = `<Frame w="fill" h="hug" flex="row" items="start" gap={8} px={14} py={10}>${I(c, 'wrench', 'warn', 13)}<Frame w="fill" h="hug" flex="col" gap={3}>${T(c, 12, 16, 600, 'ink', 'n3 첫 검증 실패 · 다시 시도에 넘긴 진단')}${T(c, 12, 18, 400, 'ink2', 'pnpm test web/refund · RefundForm.test.tsx: 금액이 음수일 때 오류 문구가 없습니다 (기대 "0보다 큰 금액을 넣습니다")', 'w="fill" textAutoResize="height"', mono)}</Frame></Frame>`;
   return dagWindow(c, '60 M3 Graph Running · Slate', {
-    children: [{ state: 'running', title: 'n3 · 환불 화면 (수리 1/3)', age: '2분' }],
+    children: [{ state: 'running', title: 'n3 · 환불 화면 (다시 시도 1/3)', age: '2분' }],
     blocks: [
       ...dagIntro(c),
       dagCard(c, {
@@ -3111,7 +3111,7 @@ function m3DagRunningScreen() {
               title: '환불 화면을 더한다',
               scope: 'web/refund/',
               state: 'repair',
-              attempt: '수리 1/3',
+              attempt: '다시 시도 1/3',
               after: '앞 n1',
             },
           ],
@@ -3145,11 +3145,11 @@ function m3DagRunningScreen() {
           title: 'n3 · 환불 화면을 더한다',
           status: 'attempted',
           cmd: '$ pnpm test web/refund',
-          result: '수리 중',
+          result: '다시 시도 중',
           resultColor: 'warn',
           flow: [
             ['fail', '검증 실패 · 첫 시도'],
-            ['repair', '수리 1/3'],
+            ['repair', '다시 시도 1/3'],
           ],
         },
         { id: 'n4', title: 'n4 · e2e 테스트를 더한다', status: 'pending' },
@@ -3159,10 +3159,10 @@ function m3DagRunningScreen() {
   });
 }
 
-/** 61번 시안은 노드가 수리 3회 뒤에도 실패한 화면이다. 그 뒤의 n4는 막힘이 되고, 부모는 실패를 그대로 보고한다. */
+/** 61번 시안은 노드가 다시 시도 3회 뒤에도 실패한 화면이다. 그 뒤의 n4는 막힘이 되고, 부모는 실패를 그대로 보고한다. */
 function m3DagFailedScreen() {
   const c = palette('Slate');
-  const diag = `<Frame w="fill" h="hug" flex="row" items="start" gap={8} px={14} py={10}>${I(c, 'circle-x', 'del', 13)}<Frame w="fill" h="hug" flex="col" gap={3}>${T(c, 12, 16, 600, 'ink', 'n3 · 수리 3회 뒤에도 검증 실패')}${T(c, 12, 18, 400, 'ink2', 'pnpm test web/refund · RefundForm.test.tsx: 환불 금액이 결제 금액보다 클 때 제출 단추가 꺼지지 않습니다', 'w="fill" textAutoResize="height"', mono)}</Frame></Frame>`;
+  const diag = `<Frame w="fill" h="hug" flex="row" items="start" gap={8} px={14} py={10}>${I(c, 'circle-x', 'del', 13)}<Frame w="fill" h="hug" flex="col" gap={3}>${T(c, 12, 16, 600, 'ink', 'n3 · 다시 시도 3회 뒤에도 검증 실패')}${T(c, 12, 18, 400, 'ink2', 'pnpm test web/refund · RefundForm.test.tsx: 환불 금액이 결제 금액보다 클 때 제출 단추가 꺼지지 않습니다', 'w="fill" textAutoResize="height"', mono)}</Frame></Frame>`;
   return dagWindow(c, '61 M3 Graph Failed · Slate', {
     children: [],
     tabState: 'failed',
@@ -3189,7 +3189,7 @@ function m3DagFailedScreen() {
               title: '환불 화면을 더한다',
               scope: 'web/refund/',
               state: 'failed',
-              attempt: '수리 3/3',
+              attempt: '다시 시도 3/3',
               after: '앞 n1',
             },
           ],
@@ -3208,7 +3208,7 @@ function m3DagFailedScreen() {
       }),
       paraV2(
         c,
-        `환불 API(n2)는 검증을 통과했습니다. 환불 화면(n3)은 수리 3회 뒤에도 금액 상한 검사가 통과하지 않아 실패로 남겼고, 그 뒤의 e2e 테스트(n4)는 실행하지 않았습니다. ${icode(c, 'web/refund/RefundForm.tsx')}의 상한 규칙을 정해 주시면 n3부터 다시 돌립니다.`,
+        `환불 API(n2)는 검증을 통과했습니다. 환불 화면(n3)은 세 번 다시 시도해도 금액 상한 검사가 통과하지 않아 실패로 남겼고, 그 뒤의 e2e 테스트(n4)는 실행하지 않았습니다. ${icode(c, 'web/refund/RefundForm.tsx')}의 상한 규칙을 정해 주시면 n3부터 다시 돌립니다.`,
       ),
     ],
     panel: dagPanel(c, [
@@ -3229,8 +3229,8 @@ function m3DagFailedScreen() {
         result: 'exit 1',
         resultColor: 'del',
         flow: [
-          ['repair', '수리 3/3'],
-          ['fail', '마지막 수리 뒤 검증 실패'],
+          ['repair', '다시 시도 3/3'],
+          ['fail', '마지막 다시 시도 뒤 검증 실패'],
         ],
       },
       {
@@ -3273,7 +3273,7 @@ function m3DagDoneScreen() {
               title: '환불 화면을 더한다',
               scope: 'web/refund/',
               state: 'verified',
-              attempt: '수리 2회',
+              attempt: '다시 시도 2회',
               after: '앞 n1',
             },
           ],
@@ -3293,7 +3293,7 @@ function m3DagDoneScreen() {
       }),
       paraV2(
         c,
-        `노드 4개가 모두 검증을 통과했습니다. 환불 화면(n3)은 첫 두 번의 검증에서 음수 금액과 금액 상한 검사가 실패해 수리를 두 번 거쳤습니다. 검증은 노드마다 제가 직접 돌렸고, 하위 세션의 보고는 쓰지 않았습니다.`,
+        `노드 4개가 모두 검증을 통과했습니다. 환불 화면(n3)은 첫 두 번의 검증에서 음수 금액과 금액 상한 검사가 실패해 두 번 다시 시도했습니다. 검증은 노드마다 제가 직접 돌렸고, 하위 세션의 보고는 쓰지 않았습니다.`,
       ),
     ],
     panel: dagPanel(c, [
@@ -3314,8 +3314,8 @@ function m3DagDoneScreen() {
         result: 'exit 0',
         resultColor: 'ok',
         flow: [
-          ['repair', '수리 2회'],
-          ['pass', '두 번째 수리 뒤 통과'],
+          ['repair', '다시 시도 2회'],
+          ['pass', '두 번째 다시 시도 뒤 통과'],
         ],
       },
       {
