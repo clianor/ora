@@ -12,6 +12,7 @@ import {
 import type { CatalogModel } from '@ora/adapters';
 import { formatKst, parseTranscript, planResume, runSession, scrubValue } from '@ora/core';
 import type {
+  AgentDefinition,
   ApprovalPort,
   EngineDeps,
   EngineSettings,
@@ -56,6 +57,7 @@ import {
 } from './config.ts';
 import type { Config } from './config.ts';
 import { createDelegatePort } from './delegate.ts';
+import { intersectTools, mergeAgents, readAllAgents } from './isolation/agent-files.ts';
 import { createChildEnv, resolveIsolationRoot } from './isolation/child-env.ts';
 import { findHarnessFiles, listSearchDirs } from './isolation/harness-files.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
@@ -430,7 +432,9 @@ export async function executeSession(
   // 첫 모델은 세션을 시작하기 전에 만들어 계정이나 설정이 틀리면 사용 오류로 멈춘다. 나머지 체인은 필요할 때 만든다.
   const [firstModel] = models.chain('default');
   if (firstModel === undefined) throw new UsageError('default 체인에 모델이 없습니다.');
-  await models.open(firstModel);
+  if (!(command.type === 'createSession' && command.agent === 'verifier')) {
+    await models.open(firstModel);
+  }
 
   const storage = await createSessionStorage(sessionDir);
   // 워커가 죽으면 호스트가 이 파일의 셸 그룹을 종료한다. 셸은 워커와 다른 프로세스 그룹이라 워커 그룹 종료로는 닿지 않는다.
@@ -587,12 +591,42 @@ export async function executeSession(
       }
     }
   }
+  let topDefinition: AgentDefinition | undefined;
+  if (command.type === 'createSession' && command.agent !== undefined) {
+    const agents = mergeAgents(
+      await readAllAgents({
+        projectDir: join(command.cwd, '.ora', 'agents'),
+        globalDir: join(oraHome, 'agents'),
+      }),
+    );
+    topDefinition = agents.find((agent) => agent.name === command.agent);
+    if (topDefinition === undefined) {
+      throw new UsageError(`알 수 없는 에이전트 정의입니다: ${command.agent}`);
+    }
+  }
+  const verifyOnlyCommand =
+    command.type === 'createSession' && command.agent === 'verifier'
+      ? command.verifyCommand
+      : undefined;
   const outcome = await runSession(engineDeps, {
     sessionId: command.sessionId,
     task: resume?.plan.task ?? (command.type === 'createSession' ? command.task : ''),
     cwd: command.cwd,
     ...(gitRoot === undefined ? {} : { repo: gitRoot }),
     ...(baseRef === undefined ? {} : { baseRef }),
+    ...(topDefinition === undefined
+      ? {}
+      : {
+          definition: {
+            role: topDefinition.role,
+            allowedTools: intersectTools(topDefinition, engineDeps.tools),
+            systemSuffix: topDefinition.body,
+            ...(topDefinition.writePaths === undefined
+              ? {}
+              : { writePaths: topDefinition.writePaths }),
+          },
+        }),
+    ...(verifyOnlyCommand === undefined ? {} : { verifyOnly: { command: verifyOnlyCommand } }),
     settings: engineSettings,
     configSummary: {
       limits: config.limits,

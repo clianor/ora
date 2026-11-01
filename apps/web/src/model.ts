@@ -13,6 +13,12 @@ import type {
   McpServerStatus,
   SkillListResponse,
   AgentListResponse,
+  BoardCardView,
+  BoardResponse,
+  BoardWorktree,
+  CreateBoardCardBody,
+  StartBoardCardResponse,
+  UpdateBoardCardBody,
   MemoryListResponse,
   MemoryLogResponse,
   MemorySessionFeedback,
@@ -213,6 +219,16 @@ export interface OraActions {
   refreshAgents: (cwd?: string) => Promise<void>;
   /** 에이전트 정의 파일이나 폴더를 운영체제로 엽니다. 서버가 정의 폴더 밖의 경로를 거부하면 그 이유로 거부합니다. */
   openPath: (path: string, cwd?: string) => Promise<void>;
+  /** 저장소의 보드를 서버에서 다시 받고, 그 저장소를 기억해 세션 상태가 바뀔 때마다 다시 받습니다. */
+  refreshBoard: (repo: string) => Promise<void>;
+  /** 카드를 만들고 보드를 다시 읽습니다. 서버가 규칙을 어기는 요청을 거부하면 그 이유로 거부합니다. */
+  createBoardCard: (body: CreateBoardCardBody) => Promise<BoardCardView>;
+  updateBoardCard: (id: string, body: UpdateBoardCardBody) => Promise<BoardCardView>;
+  deleteBoardCard: (repo: string, id: string) => Promise<void>;
+  /** 카드를 고른 워크트리에서 시작하고 보드를 다시 읽습니다. 서버가 시작을 거부하면 그 이유로 거부합니다. */
+  startBoardCard: (repo: string, id: string, worktree: string) => Promise<StartBoardCardResponse>;
+  /** 시작 팝오버에 보일 워크트리 목록과 워크트리별 실행 중인 세션 수를 받습니다. */
+  loadBoardWorktrees: (repo: string) => Promise<BoardWorktree[]>;
   /** 메모리 목록과 마지막 전체 패스를 서버에서 다시 읽습니다. `cwd`가 있으면 그 워크트리의 프로젝트 메모리도 읽습니다. */
   refreshMemory: (cwd?: string) => Promise<void>;
   /** 메모리 하나를 지웁니다. 서버가 아카이브로 옮깁니다. 없는 항목이면 거부합니다. */
@@ -323,6 +339,13 @@ export interface SkillsData {
   list?: SkillListResponse;
 }
 
+/** 보드 화면이 그리는 값입니다. 시작 팝오버의 워크트리 목록은 팝오버를 열 때 따로 받습니다. */
+export interface BoardData {
+  status: 'loading' | 'ready' | 'error';
+  errorMessage?: string;
+  board?: BoardResponse;
+}
+
 /** 설정 › 에이전트 페이지가 그리는 데이터입니다. */
 export interface AgentsData {
   status: 'loading' | 'ready' | 'error';
@@ -389,6 +412,7 @@ export interface OraStore {
   mcpServers: McpServersData;
   skills: SkillsData;
   agents: AgentsData;
+  board: BoardData;
   memory: MemoryData;
 }
 

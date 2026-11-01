@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-export type Route = 'worktree' | 'history' | 'empty' | 'settings';
+export type Route = 'worktree' | 'history' | 'empty' | 'settings' | 'board';
 
 export type SettingsPage =
   | 'appearance'
@@ -38,6 +38,8 @@ export interface RouteState {
   route: Route;
   /** `#/worktree?cwd=<경로>`의 작업 폴더입니다. 없으면 세션이 속한 워크트리, 그것도 없으면 서버 기본 폴더입니다. */
   cwd?: string;
+  /** `#/board?repo=<저장소 경로>`의 저장소입니다. 없으면 사이드바의 첫 저장소를 엽니다. */
+  repo?: string;
   /** `&tab=<탭 ID>`의 탭입니다. 없으면 마지막으로 고른 탭을 엽니다. */
   tabId?: string;
   /** `#/session/<세션 ID>`의 세션 ID입니다. 그 세션이 속한 워크트리의 탭 화면으로 이어집니다. */
@@ -72,6 +74,14 @@ function parseHash(hash: string): RouteState {
   const isPaletteOpen = params.get('palette') === '1';
   const createWorktreeRepo = params.get('createWorktree') ?? undefined;
   const cleanupRepo = params.get('cleanup') ?? undefined;
+  if (first === 'board') {
+    return {
+      route: 'board',
+      repo: params.get('repo') ?? undefined,
+      isPaletteOpen,
+      paletteQuery,
+    };
+  }
   if (fixedRoutes.includes(first)) {
     return {
       route: first as Route,

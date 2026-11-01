@@ -18,6 +18,8 @@ import type {
 } from '@ora/protocol';
 import type {
   Actor,
+  BoardCardView,
+  BoardWorktree,
   EventOf,
   GraphNodeState,
   OraEvent,
@@ -34,6 +36,7 @@ import type {
 } from '@ora/protocol';
 import type {
   AccountsData,
+  BoardData,
   CostSettingsData,
   EngineSettingsData,
   McpServersData,
@@ -751,7 +754,7 @@ const delegateTitle = '결제 API에 환불 추가';
 const delegateScope = ['src/refund/', 'test/refund/'];
 const delegateVerify = 'pnpm test test/refund';
 const delegateBrief =
-  '## 브리프\n목표: 결제 API에 부분 환불 엔드포인트와 테스트를 더한다.\n쓰기 범위: src/refund/, test/refund/\n검증 명령: pnpm test test/refund\n중단 조건: 결제 모델 스키마를 바꿔야 하면 멈추고 보고한다.';
+  '## 작업 지시\n목표: 결제 API에 부분 환불 엔드포인트와 테스트를 추가한다.\n쓰기 범위: src/refund/, test/refund/\n검증 명령: pnpm test test/refund\n중단 조건: 결제 모델 스키마를 바꿔야 하면 멈추고 보고한다.';
 
 interface DelegateScenario {
   parentId: string;
@@ -877,7 +880,7 @@ function createDelegateParentView(scenario: DelegateScenario): SessionView {
     updatedAt: minutesAgo(0.5),
   });
   const brief = (scope: string[]) => ({
-    goal: '결제 API에 부분 환불 엔드포인트와 테스트를 더한다',
+    goal: '결제 API에 부분 환불 엔드포인트와 테스트를 추가한다',
     writeScope: scope,
     stopCondition: '결제 모델 스키마를 바꿔야 하면 멈추고 보고한다',
   });
@@ -1018,7 +1021,7 @@ function createDelegateParentView(scenario: DelegateScenario): SessionView {
             content: [
               {
                 type: 'text',
-                text: '`task`가 `POST /payments/:id/refunds`와 테스트 6개를 더했습니다. 하위 세션의 검증 결과를 그대로 쓰지 않고, 같은 명령을 다시 돌려 통과를 확인했습니다.',
+                text: '`task`가 `POST /payments/:id/refunds`와 테스트 6개를 추가했습니다. 하위 세션의 검증 결과를 그대로 쓰지 않고, 같은 명령을 다시 돌려 통과를 확인했습니다.',
               },
             ],
           }),
@@ -1109,7 +1112,7 @@ const graphSpecs = [
   {
     id: 'n2',
     agent: 'task',
-    content: '환불 API를 더한다',
+    content: '환불 API를 추가한다',
     short: '환불 API',
     scope: ['src/refund/'],
     verify: 'pnpm test test/refund',
@@ -1118,7 +1121,7 @@ const graphSpecs = [
   {
     id: 'n3',
     agent: 'task',
-    content: '환불 화면을 더한다',
+    content: '환불 화면을 추가한다',
     short: '환불 화면',
     scope: ['web/refund/'],
     verify: 'pnpm test web/refund',
@@ -1127,7 +1130,7 @@ const graphSpecs = [
   {
     id: 'n4',
     agent: 'task',
-    content: 'e2e 테스트를 더한다',
+    content: 'e2e 테스트를 추가한다',
     short: 'e2e 테스트',
     scope: ['e2e/refund/'],
     verify: 'pnpm e2e refund',
@@ -1306,7 +1309,7 @@ function createGraphViews(kind: GraphKind): SessionView[] {
         },
       }),
     ),
-    make('objective', 8, 'engine', { text: '결제 API와 웹 화면에 부분 환불을 더한다' }),
+    make('objective', 8, 'engine', { text: '결제 API와 웹 화면에 부분 환불을 추가한다' }),
     make('graph_run', 8, 'engine', {
       runId: 'g1',
       callId: 'g1',
@@ -1654,7 +1657,7 @@ const fixDef: PhaseTodoDef = {
 };
 const negativeDef: PhaseTodoDef = {
   id: 't3',
-  content: '음수 입력 검사를 check.js에 더한다',
+  content: '음수 입력 검사를 check.js에 추가한다',
   phase: '수정',
   command: 'node check.js --neg',
 };
@@ -2415,7 +2418,7 @@ const reviewTodos: Todo[] = [
   },
   {
     id: 't3',
-    content: '음수 입력 검사를 check.js에 더한다',
+    content: '음수 입력 검사를 check.js에 추가한다',
     status: 'pending',
     attempts: 0,
     writeScope: ['check.js'],
@@ -2663,10 +2666,178 @@ const fixtureAgents: AgentsData = {
         overridesBuiltin: false,
         isShadowed: true,
       },
+      ...(
+        [
+          ['builder', '카드의 작업을 맡아 구현하고 검증한다.', ['*'], ['read', 'write', 'exec']],
+          ['verifier', '모델 없이 엔진이 상위 카드의 검증 명령을 돌린다.', ['tier:read'], ['read']],
+          ['docs', '문서 경로(docs/, *.md)만 쓴다.', ['*'], ['read', 'write', 'exec']],
+          [
+            'qa',
+            '테스트 경로(test/, tests/, e2e/, *.test.*, *.spec.*)만 쓴다.',
+            ['*'],
+            ['read', 'write', 'exec'],
+          ],
+        ] as const
+      ).map(([name, description, tools, tiers]) => ({
+        name,
+        description,
+        scope: 'builtin' as const,
+        role: 'default',
+        tools: [...tools],
+        tiers: [...tiers],
+        maxSteps: name === 'verifier' ? 1 : 30,
+        overridesBuiltin: false,
+        isShadowed: false,
+      })),
     ],
     errors: [],
   },
 };
+
+/** 에이전트 보드 시안입니다. 주소는 `#/board?repo=/Users/me/projects/math-demo`입니다. */
+const boardRepo = '/Users/me/projects/math-demo';
+const boardCardBase = {
+  description: '',
+  writeScope: [],
+  sessionIds: [],
+  parentDeleted: false,
+  isLocked: false,
+  createdAt: minutesAgo(600),
+};
+const fixtureBoard: BoardData = {
+  status: 'ready',
+  board: {
+    repo: boardRepo,
+    repoName: 'math-demo',
+    cards: [
+      {
+        ...boardCardBase,
+        id: 'c-refund-api',
+        title: '환불 API를 추가한다',
+        lane: 'builder',
+        status: 'done',
+        writeScope: ['src/refund/'],
+        verifyCommand: 'pnpm test test/refund',
+        sessionIds: ['s-20261101-api001'],
+        isLocked: true,
+        lastWorktree: boardRepo,
+        lastWorktreeName: 'main',
+        lastStartedAt: minutesAgo(90),
+        lastUpdatedAt: minutesAgo(60),
+      },
+      {
+        ...boardCardBase,
+        id: 'c-refund-ui',
+        title: '환불 화면을 추가한다',
+        lane: 'builder',
+        status: 'running',
+        writeScope: ['web/refund/'],
+        verifyCommand: 'pnpm test web/refund',
+        sessionIds: ['s-20261101-ui0001'],
+        isLocked: true,
+        lastWorktree: `${boardRepo}-refund-ui`,
+        lastWorktreeName: 'ora/refund-ui',
+        lastStartedAt: minutesAgo(4),
+        lastUpdatedAt: minutesAgo(0.5),
+      },
+      {
+        ...boardCardBase,
+        id: 'v-refund-api',
+        title: '환불 API 검증',
+        lane: 'verifier',
+        status: 'not_started',
+        parentId: 'c-refund-api',
+        parentTitle: '환불 API를 추가한다',
+        verifyCommand: 'pnpm test test/refund',
+      },
+      {
+        ...boardCardBase,
+        id: 'v-refund-ui',
+        title: '환불 화면 검증',
+        lane: 'verifier',
+        status: 'not_started',
+        parentId: 'c-refund-ui',
+        parentTitle: '환불 화면을 추가한다',
+        verifyCommand: 'pnpm test web/refund',
+        startBlockedReason: '상위 카드의 세션이 실행 중이라 시작할 수 없습니다.',
+      },
+      {
+        ...boardCardBase,
+        id: 'r-refund-api',
+        title: '환불 API 검토',
+        lane: 'reviewer',
+        status: 'running',
+        parentId: 'c-refund-api',
+        parentTitle: '환불 API를 추가한다',
+        sessionIds: ['s-20261101-rev001'],
+        isLocked: true,
+        lastWorktree: boardRepo,
+        lastWorktreeName: 'main',
+        lastStartedAt: minutesAgo(2),
+        lastUpdatedAt: minutesAgo(0.2),
+      },
+      {
+        ...boardCardBase,
+        id: 'd-refund',
+        title: '환불 API 문서를 쓴다',
+        lane: 'docs',
+        status: 'not_started',
+        writeScope: ['docs/refund.md'],
+      },
+      {
+        ...boardCardBase,
+        id: 'q-refund',
+        title: '환불 금액 경계값 테스트를 추가한다',
+        lane: 'qa',
+        status: 'awaiting_approval',
+        writeScope: ['e2e/refund/'],
+        sessionIds: ['s-20261101-qa0001'],
+        isLocked: true,
+        lastWorktree: `${boardRepo}-refund-qa`,
+        lastWorktreeName: 'ora/refund-qa',
+        lastStartedAt: minutesAgo(1),
+        lastUpdatedAt: minutesAgo(0.2),
+      },
+    ],
+  },
+};
+const fixtureBoardCard: BoardCardView = {
+  ...boardCardBase,
+  id: 'c-new',
+  title: '새 카드',
+  lane: 'builder',
+  status: 'not_started',
+};
+const fixtureBoardWorktrees: BoardWorktree[] = [
+  {
+    path: boardRepo,
+    branch: 'main',
+    isMain: true,
+    runningSessions: 1,
+    awaitingApprovalSessions: 0,
+  },
+  {
+    path: `${boardRepo}-refund-ui`,
+    branch: 'ora/refund-ui',
+    isMain: false,
+    runningSessions: 1,
+    awaitingApprovalSessions: 0,
+  },
+  {
+    path: `${boardRepo}-refund-qa`,
+    branch: 'ora/refund-qa',
+    isMain: false,
+    runningSessions: 0,
+    awaitingApprovalSessions: 1,
+  },
+  {
+    path: `${boardRepo}-readme-pnpm`,
+    branch: 'docs/readme-pnpm',
+    isMain: false,
+    runningSessions: 0,
+    awaitingApprovalSessions: 0,
+  },
+];
 // 대화 끝에 메모리를 저장한 시안입니다. 주소는 `#/session/memory-saved`입니다. 설정 › 메모리 시안은 `#/settings/memory`입니다.
 const memorySessionId = 's-20261030-mem0e1';
 const makeMemory = createEventFactory(memorySessionId);
@@ -3090,6 +3261,13 @@ const fixtureActions: Omit<OraActions, StatefulActionName> = {
   dismissError: () => undefined,
   refreshSkills: () => Promise.resolve(),
   refreshAgents: () => Promise.resolve(),
+  refreshBoard: () => Promise.resolve(),
+  createBoardCard: () => Promise.resolve(fixtureBoardCard),
+  updateBoardCard: () => Promise.resolve(fixtureBoardCard),
+  deleteBoardCard: () => Promise.resolve(),
+  startBoardCard: () =>
+    Promise.resolve({ card: fixtureBoardCard, sessionId: 's-20261101-start01' }),
+  loadBoardWorktrees: () => Promise.resolve(fixtureBoardWorktrees),
   openPath: () => Promise.resolve(),
 };
 
@@ -3671,6 +3849,7 @@ export function createFixtureStore(): OraStoreSource {
     mcpServers,
     skills: fixtureSkills,
     agents: fixtureAgents,
+    board: fixtureBoard,
     memory,
   };
   return {

@@ -17,6 +17,7 @@ import {
   FolderGit2,
   GitBranch,
   History,
+  Kanban,
   Loader,
   MessageCircleQuestion,
   Plus,
@@ -353,10 +354,19 @@ interface SidebarProps {
   /** 탭 화면이 가리키는 워크트리입니다. 이 행을 고른 상태로 그립니다. */
   selectedCwd?: string;
   isHistorySelected?: boolean;
+  isBoardSelected?: boolean;
 }
 
 /** 검색칸과 기록, 저장소 → 워크트리 목록이 있는 사이드바입니다. 고른 워크트리는 카드로 묶어 진행 중인 세션을 보입니다. */
-export function Sidebar({ data, selectedCwd, isHistorySelected = false }: SidebarProps) {
+export function Sidebar({
+  data,
+  selectedCwd,
+  isHistorySelected = false,
+  isBoardSelected = false,
+}: SidebarProps) {
+  const boardRepo =
+    data.repos.find((repo) => repo.worktrees.some((node) => node.cwd === selectedCwd))?.path ??
+    data.repos.find((repo) => repo.path !== undefined)?.path;
   const now = useNow();
   return (
     <aside className="flex w-[264px] shrink-0 flex-col gap-4 border-r border-border bg-sidebar px-2 pt-3 pb-3">
@@ -391,6 +401,22 @@ export function Sidebar({ data, selectedCwd, isHistorySelected = false }: Sideba
           <History aria-hidden className="size-4" />
           <span className="flex-1">기록</span>
           <kbd className="font-sans text-xs text-foreground-subtle">⌘Y</kbd>
+        </a>
+        <a
+          href={
+            boardRepo === undefined ? '#/board' : `#/board?repo=${encodeURIComponent(boardRepo)}`
+          }
+          aria-current={isBoardSelected ? 'page' : undefined}
+          className={cn(
+            navRowClass,
+            'h-[34px]',
+            isBoardSelected
+              ? 'bg-surface-hover text-foreground'
+              : 'text-foreground-muted hover:bg-surface-hover',
+          )}
+        >
+          <Kanban aria-hidden className="size-4" />
+          <span className="flex-1">보드</span>
         </a>
       </div>
       <h2 className="px-2.5 text-xs leading-4 font-medium text-foreground-subtle">워크트리</h2>

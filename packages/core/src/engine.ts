@@ -209,6 +209,17 @@ export interface RunInput {
     readonly title?: string;
     /** 시스템 프롬프트 끝에 덧붙이는 에이전트 정의 본문이다. */
     readonly systemSuffix: string;
+    /** 있으면 `file_write`·`file_edit`이 이 경로 안에서만 쓴다 (`AgentDefinition.writePaths`). */
+    readonly writePaths?: readonly string[];
+  };
+  /** 있으면 모델을 부르지 않고 이 검증 명령만 엔진이 돌려 그 결과로 세션을 끝낸다 (`verifier` 정의). */
+  readonly verifyOnly?: { readonly command: string };
+  /** 있으면 최상위 세션이 이 에이전트 정의의 역할, 허용 도구, 쓰기 경로만 따른다. 위임과 달리 부모가 없다. */
+  readonly definition?: {
+    readonly role: string;
+    readonly allowedTools: readonly string[];
+    readonly systemSuffix: string;
+    readonly writePaths?: readonly string[];
   };
 }
 
@@ -239,6 +250,25 @@ interface CallResult {
   readonly isError: boolean;
   /** `tool_result` 이벤트에 적은 요약이다. 재개가 같은 값을 읽는다. */
   readonly summary: string;
+}
+
+/**
+ * 쓰기 경로가 정의의 `writePaths`에 드는지 판정한다. `dir/`은 그 이름의 폴더 안(깊이 무관), `*.x`는 파일 이름 패턴이다.
+ * 작업 폴더 밖과 `..`을 가진 경로는 거부한다.
+ */
+export function isWriteAllowed(path: string, cwd: string, patterns: readonly string[]): boolean {
+  const base = `${cwd.replace(/\/$/, '')}/`;
+  let relative = path;
+  if (path.startsWith('/')) relative = path.startsWith(base) ? path.slice(base.length) : '';
+  const segments = relative.split('/').filter((part) => part !== '' && part !== '.');
+  if (segments.length === 0 || segments.includes('..')) return false;
+  const name = segments[segments.length - 1] ?? '';
+  const folders = segments.slice(0, -1);
+  return patterns.some((pattern) => {
+    if (pattern.endsWith('/')) return folders.includes(pattern.slice(0, -1));
+    const source = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
+    return new RegExp(`^${source}$`).test(name);
+  });
 }
 
 interface ControlOutput extends ToolOutput {
@@ -408,12 +438,13 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
     skillTokens += tokens;
   }
   const delegation = input.delegation;
-  const mainRole = delegation?.role ?? 'default';
+  const restriction = delegation ?? input.definition;
+  const mainRole = restriction?.role ?? 'default';
   const allowedTools = new Set(
-    delegation === undefined ? deps.tools.map((tool) => tool.name) : delegation.allowedTools,
+    restriction === undefined ? deps.tools.map((tool) => tool.name) : restriction.allowedTools,
   );
   const canVerify =
-    delegation === undefined ||
+    restriction === undefined ||
     deps.tools.some((tool) => tool.tier === 'exec' && allowedTools.has(tool.name));
   const hiddenTools = new Set<string>([
     ...deps.tools.filter((tool) => !allowedTools.has(tool.name)).map((tool) => tool.name),
@@ -435,7 +466,7 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
       skills,
       skillBodies: injectedSkills,
       cwd: input.cwd,
-    }) + (delegation === undefined ? '' : `\n\n## 에이전트 정의\n${delegation.systemSuffix}`),
+    }) + (restriction === undefined ? '' : `\n\n## 에이전트 정의\n${restriction.systemSuffix}`),
   ).text;
   const promptHash = await workspace.hashText(
     JSON.stringify({
@@ -1912,6 +1943,20 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
             : `권한 거부: 이 세션의 에이전트 정의가 ${call.tool} 사용을 허용하지 않습니다.`,
       });
     }
+    if (
+      restriction?.writePaths !== undefined &&
+      (call.tool === 'file_write' || call.tool === 'file_edit') &&
+      !isWriteAllowed(
+        typeof call.input.path === 'string' ? call.input.path : '',
+        input.cwd,
+        restriction.writePaths,
+      )
+    ) {
+      return conclude({
+        status: 'error',
+        text: `쓰기 범위 밖: 이 에이전트 정의는 ${restriction.writePaths.join(', ')}만 쓸 수 있습니다.`,
+      });
+    }
     if (intent === '') {
       return conclude({
         status: 'error',
@@ -2669,6 +2714,42 @@ export async function runSession(deps: EngineDeps, input: RunInput): Promise<Run
 
   let step = 0;
   try {
+    if (input.verifyOnly !== undefined && resume === undefined) {
+      const command = input.verifyOnly.command;
+      const todoId = 'verify';
+      const pending: Todo = {
+        id: todoId,
+        content: `검증: ${command}`,
+        status: 'attempted',
+        attempts: 1,
+        writeScope: [],
+        verify: { command, origin: 'user' },
+        updatedAt: now(),
+      };
+      todos.set(todoId, pending);
+      await emit('engine', {
+        type: 'todo_update',
+        payload: { todoId, to: 'attempted', todo: pending },
+      });
+      const { passed, evidence } = await verifyCommand(pending, command, 'verify-only');
+      const done: Todo = {
+        ...pending,
+        status: passed ? 'verified' : 'failed',
+        verify: { command, origin: evidence.origin },
+        evidence,
+        updatedAt: now(),
+      };
+      todos.set(todoId, done);
+      await emit('engine', {
+        type: 'todo_update',
+        payload: { todoId, from: 'attempted', to: done.status, todo: done },
+      });
+      return await finish(
+        passed ? 'completed' : 'failed',
+        passed ? 'passed' : 'error',
+        `${command}: ${evidence.summary}`,
+      );
+    }
     if (resume !== undefined) {
       const { plan } = resume;
       if (plan.trim !== undefined) {

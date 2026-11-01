@@ -37,6 +37,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     permissionMode: permissionModeSchema.optional(),
     /** `<프로바이더>/<모델>[:<추론 강도>]`다. 주면 이 세션의 `default` 체인 맨 앞에 넣는다. */
     model: z.string().min(1).optional(),
+    /** 있으면 최상위 세션이 이 에이전트 정의를 따른다(보드 카드 시작). */
+    agent: z.string().min(1).optional(),
+    /** `agent`가 `verifier`일 때 엔진이 모델 없이 돌릴 검증 명령이다. */
+    verifyCommand: z.string().min(1).optional(),
   }),
   z.strictObject({
     type: z.literal('resumeSession'),

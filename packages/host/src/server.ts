@@ -17,6 +17,9 @@ import {
   approvalBodySchema,
   cancelBodySchema,
   createSessionBodySchema,
+  createBoardCardBodySchema,
+  startBoardCardBodySchema,
+  updateBoardCardBodySchema,
   createTerminalBodySchema,
   memoryFeedbackBodySchema,
   memoryRevertBodySchema,
@@ -72,6 +75,8 @@ import { readSessionRecordOrWarn, readTodos, readTranscriptText } from '@ora/sto
 import { z } from 'zod';
 import { UsageError, loadConfig, resolveChains, resolveSessionsDir } from './config.ts';
 import { resolveOraHome } from './isolation/ora-home.ts';
+import { BoardError, createBoardApi } from './board.ts';
+import { mergeAgents, readAllAgents } from './isolation/agent-files.ts';
 import { applyTodoActionToStoppedSession, launchSession, listSessions } from './supervisor.ts';
 import type { UserTodoAction } from '@ora/core';
 import type { LaunchRequest, SessionHandle } from './supervisor.ts';
@@ -295,6 +300,7 @@ function readCookie(header: string | undefined, name: string): string | undefine
 /** 라우터가 만든 오류를 상태 코드와 문구로 바꾼다. HTTP 서버와 IPC가 같은 규칙을 쓴다. */
 export function describeRouteError(error: unknown): { status: number; message: string } {
   if (error instanceof HttpError) return { status: error.status, message: error.message };
+  if (error instanceof BoardError) return { status: error.status, message: error.message };
   if (error instanceof AccountApiError) return { status: error.status, message: error.message };
   if (error instanceof UsageError) return { status: 409, message: error.message };
   return { status: 500, message: error instanceof Error ? error.message : String(error) };
@@ -815,6 +821,60 @@ export async function createHost(options: HostOptions): Promise<Host> {
     throw new HttpError(403, `알려진 워크트리 밖의 폴더입니다: ${cwd}`);
   };
 
+  const boardApi = createBoardApi({
+    env: options.env,
+    assertKnownWorktree,
+    resolveRepo: async (cwd) => {
+      const real = await canonicalPath(cwd);
+      return (await listWorktreePaths(real))[0] ?? real;
+    },
+    listWorktrees: async (repo) =>
+      Promise.all(
+        (await listWorktreePaths(repo)).map(async (path) => {
+          const branch = await readBranch(path);
+          return { path, ...(branch === undefined ? {} : { branch }) };
+        }),
+      ),
+    readSession: async (id) => {
+      const record = await readSessionRecordOrWarn(join(sessionsDir, id));
+      return record === undefined
+        ? undefined
+        : {
+            status: record.status,
+            ...(record.repo === undefined ? {} : { repo: await canonicalPath(record.repo) }),
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+    },
+    listSessions: async () =>
+      Promise.all(
+        (await listSessions(options.env, options.configPath)).map(async (record) => ({
+          status: record.status,
+          ...(record.repo === undefined ? {} : { repo: await canonicalPath(record.repo) }),
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        })),
+      ),
+    listAgentNames: async (cwd) =>
+      mergeAgents(
+        await readAllAgents({
+          projectDir: join(cwd, '.ora', 'agents'),
+          globalDir: join(oraHome, 'agents'),
+        }),
+      ).map((agent) => agent.name),
+    startSession: ({ task, cwd, agent, verifyCommand }) =>
+      startSession({
+        type: 'createSession',
+        task,
+        cwd,
+        agent,
+        ...(verifyCommand === undefined ? {} : { verifyCommand }),
+        ...modelArgs,
+        ...configArgs,
+        ...isolationArgs,
+      }),
+  });
+
   /**
    * 실행 중인 세션의 스텝 수(목적 없는 `model_request` 줄 수)다. 웹이 이벤트가 올 때마다 세션 목록을 다시 받으므로,
    * 파일 전체를 매번 읽지 않고 지난번에 읽은 위치 뒤에 붙은 바이트만 읽어 센다. 끝나지 않은 마지막 줄은 바이트로 남겨 다음에 잇는다.
@@ -1116,6 +1176,43 @@ export async function createHost(options: HostOptions): Promise<Host> {
       await assertKnownWorktree(rawCwd);
       reply(res, 200, await skillsApi.list(await canonicalPath(rawCwd)));
       return;
+    }
+    if (segments[1] === 'board') {
+      const repoQuery = () =>
+        parseBody(tabsQuerySchema, { cwd: url.searchParams.get('repo') ?? '' }).cwd;
+      const rest = segments.slice(2);
+      if (rest.length === 0 && method === 'GET') {
+        reply(res, 200, await boardApi.read(repoQuery()));
+        return;
+      }
+      if (rest[0] === 'worktrees' && rest.length === 1 && method === 'GET') {
+        reply(res, 200, { worktrees: await boardApi.listWorktrees(repoQuery()) });
+        return;
+      }
+      if (rest[0] === 'cards' && rest.length === 1 && method === 'POST') {
+        const { repo, ...body } = parseBody(createBoardCardBodySchema, await readJson(req));
+        reply(res, 201, { card: await boardApi.createCard(repo, body) });
+        return;
+      }
+      const cardId = rest[1];
+      if (rest[0] === 'cards' && cardId !== undefined && rest.length === 2) {
+        if (method === 'PATCH') {
+          const { repo, ...body } = parseBody(updateBoardCardBodySchema, await readJson(req));
+          reply(res, 200, { card: await boardApi.updateCard(repo, cardId, body) });
+          return;
+        }
+        if (method === 'DELETE') {
+          await boardApi.deleteCard(repoQuery(), cardId);
+          reply(res, 200, { ok: true });
+          return;
+        }
+      }
+      if (rest[0] === 'cards' && cardId !== undefined && rest[2] === 'start' && method === 'POST') {
+        const body = parseBody(startBoardCardBodySchema, await readJson(req));
+        reply(res, 201, await boardApi.startCard(body.repo, cardId, body.worktree));
+        return;
+      }
+      throw new HttpError(405, '허용하지 않는 메서드입니다.');
     }
     if (segments[1] === 'agents' && segments.length === 2) {
       if (method !== 'GET') throw new HttpError(405, '허용하지 않는 메서드입니다.');

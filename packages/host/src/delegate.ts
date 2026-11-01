@@ -30,7 +30,7 @@ const isFileWrite = (tool: string): boolean => tool === 'file_write' || tool ===
 
 function formatBrief(brief: Parameters<DelegatePort['run']>[0]['brief']): string {
   return [
-    '## 브리프',
+    '## 작업 지시',
     `목표: ${brief.goal}`,
     `쓰기 범위: ${brief.writeScope.length === 0 ? '없음(파일을 바꾸지 않는다)' : brief.writeScope.join(', ')}`,
     `검증 명령: ${brief.verifyCommand ?? '없음'}`,
@@ -38,7 +38,7 @@ function formatBrief(brief: Parameters<DelegatePort['run']>[0]['brief']): string
   ].join('\n');
 }
 
-/** 하위 세션을 같은 워커 프로세스 안에서 `runSession`으로 돌린다. 부모의 대화 이력은 넘기지 않고 브리프만 넘긴다 (SPEC 2.15.1절). */
+/** 하위 세션을 같은 워커 프로세스 안에서 `runSession`으로 돌린다. 상위 세션의 대화 이력은 넘기지 않고 작업 지시만 넘긴다 (SPEC 2.15.1절). */
 export function createDelegatePort(options: DelegatePortOptions): DelegatePort {
   const { config, oraHome } = options;
   let isParentSlotLent = false;
@@ -220,6 +220,7 @@ export function createDelegatePort(options: DelegatePortOptions): DelegatePort {
             ledger: request.ledger,
             title: `${definition.name} · ${request.intent}`,
             systemSuffix: definition.body,
+            ...(definition.writePaths === undefined ? {} : { writePaths: definition.writePaths }),
           },
         });
         return {

@@ -1,5 +1,6 @@
 export { UsageError } from './config.ts';
 export { createAgentsApi } from './agents-api.ts';
+export { BoardError, createBoardApi } from './board.ts';
 export { createMemoryApi } from './memory-api.ts';
 export { listAccounts, loginAccount, logoutAccount } from './accounts.ts';
 export { CancelledBeforeStartError, launchSession, listSessions } from './supervisor.ts';

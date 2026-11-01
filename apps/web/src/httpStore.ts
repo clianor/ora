@@ -9,6 +9,10 @@ import {
   mcpServerListResponseSchema,
   skillListResponseSchema,
   agentListResponseSchema,
+  boardCardResponseSchema,
+  boardResponseSchema,
+  boardWorktreesResponseSchema,
+  startBoardCardResponseSchema,
   memoryDeleteResponseSchema,
   memoryListResponseSchema,
   memoryPassSummarySchema,
@@ -85,6 +89,7 @@ import type {
   McpServersData,
   SkillsData,
   AgentsData,
+  BoardData,
   MemoryData,
   OraActions,
   OraStore,
@@ -351,6 +356,9 @@ export function createHttpStore(
   let skillsCwd: string | undefined;
   let agents: AgentsData = { status: 'loading' };
   let agentsCwd: string | undefined;
+  let board: BoardData = { status: 'loading' };
+  let boardRepo: string | undefined;
+  let boardPollTimer: ReturnType<typeof setTimeout> | null = null;
   /** 세션 목록이 알려 준, 실행 중인 세션의 지금까지 스텝 수입니다. */
   const stepCounts = new Map<string, number>();
   let memory: MemoryData = { status: 'loading' };
@@ -470,6 +478,7 @@ export function createHttpStore(
       mcpServers,
       skills,
       agents,
+      board,
       memory,
     };
   };
@@ -542,6 +551,7 @@ export function createHttpStore(
       refreshList().catch(() => undefined);
       refreshSkills(skillsCwd).catch(() => undefined);
       refreshAgents(agentsCwd).catch(() => undefined);
+      if (boardRepo !== undefined) refreshBoard(boardRepo).catch(() => undefined);
       refreshMemory(memoryCwd).catch(() => undefined);
     }, refreshDelayMs);
   };
@@ -789,6 +799,34 @@ export function createHttpStore(
       };
     } catch (error) {
       agents = { status: 'error', errorMessage: toMessage(error) };
+    }
+    notifySoon();
+  };
+  const refreshBoard = async (repo: string): Promise<void> => {
+    boardRepo = repo;
+    try {
+      board = {
+        status: 'ready',
+        board: await requestJson(
+          `/api/board?repo=${encodeURIComponent(repo)}`,
+          boardResponseSchema,
+        ),
+      };
+    } catch (error) {
+      board = { status: 'error', errorMessage: toMessage(error) };
+    }
+    // 세션이 도는 동안과 방금 시작해 서버가 기록을 쓰기 전에는 2초마다 다시 읽어 상태를 맞춥니다.
+    const isSettling = board.board?.cards.some(
+      (card) =>
+        card.status === 'running' ||
+        card.status === 'awaiting_approval' ||
+        (card.isLocked && card.lastStartedAt === undefined),
+    );
+    if (isSettling === true) {
+      boardPollTimer ??= setTimeout(() => {
+        boardPollTimer = null;
+        if (boardRepo !== undefined) refreshBoard(boardRepo).catch(() => undefined);
+      }, 2000);
     }
     notifySoon();
   };
@@ -1106,6 +1144,49 @@ export function createHttpStore(
     refreshMcpServers,
     refreshSkills,
     refreshAgents,
+    refreshBoard,
+    createBoardCard: async (body) => {
+      const { card } = await requestJson('/api/board/cards', boardCardResponseSchema, {
+        method: 'POST',
+        body,
+      });
+      await refreshBoard(body.repo);
+      return card;
+    },
+    updateBoardCard: async (id, body) => {
+      const { card } = await requestJson(
+        `/api/board/cards/${encodeURIComponent(id)}`,
+        boardCardResponseSchema,
+        { method: 'PATCH', body },
+      );
+      await refreshBoard(body.repo);
+      return card;
+    },
+    deleteBoardCard: async (repo, id) => {
+      await requestJson(
+        `/api/board/cards/${encodeURIComponent(id)}?repo=${encodeURIComponent(repo)}`,
+        okResponseSchema,
+        { method: 'DELETE' },
+      );
+      await refreshBoard(repo);
+    },
+    startBoardCard: async (repo, id, worktree) => {
+      const started = await requestJson(
+        `/api/board/cards/${encodeURIComponent(id)}/start`,
+        startBoardCardResponseSchema,
+        { method: 'POST', body: { repo, worktree } },
+      );
+      await refreshList();
+      await refreshBoard(repo);
+      return started;
+    },
+    loadBoardWorktrees: async (repo) =>
+      (
+        await requestJson(
+          `/api/board/worktrees?repo=${encodeURIComponent(repo)}`,
+          boardWorktreesResponseSchema,
+        )
+      ).worktrees,
     openPath: async (path, cwd) => {
       await requestJson('/api/open-path', okResponseSchema, {
         method: 'POST',
@@ -1271,6 +1352,7 @@ export function createHttpStore(
     mcpServers,
     skills,
     agents,
+    board,
     memory,
   };
 

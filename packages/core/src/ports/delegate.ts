@@ -11,6 +11,8 @@ export interface AgentDefinition {
   /** 하위 세션의 시스템 프롬프트에 덧붙인다. */
   readonly body: string;
   readonly scope: 'project' | 'global' | 'builtin';
+  /** 있으면 `file_write`·`file_edit`이 이 경로 안에서만 쓴다. 디렉터리는 `docs/`, 파일 이름 패턴은 `*.md`로 적는다. 없으면 제한이 없다. */
+  readonly writePaths?: readonly string[];
   /** 정의 파일의 실제 경로다. 기본 제공 정의에는 없다. */
   readonly path?: string;
 }

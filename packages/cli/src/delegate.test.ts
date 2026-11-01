@@ -223,7 +223,15 @@ test(
       isShadowed: true,
     });
     expect(list.global.map((agent) => agent.name)).toContain('db-migrator');
-    expect(list.builtin.map((agent) => agent.name)).toEqual(['scout', 'task', 'reviewer']);
+    expect(list.builtin.map((agent) => agent.name)).toEqual([
+      'scout',
+      'task',
+      'reviewer',
+      'builder',
+      'verifier',
+      'docs',
+      'qa',
+    ]);
     expect(list.builtin.find((agent) => agent.name === 'reviewer')).toMatchObject({
       isShadowed: true,
     });
@@ -306,7 +314,7 @@ test(
     const inputs = readModelInputs(project);
     const first = inputs.find((input) => input.system.includes(CHILD_MARK));
     const text = JSON.stringify(first?.messages);
-    expect(text).toContain('## 브리프');
+    expect(text).toContain('## 작업 지시');
     expect(text).not.toContain('결제 모듈을 손본다');
   },
   TEST_TIMEOUT_MS,

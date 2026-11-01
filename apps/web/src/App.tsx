@@ -7,6 +7,7 @@ import { AppearancePage, SettingsNav } from './components/Settings.tsx';
 import { McpPage } from './components/McpPage.tsx';
 import { SkillsPage } from './components/SkillsPage.tsx';
 import { AgentsPage } from './components/AgentsPage.tsx';
+import { BoardScreen } from './components/BoardPage.tsx';
 import { MemoryPage } from './components/MemoryPage.tsx';
 import { GeneralPage, IsolationPage, KeysPage } from './components/EngineSettings.tsx';
 import { ReposPage } from './components/ReposPage.tsx';
@@ -60,6 +61,8 @@ function Screen({ state }: { state: RouteState }) {
       return <WorktreeScreen state={state} />;
     case 'history':
       return <HistoryScreen />;
+    case 'board':
+      return <BoardScreen repo={state.repo} />;
     case 'settings': {
       const page = state.settingsPage ?? 'appearance';
       return (

@@ -1,5 +1,6 @@
 export * from './accounts.ts';
 export * from './agents.ts';
+export * from './board.ts';
 export * from './common.ts';
 export * from './event.ts';
 export * from './graph.ts';
