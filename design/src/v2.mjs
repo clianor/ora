@@ -212,8 +212,9 @@ const SESSION_ICON = {
  * 왼쪽 사이드바(Orca 구조). 맨 위 검색칸, 기록 항목, 워크트리 묶음 순서다.
  * 고른 worktree는 테두리 카드로 묶고, 그 안에 실행 중이거나 답을 기다리는 세션을 보인다. 끝난 세션은 기록 화면에서 찾는다.
  * groups는 [{ repo, worktrees: [{ name, base, selected, sessions: [{ state, title, model, age }] }] }]이다.
+ * board가 있으면 기록 아래에 "보드" 항목을 두고, 'active'이면 고른 상태로 그린다.
  */
-export function sidebarV3(c, { groups }) {
+export function sidebarV3(c, { groups, board = null }) {
   const lights = ['#FF5F57', '#FEBC2E', '#28C840']
     .map((x) => `<Ellipse w={12} h={12} bg="${x}" />`)
     .join('');
@@ -271,6 +272,7 @@ export function sidebarV3(c, { groups }) {
 <Frame w="fill" h="hug" flex="col" gap={4} px={10} pt={4}>
 <Frame w="fill" h={34} flex="row" items="center" gap={8} px={10} rounded={8} bg="${c.raised}">${I(c, 'search', 'ink3', 15)}${T(c, 14, 20, 400, 'ink3', '세션, 워크트리 검색', 'grow={1}')}${kbd(c, '⌘K')}</Frame>
 <Frame w="fill" h={34} flex="row" items="center" gap={10} px={10} rounded={8}>${I(c, 'history', 'ink2', 16)}${T(c, 14, 20, 400, 'ink2', '기록', 'grow={1}')}${T(c, 12, 16, 400, 'ink3', '⌘Y')}</Frame>
+${board ? `<Frame w="fill" h={34} flex="row" items="center" gap={10} px={10} rounded={8} ${board === 'active' ? `bg="${c.hover}"` : ''}>${I(c, 'kanban', board === 'active' ? 'ink' : 'ink2', 16)}${T(c, 14, 20, board === 'active' ? 500 : 400, board === 'active' ? 'ink' : 'ink2', '보드', 'grow={1}')}</Frame>` : ''}
 </Frame>
 <Frame w="fill" h="hug" flex="col" gap={4} px={10} pt={14}>
 <Frame w="fill" h={30} flex="row" items="center" gap={12} px={10}>${T(c, 13, 18, 500, 'ink3', '워크트리', 'grow={1}')}${I(c, 'sliders-horizontal', 'ink3', 14)}${I(c, 'plus', 'ink3', 15)}</Frame>

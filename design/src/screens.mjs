@@ -3330,6 +3330,190 @@ function m3DagDoneScreen() {
   });
 }
 
+/**
+ * 에이전트 보드(2.16절) 시안에서 함께 쓰는 값. 열은 레인 다섯 개이고, 카드는 사용자가 만든 작업 항목이다.
+ * 카드 상태는 그 카드로 연 세션의 상태를 따르며, 아이콘과 글자로 함께 보인다.
+ */
+const BOARD_STATE = {
+  idle: ['circle', 'ink3', '시작 전'],
+  running: ['loader', 'ink2', '실행 중'],
+  approval: ['shield-alert', 'warn', '승인 대기'],
+  done: ['circle-check', 'ok', '끝남'],
+  failed: ['circle-x', 'del', '실패'],
+};
+const BOARD_LANES = [
+  ['builder', 'hammer', '구현'],
+  ['verifier', 'shield-check', '검사'],
+  ['reviewer', 'scan-eye', '검토'],
+  ['docs', 'book-open', '문서'],
+  ['qa', 'flask-conical', '테스트'],
+];
+const boardCard = (
+  c,
+  { title, state, parent = '', scope = '', session = '', actions = '', note = '', picked = false },
+) => {
+  const [icon, col, label] = BOARD_STATE[state];
+  return `<Frame w="fill" h="hug" flex="col" gap={6} p={10} rounded={8} bg="${c.window}" stroke="${picked ? c.borderStrong : c.line}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h="hug" flex="row" items="center" gap={5}>${I(c, icon, col, 12)}${T(c, 12, 16, 500, col, label)}${SP}${session ? T(c, 11, 14, 400, 'ink3', session) : ''}</Frame>
+${T(c, 13, 18, 500, 'ink', title, 'w="fill" maxLines={2} textAutoResize="height"')}
+${parent ? `<Frame w="fill" h="hug" flex="row" items="center" gap={4}>${I(c, 'corner-down-right', 'ink3', 11)}${T(c, 11, 14, 400, 'ink3', `부모: ${parent}`, 'w="fill" maxLines={1} truncate')}</Frame>` : ''}
+${scope ? T(c, 11, 14, 400, 'ink3', scope, 'w="fill" maxLines={1} truncate', mono) : ''}
+${note ? T(c, 11, 15, 400, 'ink2', note, 'w="fill" textAutoResize="height"') : ''}
+${actions ? `<Frame w="fill" h="hug" flex="row" wrap={true} items="center" gap={6}>${actions}</Frame>` : ''}
+</Frame>`;
+};
+const smallButton = (c, label, { icon = null, primary = false, disabled = false } = {}) =>
+  `<Frame w="hug" h={26} flex="row" items="center" gap={5} px={9} rounded={6} ${primary ? `bg="${c.primary}"` : `bg="${c.hover}"`} ${disabled ? 'opacity={0.45}' : ''}>${icon ? I(c, icon, primary ? 'onPrimary' : 'ink', 12) : ''}${T(c, 12, 16, 500, primary ? 'onPrimary' : 'ink', label)}</Frame>`;
+/** 보드 화면. cards는 레인 이름을 키로 한 카드 JSX 목록이다. overlay는 창 위에 겹칠 창이나 팝오버다. */
+const boardWindow = (c, name, { cards, overlay = '' }) => {
+  const column = ([lane, icon, label]) =>
+    `<Frame w="fill" h="fill" flex="col" gap={8} p={8} rounded={10} bg="${c.raised}">
+<Frame w="fill" h={28} flex="row" items="center" gap={6} px={4}>${I(c, icon, 'ink2', 13)}${T(c, 13, 18, 600, 'ink', lane, '', mono)}${T(c, 12, 16, 400, 'ink3', label)}${SP}${T(c, 12, 16, 500, 'ink3', String((cards[lane] ?? []).length), '', mono)}</Frame>
+${(cards[lane] ?? []).join('')}
+</Frame>`;
+  const head = `<Frame w="fill" h="hug" flex="row" items="center" gap={12} px={20} pt={16} pb={12}>${I(c, 'kanban', 'ink', 18)}${T(c, 18, 26, 600, 'ink', '보드')}${T(c, 14, 20, 400, 'ink3', 'math-demo')}${SP}<Frame w="hug" h="hug" flex="row" items="center" gap={8}>${v3Toggle(c, false)}${T(c, 13, 18, 400, 'ink2', '끝난 카드 숨기기')}</Frame>${button(c, 'primary', '카드 만들기', { icon: 'plus' })}</Frame>`;
+  return windowV3(c, name, {
+    side: sidebarV3(c, {
+      board: 'active',
+      groups: [
+        {
+          repo: 'math-demo',
+          worktrees: [
+            { name: 'main', base: true, running: 1 },
+            { name: 'ora/refund-ui', running: 1 },
+            { name: 'ora/refund-qa', status: ['shield-alert', '승인 대기', 'warn'] },
+            { name: 'docs/readme-pnpm' },
+          ],
+        },
+        V3_GROUPS[1],
+      ],
+    }),
+    main: `${head}<Frame w="fill" h="fill" flex="row" gap={10} px={20} pb={16}>${BOARD_LANES.map(column).join('')}</Frame>`,
+    status: statusBarV3(c, V3_STATUS),
+    overlay,
+  });
+};
+const boardCards = (c, { verifierPicked = false } = {}) => ({
+  builder: [
+    boardCard(c, {
+      title: '환불 API를 더한다',
+      state: 'done',
+      scope: 'src/refund/',
+      session: 'main · 1시간 전',
+      actions: `${smallButton(c, '검증 카드 만들기', { icon: 'shield-check' })}${smallButton(c, '검토 카드 만들기', { icon: 'scan-eye' })}`,
+    }),
+    boardCard(c, {
+      title: '환불 화면을 더한다',
+      state: 'running',
+      scope: 'web/refund/',
+      session: 'ora/refund-ui · 4분',
+      actions: smallButton(c, '세션 열기', { icon: 'arrow-up-right' }),
+    }),
+  ],
+  verifier: [
+    boardCard(c, {
+      title: '환불 API 검사',
+      state: 'idle',
+      parent: '환불 API를 더한다',
+      scope: '$ pnpm test test/refund',
+      picked: verifierPicked,
+      actions: smallButton(c, '시작', { icon: 'play', primary: true }),
+    }),
+    boardCard(c, {
+      title: '환불 화면 검사',
+      state: 'idle',
+      parent: '환불 화면을 더한다',
+      scope: '$ pnpm test web/refund',
+      note: '부모 카드가 실행 중이라 시작할 수 없습니다.',
+      actions: smallButton(c, '시작', { icon: 'play', disabled: true }),
+    }),
+  ],
+  reviewer: [
+    boardCard(c, {
+      title: '환불 API 검토',
+      state: 'running',
+      parent: '환불 API를 더한다',
+      session: 'main · 2분',
+      actions: smallButton(c, '세션 열기', { icon: 'arrow-up-right' }),
+    }),
+  ],
+  docs: [
+    boardCard(c, {
+      title: '환불 API 문서를 쓴다',
+      state: 'idle',
+      scope: 'docs/refund.md',
+      actions: smallButton(c, '시작', { icon: 'play', primary: true }),
+    }),
+  ],
+  qa: [
+    boardCard(c, {
+      title: '환불 금액 경계값 테스트를 더한다',
+      state: 'approval',
+      scope: 'e2e/refund/',
+      session: 'ora/refund-qa · 1분',
+      actions: smallButton(c, '세션 열기', { icon: 'arrow-up-right' }),
+    }),
+  ],
+});
+
+/** 63번 시안은 보드 화면이다. 끝난 builder 카드에 검증·검토 카드 만들기를 두고, 부모가 실행 중인 verifier 카드는 시작을 끄고 이유를 보인다. */
+function m3BoardScreen() {
+  const c = palette('Slate');
+  return boardWindow(c, '63 M3 Board · Slate', { cards: boardCards(c) });
+}
+
+/**
+ * 64번 시안은 카드 만들기 창이다. 끝난 builder 카드에서 "검증 카드 만들기"를 눌러 연 상태라, 창이 레인과 부모를 미리 채운다.
+ * verifier 카드는 파일을 쓰지 않으므로 쓰기 범위 칸을 끄고, 검증 명령은 부모 카드에서 가져온다.
+ */
+function m3BoardCreateScreen() {
+  const c = palette('Slate');
+  const field = (label, body, hint = '') =>
+    `<Frame w="fill" h="hug" flex="col" gap={6}>${T(c, 12, 16, 500, 'ink2', label)}${body}${hint ? T(c, 11, 15, 400, 'ink3', hint, 'w="fill" textAutoResize="height"') : ''}</Frame>`;
+  const input = (text, { mono: isMono = false, muted = false, h = 34 } = {}) =>
+    `<Frame w="fill" h={${h}} flex="row" items="${h > 34 ? 'start' : 'center'}" px={10} py={${h > 34 ? 8 : 0}} rounded={7} bg="${c.window}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside" ${muted ? 'opacity={0.5}' : ''}>${T(c, 13, 18, 400, muted ? 'ink3' : 'ink', text, 'w="fill" textAutoResize="height"', isMono ? mono : undefined)}</Frame>`;
+  const lanes = `<Frame w="fill" h={32} flex="row" items="center" gap={2} p={2} rounded={8} bg="${c.window}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${BOARD_LANES.map(
+    ([lane, icon]) =>
+      `<Frame w="fill" h={26} flex="row" items="center" justify="center" gap={5} rounded={6} ${lane === 'verifier' ? `bg="${c.hover}"` : ''}>${lane === 'verifier' ? I(c, 'check', 'ink', 12) : I(c, icon, 'ink3', 12)}${T(c, 12, 16, lane === 'verifier' ? 600 : 400, lane === 'verifier' ? 'ink' : 'ink2', lane, '', mono)}</Frame>`,
+  ).join('')}</Frame>`;
+  const dialog = `<Frame name="CreateCard" position="absolute" x={490} y={110} w={520} h="hug" flex="col" rounded={14} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+<Frame w="fill" h={48} flex="row" items="center" gap={8} px={18}>${T(c, 15, 20, 600, 'ink', '카드 만들기')}${SP}${I(c, 'x', 'ink3', 15)}</Frame>
+${hr(c)}
+<Frame w="fill" h="hug" flex="col" gap={14} p={18}>
+${field('제목', input('환불 API 검사'))}
+${field('레인', lanes, '레인 이름과 같은 에이전트 정의로 세션을 엽니다.')}
+${field('부모 카드', `<Frame w="fill" h={34} flex="row" items="center" gap={8} px={10} rounded={7} bg="${c.window}" stroke="${c.line}" strokeWidth={1} strokeAlign="inside">${I(c, 'hammer', 'ink2', 13)}${T(c, 13, 18, 400, 'ink', '환불 API를 더한다', 'grow={1}')}${T(c, 12, 16, 400, 'ink3', 'builder · 끝남')}${I(c, 'chevrons-up-down', 'ink3', 13)}</Frame>`, '검사·검토 카드에는 부모 카드가 있어야 합니다.')}
+${field('검증 명령', input('pnpm test test/refund', { mono: true }), '부모 카드의 검증 명령을 가져왔습니다.')}
+${field('쓰기 범위', input('검사 카드는 파일을 쓰지 않습니다', { muted: true }))}
+${field('설명', input('음수 금액과 결제 금액보다 큰 환불을 거부하는지 확인한다.', { h: 64 }))}
+</Frame>
+${hr(c)}
+<Frame w="fill" h={56} flex="row" items="center" gap={8} px={18}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '만들기')}</Frame>
+</Frame>`;
+  const scrim = `<Frame name="Scrim" position="absolute" x={0} y={0} w={1440} h={900} bg="${c.overlay}" />`;
+  return boardWindow(c, '64 M3 Board Create · Slate', {
+    cards: boardCards(c),
+    overlay: scrim + dialog,
+  });
+}
+
+/** 65번 시안은 카드의 "시작"을 누른 뒤 워크트리를 고르는 팝오버다. 고른 워크트리에서 카드 내용을 브리프로 삼아 세션을 연다. */
+function m3BoardStartScreen() {
+  const c = palette('Slate');
+  const option = (name, meta, on) =>
+    `<Frame w="fill" h={36} flex="row" items="center" gap={8} px={10} rounded={7} ${on ? `bg="${c.hover}"` : ''}>${I(c, on ? 'circle-dot' : 'circle', on ? 'ink' : 'ink3', 14)}${I(c, 'git-branch', 'ink3', 13)}${T(c, 13, 18, on ? 500 : 400, 'ink', name, 'grow={1}')}${T(c, 12, 16, 400, 'ink3', meta)}</Frame>`;
+  const pop = `<Frame name="StartPopover" position="absolute" x={540} y={250} w={330} h="hug" flex="col" gap={6} p={10} rounded={12} bg="${c.popover}" stroke="${c.borderStrong}" strokeWidth={1} strokeAlign="inside">
+${T(c, 13, 18, 600, 'ink', '어느 워크트리에서 시작할까요?', 'px={4} pt={2}')}
+${T(c, 12, 16, 400, 'ink3', 'verifier 정의로 세션을 열고, 카드 내용을 브리프로 줍니다.', 'px={4} w="fill" textAutoResize="height"')}
+<Frame w="fill" h="hug" flex="col" gap={2} pt={4}>${option('main', '기본', true)}${option('ora/refund-ui', '실행 1', false)}${option('docs/readme-pnpm', '', false)}</Frame>
+<Frame w="fill" h="hug" flex="row" items="center" gap={6} pt={4}>${SP}${button(c, 'ghost', '취소')}${button(c, 'primary', '시작')}</Frame>
+</Frame>`;
+  return boardWindow(c, '65 M3 Board Start · Slate', {
+    cards: boardCards(c, { verifierPicked: true }),
+    overlay: pop,
+  });
+}
+
 export const SCREENS = [
   { file: 'components-dark', jsx: componentBoard },
   { file: 'session-dark', jsx: sessionScreen },
@@ -3393,4 +3577,7 @@ export const SCREENS = [
   { file: 'm3-graph-running-slate', jsx: m3DagRunningScreen },
   { file: 'm3-graph-failed-slate', jsx: m3DagFailedScreen },
   { file: 'm3-graph-done-slate', jsx: m3DagDoneScreen },
+  { file: 'm3-board-slate', jsx: m3BoardScreen },
+  { file: 'm3-board-create-slate', jsx: m3BoardCreateScreen },
+  { file: 'm3-board-start-slate', jsx: m3BoardStartScreen },
 ];
