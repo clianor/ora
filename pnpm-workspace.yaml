@@ -3,7 +3,7 @@ packages:
   - apps/*
 
 catalog:
-  '@assistant-ui/react': ^0.15.31
+  '@assistant-ui/react': ^0.15.32
   '@assistant-ui/react-markdown': ^0.14.24
   '@eslint/js': ^10.0.1
   '@fontsource/jetbrains-mono': ^5.3.0
